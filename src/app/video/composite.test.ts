@@ -138,14 +138,16 @@ describe('planComposite — a step between layers (#1879 step 4)', () => {
     expect(draws.map(label)).toEqual(['bg', 'adjust', 'fg']);
   });
 
-  it('is not hidden by a solo or a trim: it has neither', () => {
+  it('has no trim, but a solo hides it: solo shows the soloed layers as they are', () => {
     const inputs = [
       layer({ layerId: 'bg' }),
       adjust(),
-      layer({ layerId: 'fg', solo: true }),
+      layer({ layerId: 'fg' }),
       layer({ layerId: 'late', startFrame: 100 }),
     ];
-    expect(planStack(COMP, inputs, 0).map(label)).toEqual(['adjust', 'fg']);
+    expect(planStack(COMP, inputs, 0).map(label)).toEqual(['bg', 'adjust', 'fg']);
+    const soloed = [layer({ layerId: 'bg' }), adjust(), layer({ layerId: 'fg', solo: true })];
+    expect(planStack(COMP, soloed, 0).map(label)).toEqual(['fg']);
   });
 
   it('is dropped when it changes nothing', () => {

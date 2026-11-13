@@ -24,7 +24,13 @@ import { useDagStore } from '../../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
-import { drawComposite, isLayerDraw, planComposite, type CompositeDraw } from './composite';
+import {
+  drawComposite,
+  isLayerDraw,
+  planComposite,
+  type CompositeDraw,
+  type CompositePath,
+} from './composite';
 import { collectCompositeInputs, decodeDraws } from './compositeDecode';
 import { globalFrameToCompFrame } from './videoTimelineGeometry';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
@@ -56,6 +62,8 @@ export function CompositeViewer({
   held.current = { state: dagState, time };
   const { frame, seconds, normalized } = time;
   const [nonce, setNonce] = useState(0);
+  // #1883 — which pass drew the last frame: 'gpu' (linear float) or '2d' (the fallback).
+  const [path, setPath] = useState<CompositePath | ''>('');
 
   const W = comp.width ?? 1280;
   const H = comp.height ?? 720;
@@ -86,7 +94,7 @@ export function CompositeViewer({
       if (cancelled) return;
       const ctx = canvasRef.current?.getContext('2d');
       if (!ctx) return;
-      drawComposite(ctx, { width: W, height: H, background }, draws, map);
+      setPath(drawComposite(ctx, { width: W, height: H, background }, draws, map));
       setNonce((n) => n + 1);
     })();
     return () => {
@@ -106,6 +114,7 @@ export function CompositeViewer({
         height={H}
         data-testid="composite-canvas"
         data-composite-draws={draws.filter(isLayerDraw).length}
+        data-composite-path={path}
         data-composite-nonce={nonce}
         className="max-h-full max-w-full rounded"
         style={{ aspectRatio: `${W} / ${H}` }}

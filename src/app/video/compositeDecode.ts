@@ -47,7 +47,6 @@ import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
   drawComposite,
-  effectFilter,
   isLayerDraw,
   planComposite,
   type CompositeDraw,
@@ -441,54 +440,19 @@ async function decodeBitmap(
   }
 }
 
-// Graded frames are cached separately from the base decodes, keyed by the FULL
-// compositeBitmapKey (path#frame#effectChain) — so a re-scrub / re-export with the
-// same grade reuses the graded bitmap, and a param change (new effectsKey) misses.
-// Bounded LRU for the same OOM reason as bitmapCache (#253).
-const gradedCache = new BitmapLRU(MAX_CACHED_BITMAPS);
-
-/** Apply a layer's effect chain (base → top) to a decoded frame, returning a new
- *  graded bitmap. Local effects are pure GPU canvas filters (the [[V58]] "local
- *  effects = shaders" path); the apply order is the chain order. ColorCorrect maps
- *  to canvas `brightness()/contrast()/saturate()`. PURE of the DAG. */
-async function applyEffects(bmp: ImageBitmap, effects: readonly EffectOp[]): Promise<ImageBitmap> {
-  const filter = effectFilter(effects);
-  if (!filter) return bmp;
-  const canvas = document.createElement('canvas');
-  canvas.width = bmp.width;
-  canvas.height = bmp.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return bmp;
-  ctx.filter = filter;
-  ctx.drawImage(bmp, 0, 0);
-  return await createImageBitmap(canvas);
-}
-
-/** Decode every planned draw's source frame (and apply its effect chain), returning
- *  a map keyed by compositeBitmapKey (the same key drawComposite looks up — now
- *  effect-aware). A draw that fails to decode is simply absent → drawComposite skips
- *  it (no throw, no blank crash). */
+/** Decode every planned layer draw's source frame, returning a map keyed by
+ *  compositeBitmapKey (path#frame — the key drawComposite looks up). Effects are not applied
+ *  here: drawComposite applies them while drawing (#1883: on the GPU, in linear light), so one
+ *  decoded frame serves every grade. A draw that fails to decode is simply absent →
+ *  drawComposite skips it (no throw, no blank crash). */
 export async function decodeDraws(
   draws: readonly CompositeDraw[],
 ): Promise<Map<string, ImageBitmap>> {
   const map = new Map<string, ImageBitmap>();
   await Promise.all(
     draws.filter(isLayerDraw).map(async (d) => {
-      const key = compositeBitmapKey(d);
-      const cachedGraded = gradedCache.get(key);
-      if (cachedGraded) {
-        map.set(key, cachedGraded);
-        return;
-      }
-      const base = await ensureBitmap(d.source, d.sourceFrameIndex);
-      if (!base) return;
-      if (!d.effects.length) {
-        map.set(key, base); // no grade → the base IS the frame (key ends in '#')
-        return;
-      }
-      const graded = await applyEffects(base, d.effects);
-      gradedCache.set(key, graded);
-      map.set(key, graded);
+      const bmp = await ensureBitmap(d.source, d.sourceFrameIndex);
+      if (bmp) map.set(compositeBitmapKey(d), bmp);
     }),
   );
   return map;
