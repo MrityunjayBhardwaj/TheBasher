@@ -189,7 +189,13 @@ export class WebCodecsMediaDecode implements MediaDecodeCapability {
     frameIndex: number,
   ): Promise<DecodedFrame> {
     if (probe.mediaKind === 'image') {
-      const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]));
+      // #1883 — straight alpha: the compositor premultiplies once, in linear light. A bitmap
+      // premultiplied here (the browser default) would be premultiplied again, in display
+      // colour, and every semi-transparent pixel would draw too dark. WebGL ignores its
+      // own unpack flag for an ImageBitmap, so the bitmap's option is the only switch.
+      const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]), {
+        premultiplyAlpha: 'none',
+      });
       return { width: bitmap.width, height: bitmap.height, bitmap, rgba: null };
     }
 
@@ -236,7 +242,7 @@ export class WebCodecsMediaDecode implements MediaDecodeCapability {
         VIDEO_OP_TIMEOUT_MS,
         'seek',
       );
-      const bitmap = await createImageBitmap(el);
+      const bitmap = await createImageBitmap(el, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
       return { width: bitmap.width, height: bitmap.height, bitmap, rgba: null } as DecodedFrame;
     });
     // Keep the chain alive even if this seek failed, so the next request still runs.

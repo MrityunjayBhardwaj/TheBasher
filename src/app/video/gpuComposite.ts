@@ -128,10 +128,17 @@ out vec4 o;
 void main() {
   vec4 b = texelFetch(uBack, ivec2(gl_FragCoord.xy), 0);
   vec2 uv = (uInv * vec3(vPx, 1.0)).xy;
-  vec4 s = vec4(0.0);
-  if (uv.x >= 0.0 && uv.y >= 0.0 && uv.x <= 1.0 && uv.y <= 1.0) s = texture(uLayer, uv);
-  s.rgb *= s.a;          // straight → premultiplied
-  s *= uOpacity;
+  // #1888 — how much of this pixel the layer's rectangle covers, from the pixel's distance to
+  // each edge measured in pixels (uv per pixel = fwidth). A pixel centre half a pixel inside
+  // the edge is fully covered, so a layer drawn 1:1 is unchanged; a rotated or scaled edge
+  // shades off over one pixel instead of stepping.
+  vec2 inside = min(uv, 1.0 - uv) / max(fwidth(uv), vec2(1e-6));
+  vec2 cov2 = clamp(inside + 0.5, 0.0, 1.0);
+  float cov = cov2.x * cov2.y;
+  // The layer texture is already linear and premultiplied (#1889), so filtering it does not
+  // pull a transparent pixel's colour into its neighbours.
+  vec4 s = cov > 0.0 ? texture(uLayer, clamp(uv, 0.0, 1.0)) : vec4(0.0);
+  s *= cov * uOpacity;
   vec3 c;
   float a;
   if (uMode == 1) {        // add: src + dst (alpha too, clamped, as the canvas 'lighter')
@@ -167,14 +174,16 @@ void main() {
   o = vec4(uPremult == 1 ? c * p.a : c, p.a);
 }`;
 
-const COPY_FRAG = `#version 300 es
+const PREP_FRAG = `#version 300 es
 precision highp float;
 uniform sampler2D uSrc;
 out vec4 o;
 void main() {
-  // A layer texture into a float buffer of its own size (for its own effects): GL row 0 is
-  // the texture's row 0, so this is a straight texel copy, decoded to linear by the sampler.
-  o = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0);
+  // #1889 — a picture as uploaded (an sRGB texture, decoded to linear by texelFetch; or a
+  // float picture, already linear), straight alpha, into a half-float buffer of its own size,
+  // PREMULTIPLIED. GL row 0 is the texture's row 0, so this is a texel-for-texel copy.
+  vec4 p = texelFetch(uSrc, ivec2(gl_FragCoord.xy), 0);
+  o = vec4(p.rgb * p.a, p.a);
 }`;
 
 const OUT_FRAG = `#version 300 es
@@ -287,7 +296,7 @@ function create(): GpuCompositor {
   };
   const layerP = program(LAYER_FRAG, ['uSize', 'uBack', 'uLayer', 'uInv', 'uOpacity', 'uMode']);
   const gradeP = program(GRADE_FRAG, ['uSize', 'uSrc', 'uBCS', 'uPremult']);
-  const copyP = program(COPY_FRAG, ['uSize', 'uSrc']);
+  const prepP = program(PREP_FRAG, ['uSize', 'uSrc']);
   const outP = program(OUT_FRAG, ['uSize', 'uSrc', 'uBg']);
 
   // One full-screen triangle.
@@ -299,11 +308,18 @@ function create(): GpuCompositor {
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-  const makeTarget = (w: number, h: number): Target => {
+  /** A half-float render target; `mips` allocates a full mip chain (filled by generateMipmap
+   *  after it is drawn) so a picture shrunk on screen is sampled without aliasing. */
+  const makeTarget = (w: number, h: number, mips = false): Target => {
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, w, h);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    const levels = mips ? Math.floor(Math.log2(Math.max(w, h))) + 1 : 1;
+    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA16F, w, h);
+    gl.texParameteri(
+      gl.TEXTURE_2D,
+      gl.TEXTURE_MIN_FILTER,
+      mips ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR,
+    );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -329,17 +345,33 @@ function create(): GpuCompositor {
     work = [makeTarget(W, H), makeTarget(W, H)];
   };
 
-  // Uploaded layer pictures, by image key (an LRU: insertion order, re-inserted on use).
-  const texCache = new Map<string, { tex: WebGLTexture; w: number; h: number }>();
-  const upload = (key: string, img: CompositeImage) => {
+  const pass = (p: Program, target: Target | null, w: number, h: number) => {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fbo : null);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(p.prog);
+    gl.uniform2f(p.u.uSize, w, h);
+  };
+  const bindTex = (unit: number, tex: WebGLTexture, loc: WebGLUniformLocation | null) => {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(loc, unit);
+  };
+  const draw = () => gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  // Prepared layer pictures (linear, premultiplied, mipmapped), by image key — an LRU:
+  // insertion order, re-inserted on use.
+  const texCache = new Map<string, Target>();
+  const upload = (key: string, img: CompositeImage): Target => {
     const hit = texCache.get(key);
     if (hit) {
       texCache.delete(key);
       texCache.set(key, hit);
       return hit;
     }
-    const tex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
+    // 1. The picture as it comes, straight alpha: sRGB bytes into an sRGB texture (decoded to
+    //    linear when read), or floats as they are.
+    const raw = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, raw);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     if (isLinearImage(img)) {
@@ -354,42 +386,31 @@ function create(): GpuCompositor {
         gl.FLOAT,
         img.data,
       );
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     } else {
-      // An sRGB texture: the sampler decodes to linear BEFORE filtering, so a scaled picture
-      // is resampled in light, not in display numbers.
       // The decode hands ImageBitmaps; of the 2D canvas's sources only an SVG image could not
       // be uploaded, and none reaches here.
       const tsrc = img as TexImageSource;
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.SRGB8_ALPHA8, gl.RGBA, gl.UNSIGNED_BYTE, tsrc);
-      gl.generateMipmap(gl.TEXTURE_2D);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    const entry = { tex, w: img.width, h: img.height };
-    texCache.set(key, entry);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    // 2. Into linear light, premultiplied, then the mip chain — all BEFORE any filtering, so
+    //    a shrunk or rotated picture is resampled as light with its alpha already applied.
+    const prepared = makeTarget(img.width, img.height, true);
+    pass(prepP, prepared, img.width, img.height);
+    bindTex(0, raw, prepP.u.uSrc);
+    draw();
+    gl.deleteTexture(raw);
+    gl.bindTexture(gl.TEXTURE_2D, prepared.tex);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    texCache.set(key, prepared);
     while (texCache.size > TEX_CACHE_CAP) {
-      const [oldKey, old] = texCache.entries().next().value as [string, { tex: WebGLTexture }];
-      gl.deleteTexture(old.tex);
+      const [oldKey, old] = texCache.entries().next().value as [string, Target];
+      dropTarget(old);
       texCache.delete(oldKey);
     }
-    return entry;
+    return prepared;
   };
-
-  const pass = (p: Program, target: Target | null, w: number, h: number) => {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fbo : null);
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(p.prog);
-    gl.uniform2f(p.u.uSize, w, h);
-  };
-  const bindTex = (unit: number, tex: WebGLTexture, loc: WebGLUniformLocation | null) => {
-    gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.uniform1i(loc, unit);
-  };
-  const draw = () => gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   /** Grade `src` into `dst` through one Color Correct. */
   const grade = (src: Target, dst: Target, e: EffectOp, premult: boolean) => {
@@ -457,18 +478,16 @@ function create(): GpuCompositor {
         let layerTex = up.tex;
         const scratch: Target[] = [];
         if (d.effects.length) {
-          // The layer's own effects: copy into a float buffer of its size, grade there.
-          let a = makeTarget(up.w, up.h);
-          let b = makeTarget(up.w, up.h);
-          scratch.push(a, b);
-          pass(copyP, a, up.w, up.h);
-          bindTex(0, up.tex, copyP.u.uSrc);
-          draw();
+          // The layer's own effects: grade the prepared picture into a float buffer of its
+          // size (premultiplied, as the picture now is), ping-ponging for each effect.
+          let from = up;
           for (const e of d.effects) {
-            grade(a, b, e, false);
-            [a, b] = [b, a];
+            const to = makeTarget(up.w, up.h);
+            scratch.push(to);
+            grade(from, to, e, true);
+            from = to;
           }
-          layerTex = a.tex;
+          layerTex = from.tex;
         }
         pass(layerP, dst, W, H);
         bindTex(0, src.tex, layerP.u.uBack);

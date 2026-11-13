@@ -6,6 +6,10 @@
 //   - a step between layers adjusts the layer under it but not the comp background;
 //   - the viewer's frame equals the export's (`captureCompositeFrame`), on the GPU path AND on
 //     the 2D fallback, and the fallback says so.
+//   - a rotated layer's edge shades off over a pixel, as the 2D canvas's does (#1888);
+//   - a picture fading to transparent keeps its colour at the edge, no dark fringe (#1889);
+//   - an imported PNG with 50% alpha reads linear mid-grey over black: the decode hands over
+//     straight alpha, so the pass premultiplies exactly once.
 // Drop the sRGB decode or encode, the float buffer, or the background ordering, and a number
 // below moves.
 
@@ -27,7 +31,7 @@ test('the pass blends in linear light, keeps float, and leaves 1:1 opaque layers
       x.globalAlpha = alpha;
       x.fillStyle = css;
       x.fillRect(0, 0, w, h);
-      return createImageBitmap(c);
+      return createImageBitmap(c, { premultiplyAlpha: 'none' }); // as the decode makes them
     };
     const src = (path: string, w: number, h: number) => ({
       kind: 'media' as const,
@@ -95,7 +99,7 @@ test('the pass blends in linear light, keeps float, and leaves 1:1 opaque layers
       gx.fillStyle = `rgb(${i},${255 - i},${(i * 7) % 256})`;
       gx.fillRect(i, 0, 1, 4);
     }
-    const gb = await createImageBitmap(g);
+    const gb = await createImageBitmap(g, { premultiplyAlpha: 'none' });
     out.width = gw;
     out.height = 4;
     C.drawComposite(
@@ -253,4 +257,147 @@ test('without WebGL2 the composite falls back to the 2D canvas, and says so', as
   expect(r.path).toBe('2d');
   expect(r.differing).toBe(0);
   expect(warns.join('\n')).toContain('WebGL2 is not available');
+});
+
+test('a rotated edge is smoothed, and a fading edge keeps its colour (#1888, #1889)', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('menu-file-button')).toBeVisible();
+  const r = await page.evaluate(async () => {
+    const C = await import('/src/app/video/composite.ts');
+    const mk = async (w: number, h: number, f: (x: CanvasRenderingContext2D) => void) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      f(c.getContext('2d')!);
+      return createImageBitmap(c, { premultiplyAlpha: 'none' }); // as the decode makes them
+    };
+    const draw = (path: string, w: number, h: number, over: Record<string, unknown>) => ({
+      layerId: path,
+      source: {
+        kind: 'media',
+        path,
+        mediaKind: 'image',
+        width: w,
+        height: h,
+        srcFps: 1,
+        srcFrames: 1,
+      },
+      sourceFrameIndex: 0,
+      opacity: 1,
+      rotation: 0,
+      position: [0, 0],
+      scale: [1, 1],
+      blendMode: 'normal',
+      effects: [],
+      ...over,
+    });
+    // A: white square rotated 30° on black: count intermediate (edge) values along a scanline.
+    const white = await mk(64, 64, (x) => {
+      x.fillStyle = '#fff';
+      x.fillRect(0, 0, 64, 64);
+    });
+    const out = document.createElement('canvas');
+    out.width = 128;
+    out.height = 128;
+    const ctx = out.getContext('2d')!;
+    const row = () =>
+      Array.from(ctx.getImageData(0, 64, 128, 1).data).filter((_, i) => i % 4 === 0);
+    C.drawComposite(
+      ctx,
+      { width: 128, height: 128, background: '#000' },
+      [draw('w', 64, 64, { rotation: 30, scale: [0.5, 0.5] })] as never,
+      new Map([['w#0', white]]),
+    );
+    const gpuRow = row();
+    // reference: the 2D canvas doing the same draw
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.save();
+    ctx.translate(64, 64);
+    ctx.rotate(Math.PI / 6);
+    ctx.scale(0.5, 0.5);
+    ctx.drawImage(white, -64, -64, 128, 128);
+    ctx.restore();
+    const refRow = row();
+    const mids = (a: number[]) => a.filter((v) => v > 0 && v < 255).length;
+    // B: red opaque pixel next to fully transparent pixel, upscaled ×32 over white: look for dark fringe.
+    const half = await mk(2, 1, (x) => {
+      x.fillStyle = '#f00';
+      x.fillRect(0, 0, 1, 1);
+    });
+    out.width = 64;
+    out.height = 32;
+    C.drawComposite(
+      ctx,
+      { width: 64, height: 32, background: '#ffffff' },
+      [draw('h', 2, 1, {})] as never,
+      new Map([['h#0', half]]),
+    );
+    const fr = Array.from(ctx.getImageData(0, 16, 64, 1).data);
+    const px = (i: number) => fr.slice(i * 4, i * 4 + 4);
+    let minG = 255;
+    for (let i = 0; i < 64; i++) minG = Math.min(minG, fr[i * 4 + 1]);
+    // C: a picture whose OWN alpha is 50% (white) over black: premultiplied before it is
+    // filtered, it reads linear 0.5 (188); left straight, it would read full white (255).
+    const halfAlpha = await mk(8, 8, (x) => {
+      x.fillStyle = 'rgba(255,255,255,0.5)';
+      x.fillRect(0, 0, 8, 8);
+    });
+    out.width = 8;
+    out.height = 8;
+    C.drawComposite(
+      ctx,
+      { width: 8, height: 8, background: '#000000' },
+      [draw('a', 8, 8, {})] as never,
+      new Map([['a#0', halfAlpha]]),
+    );
+    const halfAlphaPx = Array.from(ctx.getImageData(4, 4, 1, 1).data);
+    return {
+      halfAlphaPx,
+      gpuEdgeMids: mids(gpuRow),
+      refEdgeMids: mids(refRow),
+      fringe: { x20: px(20), x32: px(32), x40: px(40), minGreenAcross: minG },
+    };
+  });
+  // A 30° edge crosses a scanline over in-between pixels, at least as many as the 2D canvas.
+  expect(r.gpuEdgeMids).toBeGreaterThanOrEqual(r.refEdgeMids);
+  expect(r.gpuEdgeMids).toBeGreaterThan(0);
+  // Red fading to transparent over white: the red channel stays full; only green/blue move.
+  for (const k of ['x20', 'x32', 'x40'] as const) expect(r.fringe[k][0]).toBe(255);
+  // A picture's own 50% alpha white over black is linear mid-grey. The 8-bit source holds
+  // alpha 128/255, so ±1.
+  expect(Math.abs(r.halfAlphaPx[0] - 188)).toBeLessThanOrEqual(1);
+});
+
+test('an imported half-transparent PNG is premultiplied once, in linear light', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('menu-file-button')).toBeVisible();
+  await page.getByTestId('space-switch-video').click();
+  await page.getByTestId('video-mode-new-comp').click();
+  await page.getByTestId('video-mode-add-layer').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByTestId('video-mode-add-media').click(),
+  ]);
+  // 8×8 white at alpha 128/255, fitted over the comp's black background.
+  await chooser.setFiles('public/fixtures/compositor/half-alpha-white.png');
+  await expect(page.getByTestId('video-mode-layer-count')).toHaveText('1 layer', { timeout: 8000 });
+  const canvas = page.getByTestId('composite-canvas');
+  await expect(canvas).toHaveAttribute('data-composite-path', 'gpu');
+  const centre = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('[data-testid="composite-canvas"]') as HTMLCanvasElement;
+      return Array.from(c.getContext('2d')!.getImageData(c.width / 2, c.height / 2, 1, 1).data);
+    });
+  // Premultiplied once in linear light: 128/255 of white = linear 0.502 → sRGB 188 (±1).
+  // Premultiplied twice (a premultiplied bitmap decoded as sRGB) reads 93.
+  await expect.poll(async () => (await centre())[0], { timeout: 8000 }).toBeGreaterThan(150);
+  const px = await centre();
+  expect(Math.abs(px[0] - 188)).toBeLessThanOrEqual(1);
+  expect(px[3]).toBe(255);
 });

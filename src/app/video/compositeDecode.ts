@@ -324,7 +324,7 @@ async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | n
   const raw = source.label ?? 'ComfyUI';
   const label = raw.length > 26 ? `${raw.slice(0, 25)}…` : raw;
   ctx.fillText(label, Math.round(canvas.width / 12), Math.round(canvas.height / 2));
-  return await createImageBitmap(canvas);
+  return await createImageBitmap(canvas, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
 }
 
 /** Submit a comfy layer's per-frame compiled workflow to a REAL ComfyUI server and
@@ -352,7 +352,7 @@ async function decodeComfy(source: CompositeSource): Promise<ImageBitmap | null>
         }
         const { frame } = await cap.submit(source.comfyWorkflow, { images, scalars: {} });
         const blob = new Blob([frame.slice()], { type: 'image/png' });
-        return await createImageBitmap(blob);
+        return await createImageBitmap(blob, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'ComfyUI submit failed';
@@ -420,7 +420,7 @@ async function decodeBitmap(
       // The stub/headless path yields raw rgba — copy into a fresh (ArrayBuffer-
       // backed) buffer so ImageData accepts it, then rasterize to a bitmap.
       const data = new ImageData(new Uint8ClampedArray(frame.rgba), frame.width, frame.height);
-      bmp = await createImageBitmap(data);
+      bmp = await createImageBitmap(data, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
     }
     if (bmp) bitmapCache.set(key, bmp);
     return bmp;
