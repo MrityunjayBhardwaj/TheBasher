@@ -5,6 +5,10 @@
 import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
 
+interface DagWindow {
+  __basher_dag: { getState: () => { state: { nodes: Record<string, unknown> } } };
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('menu-file-button')).toBeVisible();
@@ -86,10 +90,9 @@ test('Delete after a real click on a shot row deletes the selected object, as it
   await page.keyboard.press('Delete');
   await expect
     .poll(() =>
-      page.evaluate(async () => {
-        const { useDagStore } = await import('/src/core/dag/store.ts');
-        return 'n_box' in useDagStore.getState().state.nodes;
-      }),
+      page.evaluate(
+        () => 'n_box' in (window as unknown as DagWindow).__basher_dag.getState().state.nodes,
+      ),
     )
     .toBe(false);
 });

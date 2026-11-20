@@ -3,7 +3,8 @@
 // Dopesheet finds it where it was left, and a reload keeps both. The drag is clamped so the
 // viewport above always keeps a usable height. Removing the handle, the per-tab memory, the
 // persistence or the clamp each reds one assertion here.
-import { expect, test, type Page } from './_fixtures';
+import type { Page } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 async function drawerHeight(page: Page): Promise<number> {
   const b = await page.getByTestId('timeline-drawer').boundingBox();
