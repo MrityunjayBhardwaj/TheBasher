@@ -9,7 +9,7 @@
 // REF: src/viewport/DiffOverlay.tsx; src/app/ProposalCard.tsx.
 
 import { usePendingProposal } from '../agent/diff/useProposal';
-import { PROPOSAL_AMBER } from './ProposalCard';
+import { PROPOSAL_AMBER } from './proposalStyle';
 
 export function ProposalViewportEdge() {
   const diff = usePendingProposal();

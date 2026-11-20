@@ -37,6 +37,7 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
+import { InspectorProposed, ProposedValueMark } from './InspectorProposed';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   attachMapFromFile,
@@ -3378,7 +3379,21 @@ function InfluenceRow({ nodeId }: { nodeId: string }) {
   );
 }
 
-function ParamRow({
+/** #1706 — every param row, plus the pending proposal's `old → new` for it when one changes it.
+ *  The row a StandingParamRow wraps is drawn again inside it (`standingApplied`), so the mark is
+ *  added on the outer call only. */
+function ParamRow(props: Parameters<typeof ParamRowBody>[0]) {
+  return (
+    <>
+      <ParamRowBody {...props} />
+      {props.standingApplied ? null : (
+        <ProposedValueMark nodeId={props.nodeId} paramPath={props.paramPath} />
+      )}
+    </>
+  );
+}
+
+function ParamRowBody({
   nodeId,
   paramPath,
   value,
@@ -5410,6 +5425,8 @@ export function NPanel() {
               {node.type} v{node.version} · {node.id}
             </div>
           </div>
+          {/* #1706 — what a pending proposal would change on this node, old → new. */}
+          <InspectorProposed nodeId={node.id} />
           <SelectedBoneSection />
           {refParamMeta && (
             // The general node-ref picker block — one NodeRefField per declared ref param,

@@ -18,7 +18,7 @@ import { AgentDock } from './AgentDock';
 import { useAgentSessionStore } from '../agent/session/store';
 import { useDiffStore } from '../agent/diff';
 import { usePendingProposal } from '../agent/diff/useProposal';
-import { PROPOSAL_AMBER } from './ProposalCard';
+import { PROPOSAL_AMBER } from './proposalStyle';
 import { agentReplyKey, chatVisible, useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { CHAT_COLUMN_WIDTH } from './layoutIslands';

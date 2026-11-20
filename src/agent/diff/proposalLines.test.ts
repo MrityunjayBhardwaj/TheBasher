@@ -3,6 +3,8 @@
 // The gate at the bottom derives the op kinds from `OpSchema` itself: a new kind that has no line
 // renderer, or no editor mark, fails here instead of showing nothing when the agent proposes it.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp } from '../../core/dag';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -116,6 +118,25 @@ describe('proposalLines', () => {
   });
 });
 
+describe('the editor a change lands in', () => {
+  it('a keyframe channel edit is marked in Curves and the Dopesheet, and opens Curves', () => {
+    const pre: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: { target: 'n_box', paramPath: 'position', keyframes: [] },
+      },
+    ];
+    const d = diffOf([{ type: 'setParam', nodeId: 'ch', paramPath: 'mute', value: true }], pre);
+    const [line] = proposalLines(d);
+    expect(line.target.editor).toBe('curve');
+    expect(line.marks).toEqual(expect.arrayContaining(['curve', 'dopesheet', 'nodes']));
+    expect(proposedNodeIds(d, 'dopesheet').has('ch')).toBe(true);
+    expect(proposalTabCounts(d)).toMatchObject({ curve: 1, dopesheet: 1, nodes: 1 });
+  });
+});
+
 describe('#1706 gate — every op kind the schema declares renders a line and leaves a mark', () => {
   it('the sample covers every kind (so the checks below see them all)', () => {
     expect(Object.keys(SAMPLE).sort()).toEqual([...SCHEMA_KINDS].sort());
@@ -137,5 +158,33 @@ describe('#1706 gate — every op kind the schema declares renders a line and le
     expect(lines).toHaveLength(1);
     expect(lines[0].label.length).toBeGreaterThan(0);
     expect(lines[0].marks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('#1706 gate — every mark editor is drawn by some editor', () => {
+  // A mark nobody draws is a line that promises a mark and shows none. Each editor reads its marks
+  // through `useProposedNodeIds('<editor>')` / `proposedNodeIds(diff, '<editor>')`, or filters the
+  // lines on `marks.includes('<editor>')`; this finds that read in the shipped source.
+  const root = path.resolve(__dirname, '../..');
+  const sources: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (
+        /\.tsx?$/.test(e.name) &&
+        !/\.test\.tsx?$/.test(e.name) &&
+        !e.name.startsWith('tmp-')
+      )
+        sources.push(fs.readFileSync(p, 'utf8'));
+    }
+  };
+  walk(root);
+
+  it.each(MARK_EDITORS)('%s', (editor) => {
+    const read = new RegExp(
+      `(useProposedNodeIds\\(|proposedNodeIds\\([^,]+,\\s*|marks\\.includes\\()'${editor}'`,
+    );
+    expect(sources.some((src) => read.test(src))).toBe(true);
   });
 });

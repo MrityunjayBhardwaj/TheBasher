@@ -31,6 +31,9 @@
 // what was formerly clearChannel; Simplify opens the SimplifyPopover). Track
 // filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
+import { useProposalTabCounts } from '../agent/diff/useProposal';
+import type { DrawerMarkTab } from '../agent/diff/proposalLines';
+import { PROPOSAL_AMBER } from '../app/proposalStyle';
 import { useTimelineSpan } from './timelineSpan';
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
@@ -329,6 +332,8 @@ function DockHeader({
   frame: number;
   totalFrames: number;
 }) {
+  // #1706 — each tab counts the pending proposal's changes it marks.
+  const proposedCounts = useProposalTabCounts();
   return (
     <div
       data-testid="timeline-tab-strip"
@@ -343,6 +348,7 @@ function DockHeader({
           id={t.id}
           label={t.label}
           active={activeTab === t.id}
+          proposed={proposedCounts[t.id as DrawerMarkTab] ?? 0}
           onClick={() => onSelectTab(t.id)}
         />
       ))}
@@ -361,11 +367,14 @@ function TabButton({
   id,
   label,
   active,
+  proposed,
   onClick,
 }: {
   id: TimelineTab;
   label: string;
   active: boolean;
+  /** #1706 — how many of a pending proposal's changes this tab marks (0: no badge). */
+  proposed: number;
   onClick: () => void;
 }) {
   return (
@@ -381,6 +390,16 @@ function TabButton({
       }`}
     >
       {label}
+      {proposed > 0 ? (
+        <span
+          data-testid={`timeline-tab-${id}-proposed`}
+          aria-label={`${proposed} proposed`}
+          className="ml-1.5 rounded px-1 text-[10px] font-semibold tabular-nums leading-4"
+          style={{ background: PROPOSAL_AMBER, color: '#1a1306' }}
+        >
+          {proposed}
+        </span>
+      ) : null}
     </button>
   );
 }

@@ -27,12 +27,10 @@ import {
 import { useDagStore } from '../core/dag/store';
 import type { Reportable } from '../core/dag/ops';
 import { badgeLabel } from './badges';
-import { countBySource, extractTimeRange, formatTimeRange } from './DiffBar.helpers';
+import { countBySource, extractTimeRange, formatTimeRange, hasMetaToShow } from './DiffBar.helpers';
 import { goToProposalLine } from './goToProposal';
+import { PROPOSAL_AMBER } from './proposalStyle';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
-
-/** The proposal amber (the design's "previewing, not applied" colour). */
-export const PROPOSAL_AMBER = '#e8a33d';
 
 const TAB_LABEL = {
   dopesheet: 'Dopesheet',
@@ -126,7 +124,8 @@ export function ProposalCard() {
         ))}
       </ul>
 
-      {closureNodeCount > 0 || timeRange || warnings.length > 0 || reportableLines.length > 0 ? (
+      {hasMetaToShow({ closureNodeCount, warningsCount: warnings.length, timeRange }) ||
+      reportableLines.length > 0 ? (
         <div className="flex flex-col gap-0.5 border-t border-border px-2.5 py-1 text-[10px] text-fg-dim">
           {closureNodeCount > 0 && (
             <span data-testid="proposal-closure">

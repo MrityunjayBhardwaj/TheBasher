@@ -87,9 +87,16 @@ function typeOf(src: ProposalSource, id: NodeId): string | undefined {
 /** The editors a node's own edits are marked in, and the one a click on its line opens. */
 function homeOf(src: ProposalSource, id: NodeId): { editor: MarkEditor; marks: MarkEditor[] } {
   const type = typeOf(src, id);
-  if (isChannelType(type)) return { editor: 'curve', marks: ['curve', 'dopesheet', 'nodes'] };
+  // The film's cuts are a CameraSelect and the channel keying its `active` (src/app/shots.ts).
+  if (type === 'CameraSelect') return { editor: 'shots', marks: ['shots', 'nodes'] };
+  if (isChannelType(type)) {
+    const node = src.forkState.nodes[id] ?? src.originalState.nodes[id];
+    const target = (node?.params as { target?: unknown } | undefined)?.target;
+    if (typeof target === 'string' && typeOf(src, target) === 'CameraSelect')
+      return { editor: 'shots', marks: ['shots', 'dopesheet', 'curve', 'nodes'] };
+    return { editor: 'curve', marks: ['curve', 'dopesheet', 'nodes'] };
+  }
   if (type && NLA_TYPES.has(type)) return { editor: 'nla', marks: ['nla', 'nodes'] };
-  if (type === 'Cut') return { editor: 'shots', marks: ['shots', 'nodes'] };
   return { editor: 'inspector', marks: ['inspector', 'viewport', 'nodes'] };
 }
 

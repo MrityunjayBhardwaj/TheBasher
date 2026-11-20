@@ -66,6 +66,8 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
+import { useProposedNodeIds } from '../agent/diff/useProposal';
+import { PROPOSAL_AMBER } from '../app/proposalStyle';
 import type { Node } from '../core/dag/types';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -386,6 +388,8 @@ export function paintStaticLayer(
   rangeEndSeconds?: number,
   /** #1641 — each row's ruler mapping, index-aligned with `rows`; absent rows draw as stored. */
   rulers?: ReadonlyArray<KeyRuler>,
+  /** #1706 — channels a pending proposal changes: their rows are outlined in the proposal amber. */
+  proposedChannelIds?: ReadonlySet<string>,
 ): number {
   const { cssW, cssH } = dims;
   ctx.clearRect(0, 0, cssW, cssH);
@@ -447,6 +451,16 @@ export function paintStaticLayer(
       ctx.globalAlpha = 0.08;
       ctx.fillRect(LABEL_GUTTER_PX, rowTop, cssW - LABEL_GUTTER_PX, ROW_HEIGHT_PX);
       ctx.globalAlpha = 1;
+    }
+
+    // #1706 — a row the pending proposal changes: an amber bar at the gutter's edge and an amber
+    // outline across the row (the proposal is not applied, so the keys drawn are still the old ones).
+    if (proposedChannelIds?.has(row.channelId)) {
+      ctx.fillStyle = PROPOSAL_AMBER;
+      ctx.fillRect(0, rowTop + 1, 3, ROW_HEIGHT_PX - 2);
+      ctx.strokeStyle = PROPOSAL_AMBER;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, rowTop + 0.5, cssW - 1, ROW_HEIGHT_PX - 1);
     }
 
     // Row separator line.
@@ -581,6 +595,8 @@ export function paintStaticLayer(
 export function TimelineCanvas({ duration, rangeEnd }: { duration: number; rangeEnd?: number }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
+  // #1706 — the channels a pending proposal changes (outlined amber in the static layer).
+  const proposedChannels = useProposedNodeIds('dopesheet');
   const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
   // Shared zoom/pan view (read by the curve editor too — seamless tab switch).
   const view = useTimelineViewStore((s) => s.view);
@@ -815,6 +831,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
       view,
       rangeEnd,
       rulers,
+      proposedChannels,
     );
 
     visCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -842,6 +859,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     rulers,
     view,
     rangeEnd,
+    proposedChannels,
   ]);
 
   // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
@@ -1382,6 +1400,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
       data-frame-count={Math.max(0, Math.round(durationSeconds * 60))}
       data-channel-count={rows.length}
       data-rendered-keyframes={renderedKeyframeTotal}
+      data-proposed-rows={rows.filter((r) => proposedChannels.has(r.channelId)).length}
       className="relative h-full w-full overflow-hidden bg-bg"
     >
       <canvas

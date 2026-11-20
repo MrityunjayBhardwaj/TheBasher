@@ -1,23 +1,24 @@
-// Pure helpers extracted from DiffBar (#31).
+// Pure helpers extracted from DiffBar (#31). #1706 — the DiffBar is gone; its successor, the
+// proposal card in chat (ProposalCard.tsx), reads these same helpers, so the file keeps its name.
 //
-// DiffBar.tsx is a React shell — its visual rendering, click handlers,
+// ProposalCard.tsx is a React shell — its visual rendering, click handlers,
 // and zustand subscriptions are exercised by Playwright e2e (this
 // project has no React Testing Library; W2 acceptance gate #15 forbids
 // new external deps). What CAN be unit-tested in vitest is the pure
-// data shaping that drives the `data-testid="diffbar-…"` markers:
+// data shaping that drives the `data-testid="proposal-…"` markers:
 //
 //   - `countBySource`        → the tools behind a diff, on hover over its title (#1612)
-//   - `extractTimeRange`     → drives `diffbar-time-range`
-//   - `formatTimeRange`      → text inside `diffbar-time-range`
+//   - `extractTimeRange`     → drives `proposal-time-range`
+//   - `formatTimeRange`      → text inside `proposal-time-range`
 //   - `hasMetaToShow`        → drives the strip's visibility
 //
 // Closure/warnings are simple `.size > 0` / `.length > 0` JSX
 // conditionals with no logic worth extracting; the e2e gate is the
 // right tool for those.
 //
-// REF: #31 (Wave C1 render-path test coverage), `src/app/DiffBar.tsx`,
-// `tests/e2e/p3-acceptance.spec.ts:251` (the existing diffbar-time-range
-// e2e — covers visibility; this file covers the shaping logic).
+// REF: #31 (Wave C1 render-path test coverage), `src/app/ProposalCard.tsx`,
+// `tests/e2e/p3-acceptance.spec.ts` (the proposal-time-range e2e — covers
+// visibility; this file covers the shaping logic).
 
 import type { Op } from '../core/dag/types';
 

@@ -17,6 +17,8 @@ import type { NodeId } from '../core/dag/types';
 import { type GraphNode, sceneGraphOf } from './sceneGraph';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { useSelectionStore } from './stores/selectionStore';
+import { usePendingProposal, useProposedNodeIds } from '../agent/diff/useProposal';
+import { PROPOSAL_AMBER } from './proposalStyle';
 
 const W = NODE_WIDTH;
 const HEAD = 40;
@@ -61,7 +63,26 @@ const clip = (s: string, n: number) =>
   s.length > n ? s.slice(0, Math.ceil(n / 2) - 1) + '…' + s.slice(s.length - Math.floor(n / 2)) : s;
 
 export function GraphView(): ReactNode {
-  const state = useDagStore((s) => s.state);
+  const real = useDagStore((s) => s.state);
+  // #1706 — while a proposal waits, the node view previews it, as the viewport does: the graph is
+  // the proposal's result, every node it adds or changes outlined amber, and what it removes named
+  // in the bar. Read-only like the rest of this view; accepting is the chat's.
+  const proposal = usePendingProposal();
+  const proposed = useProposedNodeIds('nodes');
+  const state = proposal ? proposal.forkState : real;
+  const proposedSummary = useMemo(() => {
+    if (!proposal) return null;
+    const added = new Set<NodeId>();
+    const removed: string[] = [];
+    proposal.ops.forEach((op, i) => {
+      if (!proposal.selected[i]) return;
+      if (op.type === 'addNode') added.add(op.nodeId);
+      if (op.type === 'removeNode')
+        removed.push(nodeDisplayName(proposal.originalState.nodes, op.nodeId));
+    });
+    const changed = [...proposed].filter((id) => !added.has(id) && state.nodes[id]).length;
+    return { added, removed, changed };
+  }, [proposal, proposed, state]);
   const primary = useSelectionStore((s) => s.primaryNodeId);
   const select = useSelectionStore((s) => s.select);
   const [showHidden, setShowHidden] = useState(false);
@@ -195,7 +216,8 @@ export function GraphView(): ReactNode {
     const d = drag.current;
     drag.current = null;
     if (d && !d.moved) {
-      select(d.node);
+      // A node the pending proposal adds is not in the scene yet: there is nothing to select.
+      select(d.node && real.nodes[d.node] ? d.node : null);
       clicked.current = d.node;
     }
   };
@@ -239,6 +261,16 @@ export function GraphView(): ReactNode {
           {graph.omitted > 0 ? ` · ${graph.omitted} hidden` : ''}
           {graph.animation > 0 ? ` · ${graph.animation} animation hidden` : ''}
         </span>
+        {proposedSummary ? (
+          <span data-testid="graph-view-proposed" style={{ color: PROPOSAL_AMBER }}>
+            Previewing the proposal
+            {proposedSummary.added.size > 0 ? ` · ${proposedSummary.added.size} new` : ''}
+            {proposedSummary.changed > 0 ? ` · ${proposedSummary.changed} changed` : ''}
+            {proposedSummary.removed.length > 0
+              ? ` · removes ${proposedSummary.removed.join(', ')}`
+              : ''}
+          </span>
+        ) : null}
         <span className="flex-1" />
         <label className="flex cursor-pointer items-center gap-1.5">
           <input
@@ -336,8 +368,12 @@ export function GraphView(): ReactNode {
               const h = nodeHeight(n);
               const color = KIND[kindOf(n.type)].color;
               const selected = n.id === primary;
-              const dim = lit ? !(lit.up.has(n.id) || lit.down.has(n.id)) : false;
+              const isProposed = proposed.has(n.id);
+              const isNew = proposedSummary?.added.has(n.id) ?? false;
+              // #1706 — a node the proposal touches is never dimmed by the lineage highlight.
+              const dim = lit && !isProposed ? !(lit.up.has(n.id) || lit.down.has(n.id)) : false;
               const badges = [
+                ...(isNew ? ['NEW'] : []),
                 ...n.flags.map((f) => (f === 'scene' ? 'SCENE' : 'RENDER')),
                 ...(n.timeDependent ? ['⏱'] : []),
                 ...(n.away ? [`↗${n.away}`] : []),
@@ -347,6 +383,7 @@ export function GraphView(): ReactNode {
                   key={n.id}
                   data-graph-node={n.id}
                   data-selected={selected || undefined}
+                  data-proposed={isProposed || undefined}
                   transform={`translate(${p.x},${p.y})`}
                   opacity={dim ? 0.18 : n.hidden ? 0.55 : 1}
                   className="cursor-pointer"
@@ -368,8 +405,9 @@ export function GraphView(): ReactNode {
                     height={h}
                     rx={5}
                     fill="#1c1c22"
-                    stroke={selected ? '#f0c75e' : '#2a2a33'}
-                    strokeWidth={selected ? 2 : 1}
+                    stroke={selected ? '#f0c75e' : isProposed ? PROPOSAL_AMBER : '#2a2a33'}
+                    strokeWidth={selected || isProposed ? 2 : 1}
+                    strokeDasharray={isNew ? '5 3' : undefined}
                   />
                   <rect width={W} height={4} rx={2} fill={color} />
                   <text x={10} y={19} fontSize={12.5} fontWeight={600} fill="#ededf2">
