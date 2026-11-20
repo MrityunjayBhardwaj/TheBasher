@@ -23,16 +23,16 @@ import { sceneChildRefs } from '../app/sceneMembership';
 
 /**
  * #1706 — is this ghost (or the top-level child it belongs to) one the proposal changes? A changed
- * object's ghost is drawn amber and stronger, so the viewport outlines what the proposal touches
+ * object's ghost is drawn amber, so the viewport outlines what the proposal touches
  * rather than re-drawing the whole scene in one even ghost. Nested ghosts inherit it.
  */
 const ProposedTint = createContext(false);
 
 /** A ghost material's colour and opacity, amber when the proposal changes it. */
 function useGhostLook(color: string, opacity: number): { color: string; opacity: number } {
-  return useContext(ProposedTint)
-    ? { color: PROPOSAL_AMBER, opacity: Math.min(1, opacity + 0.35) }
-    : { color, opacity };
+  // Colour only: the ghost's opacity is its signature (p352 / p1153 find a ghost by it), so a
+  // changed ghost keeps it and turns amber.
+  return useContext(ProposedTint) ? { color: PROPOSAL_AMBER, opacity } : { color, opacity };
 }
 
 export function DiffOverlay() {
