@@ -6,6 +6,7 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
+import { openDrawerTab } from './_drawer';
 
 test.setTimeout(120_000);
 
@@ -80,7 +81,7 @@ test('a muted cuts channel is one shot on the camera that plays, and the panel s
   page,
 }) => {
   await boot(page);
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await setPlayhead(page, 2);
   await page.getByTestId('shots-cut-camera').selectOption(CAM3);
   await page.getByTestId('shots-cut-here').click();

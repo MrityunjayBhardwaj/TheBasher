@@ -34,7 +34,8 @@ import { create } from 'zustand';
 
 const STORAGE_KEY = 'basher.leftSidebar.v1';
 
-export type LeftSidebarTab = 'outliner' | 'assets' | 'shots';
+// #1703 — 'shots' moved to the bottom drawer; a persisted 'shots' now coerces to the default.
+export type LeftSidebarTab = 'outliner' | 'assets';
 
 export interface LeftSidebarState {
   activeTab: LeftSidebarTab;
@@ -53,15 +54,11 @@ const DEFAULT_STATE: LeftSidebarState = {
 };
 
 // Whitelist of legitimate persistable values. Anything outside this set
-// (legacy 'scene'/'agent'/'library' from earlier tab schemes, future
+// (legacy 'scene'/'agent'/'library'/'shots' from earlier tab schemes, future
 // renames, malformed strings) coerces to the default in readPersisted.
 // PERSISTABLE is also checked before setItem writes — narrows the surface
 // for future type-shape changes.
-const PERSISTABLE: ReadonlySet<LeftSidebarTab> = new Set<LeftSidebarTab>([
-  'outliner',
-  'assets',
-  'shots',
-]);
+const PERSISTABLE: ReadonlySet<LeftSidebarTab> = new Set<LeftSidebarTab>(['outliner', 'assets']);
 
 // V18 — defensive Storage access. The plain `typeof localStorage ===
 // 'undefined'` guard misfires in happy-dom (stub is *defined* but methods

@@ -8,6 +8,7 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
+import { openDrawerTab } from './_drawer';
 
 test.setTimeout(120_000);
 
@@ -87,7 +88,7 @@ test("the agent's shot is listed in the Shots tab and is the camera the viewport
   page,
 }) => {
   await boot(page);
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await expect(page.getByTestId('shots-panel')).toBeVisible();
   await expect(rows(page)).toHaveCount(1);
   const seedRender = await renderAt(page, 3);

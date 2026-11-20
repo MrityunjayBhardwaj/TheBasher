@@ -98,8 +98,7 @@ interface SpaceEntry {
 const SPACES: readonly SpaceEntry[] = [
   { value: 'view3d', label: '3D View', key: 'Tab' },
   { value: 'uv', label: '2D View', key: 'Tab' },
-  // #1675 — the read-only node view. Outside the Tab cycle, so its button is the way in.
-  { value: 'graph', label: 'Graph' },
+  // #1703 — the node view is the bottom drawer's Nodes tab now, not a space.
 ];
 
 /** Click handler for the Home (⌂) button — fall back to frameAll() whenever

@@ -1,5 +1,6 @@
-// LeftSidebar — the Spline-style left panel: a three-tab surface (Outliner |
-// Assets | Shots) over the project's scene + asset library.
+// LeftSidebar — the Spline-style left panel: a two-tab surface (Outliner |
+// Assets) over the project's scene + asset library. (#1703 — Shots moved to the
+// bottom drawer.)
 //
 //   header   — project name + collapse chevron
 //   tabstrip — Outliner | Assets
@@ -31,7 +32,6 @@ import { useProjectStore } from '../core/project/store';
 import { SceneTree } from './SceneTree';
 import { AssetLibrary } from './AssetLibrary';
 import { GeneratePanel } from './GeneratePanel';
-import { ShotsPanel } from './ShotsPanel';
 import { openImportPicker } from './asset/importPicker';
 import { useChromeStore } from './stores/chromeStore';
 import { useLeftSidebarStore, type LeftSidebarTab } from './stores/leftSidebarStore';
@@ -39,8 +39,6 @@ import { useLeftSidebarStore, type LeftSidebarTab } from './stores/leftSidebarSt
 const TABS: { id: LeftSidebarTab; label: string }[] = [
   { id: 'outliner', label: 'Outliner' },
   { id: 'assets', label: 'Assets' },
-  // #1595 — the film's shots, derived from the camera cuts.
-  { id: 'shots', label: 'Shots' },
 ];
 
 function TabButton({
@@ -184,15 +182,6 @@ export function LeftSidebar(): ReactNode {
           <div className="min-h-0 flex-1" data-testid="left-sidebar-body-scene">
             <SceneTree filter={search} />
           </div>
-        </div>
-      ) : activeTab === 'shots' ? (
-        <div
-          role="tabpanel"
-          aria-label="Shots"
-          data-testid="left-sidebar-shots-panel"
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          <ShotsPanel />
         </div>
       ) : (
         <div

@@ -1,4 +1,5 @@
-// ShotsPanel — the film's shots, one row each, in the left sidebar (#1595).
+// ShotsPanel — the film's shots, one row each, in the bottom drawer's Shots tab (#1595; moved
+// out of the left sidebar by #1703).
 //
 // The rows are DERIVED from the keys on the active camera (`shots.ts`); nothing here stores a
 // shot. Each edit is one undo step written as those keys (`shotOps.ts`), the same data the agent

@@ -100,6 +100,13 @@ describe('leftSidebarStore', () => {
     expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
+  it('#1703 — a persisted "shots" tab (moved to the bottom drawer) coerces to default', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'shots' }));
+    vi.resetModules();
+    const mod = await import('./leftSidebarStore');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
+  });
+
   it('corrupt JSON falls back to default without throwing', async () => {
     localStorage.setItem(STORAGE_KEY, '<<<not valid json>>>');
     vi.resetModules();

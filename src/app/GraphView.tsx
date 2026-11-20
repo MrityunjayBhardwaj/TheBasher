@@ -1,6 +1,6 @@
-// GraphView — the Graph editor space: the live scene drawn as nodes and wires, read-only (#1675,
-// the first slice of the §16 node view #1563). Opened from its Graph button (space switcher and
-// toolbar) or View ▸ Editor Space; the app still starts in the 3D View and Tab never lands here.
+// GraphView — the node view: the live scene drawn as nodes and wires, read-only (#1675, the first
+// slice of the §16 node view #1563). #1703 — it lives in the bottom drawer's Nodes tab (opened
+// there, or from View ▸ Nodes), below the viewport, instead of replacing it as an editor space.
 //
 // It shows one level at a time (#1563): the top level, or the sub-network of an owner you
 // double-click into; the path bar climbs back out. It owns no graph logic: `sceneGraphOf` says

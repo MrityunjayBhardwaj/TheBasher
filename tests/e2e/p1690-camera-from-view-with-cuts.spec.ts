@@ -10,6 +10,7 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
+import { openDrawerTab } from './_drawer';
 
 type Ref = { node: string; socket: string };
 interface W {
@@ -101,7 +102,7 @@ test('a new camera from the view, in a film with cuts, is cut to at the playhead
     (window as unknown as W).__basher_viewport.getState().setLookThroughCamera(false),
   );
   await page.evaluate(() => (window as unknown as W).__basher_time.getState().setTime(1));
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await expect(page.locator('[data-testid^="shot-row-"]')).toHaveCount(2);
   await page.getByTestId('shots-camera-from-view').click();
 

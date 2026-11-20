@@ -52,6 +52,7 @@ import {
 } from './stores/viewportStore';
 import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
+import { useTimelineDockStore } from './stores/timelineDockStore';
 import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './asset/importPicker';
 import { createNewComposition } from './video/newComposition';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
@@ -919,7 +920,6 @@ export function MenuBar() {
               { value: 'view3d', label: '3D Viewport' },
               { value: 'uv', label: '2D View' },
               { value: 'video', label: 'Video' },
-              { value: 'graph', label: 'Graph' },
               { value: 'sheet', label: 'Spreadsheet' },
             ] as { value: SpaceType; label: string }[]
           ).map((s) => (
@@ -931,6 +931,8 @@ export function MenuBar() {
             />
           ))}
         </Submenu>
+        {/* #1703 — the node view is a bottom-drawer tab, not a space: this opens the drawer on it. */}
+        <Item label="Nodes" onSelect={openNodesTab} testId="menu-view-nodes" />
       </Menu>
 
       {/* The content-space switcher — 3D / 2D / Video (the third top-level
@@ -942,12 +944,17 @@ export function MenuBar() {
   );
 }
 
+/** #1703 — View ▸ Nodes: open the bottom drawer on its Nodes tab (the node view's home). */
+function openNodesTab(): void {
+  useTimelineDockStore.getState().setActiveTab('nodes');
+  useViewportStore.getState().setTimelineDrawerOpen(true);
+}
+
 const SPACE_SWITCHER_OPTIONS: { value: SpaceType; label: string }[] = [
   { value: 'view3d', label: '3D' },
   { value: 'uv', label: '2D' },
   { value: 'video', label: 'Video' },
-  // #1675 — the Graph space has its own button, as the user asked; Tab still never lands on it.
-  { value: 'graph', label: 'Graph' },
+  // #1703 — the node view left the switcher: it is the bottom drawer's Nodes tab (View ▸ Nodes).
 ];
 
 function SpaceSwitcher({

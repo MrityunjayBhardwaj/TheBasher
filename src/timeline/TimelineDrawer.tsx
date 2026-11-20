@@ -6,6 +6,12 @@
 // unchanged — only the rendering technology advanced (D-W9-2). Bottom
 // toolbar with track-ops buttons added P6 W6.
 //
+// #1703 — the decided tab set is Shots · Dopesheet · NLA · Curves · Nodes ·
+// Library (see TABS). Nodes hosts the node view (GraphView, formerly a whole
+// editor space) and mounts only while its tab is up; Library is a placeholder
+// until the asset library moves in. Each tab keeps its own height, set by the
+// handle on the drawer's top edge.
+//
 // Drawer open/closed lives in viewportStore (timelineDrawerOpen).
 // Default closed — preserves P0/P2 acceptance pixel-diff baselines.
 //
@@ -51,6 +57,8 @@ import { CurveEditor } from './CurveEditor';
 import { LightStudioPanel } from './LightStudioPanel';
 import { NlaLanePane } from './NlaLanePane';
 import { ControllersDockPane } from './ControllersDockPane';
+import { ShotsPanel } from '../app/ShotsPanel';
+import { GraphView } from '../app/GraphView';
 import { SimplifyPopover } from './SimplifyPopover';
 import { rowFlag, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { parseLayerRowId } from './layerChannelRows';
@@ -63,6 +71,22 @@ const WINDOW_CHROME_RESERVE_PX = 120;
 const VIEWPORT_MIN_PX = 240;
 const RESIZE_KEY_STEP_PX = 16;
 const HEADER_HEIGHT_PX = 28;
+
+// #1703 — the drawer's tabs, in the decided order: Shots · Dopesheet · NLA · Curves · Nodes ·
+// Library. Light Studio and Controllers follow until their moves land.
+const TABS: readonly { id: TimelineTab; label: string }[] = [
+  { id: 'shots', label: 'Shots' },
+  { id: 'dopesheet', label: 'Dopesheet' },
+  { id: 'nla', label: 'NLA' },
+  // "Curves", never "Curve Editor": the word must not clash with node graphs. The id stays.
+  { id: 'curve', label: 'Curves' },
+  { id: 'nodes', label: 'Nodes' },
+  { id: 'library', label: 'Library' },
+  { id: 'lightStudio', label: 'Light Studio' },
+  { id: 'controllers', label: 'Controllers' },
+];
+/** The tabs that edit keys on the active channel, so the Key/Delete/… toolbar applies. */
+const KEY_TABS: readonly TimelineTab[] = ['dopesheet', 'curve'];
 const TOOLBAR_HEIGHT_PX = 28;
 
 export function TimelineDrawer() {
@@ -122,6 +146,14 @@ export function TimelineDrawer() {
           />
           <div className="relative flex-1" style={{ minHeight: 0 }}>
             <div
+              data-testid="shots-pane"
+              data-active={activeTab === 'shots'}
+              className="absolute inset-0 overflow-hidden"
+              style={{ display: activeTab === 'shots' ? 'flex' : 'none' }}
+            >
+              <ShotsPanel />
+            </div>
+            <div
               data-testid="timeline-canvas-pane"
               data-active={activeTab === 'dopesheet'}
               className="absolute inset-0"
@@ -146,6 +178,28 @@ export function TimelineDrawer() {
               <NlaLanePane />
             </div>
             <div
+              data-testid="nodes-pane"
+              data-active={activeTab === 'nodes'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'nodes' ? 'flex' : 'none' }}
+            >
+              {/* Mounted only while its tab is up (and the drawer open — the body is not rendered
+                  closed): unlike the time panes it keeps no state worth a mount, and a hidden graph
+                  would otherwise rebuild itself on every scene change (#1675). */}
+              {activeTab === 'nodes' ? <GraphView /> : null}
+            </div>
+            <div
+              data-testid="library-pane"
+              data-active={activeTab === 'library'}
+              className="absolute inset-0 items-center justify-center p-6 text-center text-xs text-fg-dim"
+              style={{ display: activeTab === 'library' ? 'flex' : 'none' }}
+            >
+              <span>
+                The asset library arrives here. Until it does, browse and import assets from the
+                Assets tab in the left panel.
+              </span>
+            </div>
+            <div
               data-testid="light-studio-pane"
               data-active={activeTab === 'lightStudio'}
               className="absolute inset-0"
@@ -162,11 +216,10 @@ export function TimelineDrawer() {
               <ControllersDockPane />
             </div>
           </div>
-          {/* The track-ops toolbar is keyframe-specific — only the time tabs show
-              it. The Light Studio is a spatial surface with its own affordances;
-              the NLA lane view acts on strips/tracks, not timelineSelection
-              channels (#283 Phase 5 — its own affordances land in 5C/5D). */}
-          {!['lightStudio', 'nla', 'controllers'].includes(activeTab) ? <DockToolbar /> : null}
+          {/* The track-ops toolbar is keyframe-specific — only the key tabs (Dopesheet, Curves)
+              show it. Every other tab acts on something else: shots, strips/tracks, nodes,
+              assets, lights, controllers — each with its own affordances. */}
+          {KEY_TABS.includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}
       <div className="flex items-stretch">
@@ -287,36 +340,15 @@ function DockHeader({
       className="flex items-stretch border-b border-border bg-bg-2 text-xs"
       style={{ height: HEADER_HEIGHT_PX }}
     >
-      <TabButton
-        id="dopesheet"
-        label="Dopesheet"
-        active={activeTab === 'dopesheet'}
-        onClick={() => onSelectTab('dopesheet')}
-      />
-      <TabButton
-        id="curve"
-        label="Curve Editor"
-        active={activeTab === 'curve'}
-        onClick={() => onSelectTab('curve')}
-      />
-      <TabButton
-        id="nla"
-        label="NLA"
-        active={activeTab === 'nla'}
-        onClick={() => onSelectTab('nla')}
-      />
-      <TabButton
-        id="lightStudio"
-        label="Light Studio"
-        active={activeTab === 'lightStudio'}
-        onClick={() => onSelectTab('lightStudio')}
-      />
-      <TabButton
-        id="controllers"
-        label="Controllers"
-        active={activeTab === 'controllers'}
-        onClick={() => onSelectTab('controllers')}
-      />
+      {TABS.map((t) => (
+        <TabButton
+          key={t.id}
+          id={t.id}
+          label={t.label}
+          active={activeTab === t.id}
+          onClick={() => onSelectTab(t.id)}
+        />
+      ))}
       <div className="flex-1" />
       <div className="flex items-center gap-3 px-3 text-fg-dim">
         <span data-testid="timeline-dock-frame-readout">

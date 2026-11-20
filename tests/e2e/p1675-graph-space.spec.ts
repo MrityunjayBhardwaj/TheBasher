@@ -1,9 +1,11 @@
-// #1675 — the Graph editor space, against the REAL app: View ▸ Editor Space ▸ Graph draws the live
-// scene as nodes, a node clicked there is selected in the app (the inspector shows it), a node
-// selected in the app is marked in the graph, and Tab leaves the Graph for the 3D View, unmounting it. Unwiring the
-// menu item, the slot, or the selection hand-off drops one of these assertions.
+// #1675 — the node view, against the REAL app. #1703 moved it from an editor space to the bottom
+// drawer's Nodes tab: View ▸ Nodes opens it there and draws the live scene as nodes, a node clicked
+// there is selected in the app (the inspector shows it), a node selected in the app is marked in
+// the graph, and leaving the tab or closing the drawer unmounts it. Unwiring the menu item, the
+// tab, or the selection hand-off drops one of these assertions.
 
 import { expect, test } from './_fixtures';
+import { openDrawerTab } from './_drawer';
 
 interface DagWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown> } } };
@@ -14,13 +16,14 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('menu-file-button')).toBeVisible();
 });
 
-test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection', async ({ page }) => {
+test('View ▸ Nodes draws the scene in the drawer and shares the selection', async ({ page }) => {
   const layout = page.getByTestId('layout');
   await page.getByTestId('menu-view-button').click();
-  await page.getByTestId('menu-view-space').hover();
-  await page.getByTestId('menu-view-space-graph').click();
-  await expect(layout).toHaveAttribute('data-space', 'graph');
-  await expect(page.getByTestId('graph-view')).toBeVisible();
+  await page.getByTestId('menu-view-nodes').click();
+  await expect(page.getByTestId('timeline-tab-nodes')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('timeline-drawer').getByTestId('graph-view')).toBeVisible();
+  // The viewport stays up above it: the node view is not a space.
+  await expect(layout).toHaveAttribute('data-space', 'view3d');
 
   // Every node of the starter scene is drawn (#1765: the sun comes aimed by a Track-To). A
   // constraint on a chain is a wired step (#1811), so it is drawn with the wires it sits on; only
@@ -55,7 +58,7 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   const camera = page.locator('[data-graph-node="n_camera"]');
   await camera.locator('rect').first().click({ force: true });
   await expect(camera).toHaveAttribute('data-selected', 'true');
-  await expect(page.getByTestId('graph-slot')).toBeVisible();
+  await expect(page.getByTestId('nodes-pane')).toBeVisible();
   const selected = await page.evaluate(async () => {
     const m = await import('/src/app/stores/selectionStore.ts');
     return m.useSelectionStore.getState().primaryNodeId;
@@ -73,24 +76,14 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   );
   await expect(camera).not.toHaveAttribute('data-selected', 'true');
 
-  // Tab is not a road into the Graph, but it is a road out.
-  await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
-  await page.keyboard.press('Tab');
-  await expect(layout).toHaveAttribute('data-space', 'view3d');
-
-  // Both buttons are roads in: the switcher at the top right and the toolbar.
-  await page.getByTestId('space-switch-graph').click();
-  await expect(layout).toHaveAttribute('data-space', 'graph');
+  // Another tab is a road out, and the tab itself a road back in.
+  await openDrawerTab(page, 'dopesheet');
+  await expect(page.getByTestId('graph-view')).toHaveCount(0);
+  await openDrawerTab(page, 'nodes');
   await expect(page.getByTestId('graph-view')).toBeVisible();
-  await page.getByTestId('toolbar-space-view3d').click();
-  await expect(layout).toHaveAttribute('data-space', 'view3d');
-  await page.getByTestId('toolbar-space-graph').click();
-  await expect(layout).toHaveAttribute('data-space', 'graph');
 
-  await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
-  await page.keyboard.press('Tab');
-  await expect(layout).toHaveAttribute('data-space', 'view3d');
   // Closed, the graph is not mounted at all, so it does no work while the 3D View is up.
+  await page.getByTestId('timeline-drawer-toggle').click();
   await expect(page.getByTestId('graph-view')).toHaveCount(0);
 });
 
@@ -128,7 +121,7 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
     });
     if (!keyed.ok) throw new Error(keyed.reason);
   });
-  await page.getByTestId('space-switch-graph').click();
+  await openDrawerTab(page, 'nodes');
   const solver = page.locator('[data-graph-node="s_solver"]');
   await expect(solver).toBeVisible();
 

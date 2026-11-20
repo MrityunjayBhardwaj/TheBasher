@@ -5,6 +5,7 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
+import { openDrawerTab } from './_drawer';
 
 // A render and dozens of page round trips: more than the default 30 s on a loaded machine.
 test.setTimeout(180_000);
@@ -80,7 +81,7 @@ test('a shot slowed in the panel gets longer, the later cut and End follow, one 
   page,
 }) => {
   await boot(page);
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await setPlayhead(page, 2);
   await page.getByTestId('shots-cut-camera').selectOption(CAM3);
   await page.getByTestId('shots-cut-here').click();
