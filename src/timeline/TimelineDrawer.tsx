@@ -26,10 +26,15 @@
 // filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
 import { useTimelineSpan } from './timelineSpan';
-import { useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
-import { useTimelineDockStore, type TimelineTab } from '../app/stores/timelineDockStore';
+import {
+  drawerHeightFor,
+  MIN_DRAWER_HEIGHT_PX,
+  useTimelineDockStore,
+  type TimelineTab,
+} from '../app/stores/timelineDockStore';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
 import { buildKeyframeInsertOp, buildKeyframeDeleteOp } from '../app/KeyboardShortcuts';
@@ -50,7 +55,13 @@ import { SimplifyPopover } from './SimplifyPopover';
 import { rowFlag, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { parseLayerRowId } from './layerChannelRows';
 
-const DRAWER_HEIGHT_PX = 240;
+// #1703 — the drawer's height is per tab (timelineDockStore), set by the handle on its top edge.
+// The window bound: the project tabs, menu bar and playback bar (~120 px together) plus a viewport
+// of at least VIEWPORT_MIN_PX stay above/below the drawer body, so the picture never shrinks to
+// nothing. Applied at render because it depends on the window, not stored.
+const WINDOW_CHROME_RESERVE_PX = 120;
+const VIEWPORT_MIN_PX = 240;
+const RESIZE_KEY_STEP_PX = 16;
 const HEADER_HEIGHT_PX = 28;
 const TOOLBAR_HEIGHT_PX = 28;
 
@@ -62,6 +73,18 @@ export function TimelineDrawer() {
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
+  const storedHeight = useTimelineDockStore((s) => drawerHeightFor(s.heights, s.activeTab));
+  const setTabHeight = useTimelineDockStore((s) => s.setTabHeight);
+  const windowHeight = useWindowHeight();
+  // While a drag is live the height is local; it is written to the store once, on release.
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
+  const maxHeight = Math.max(
+    MIN_DRAWER_HEIGHT_PX,
+    windowHeight - WINDOW_CHROME_RESERVE_PX - VIEWPORT_MIN_PX,
+  );
+  const clampToWindow = (px: number) =>
+    Math.round(Math.min(maxHeight, Math.max(MIN_DRAWER_HEIGHT_PX, px)));
+  const height = clampToWindow(dragHeight ?? storedHeight);
 
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
 
@@ -77,9 +100,20 @@ export function TimelineDrawer() {
     >
       {open && (
         <div
-          className="flex w-full flex-col border-t border-border"
-          style={{ height: DRAWER_HEIGHT_PX }}
+          data-testid="timeline-drawer-body"
+          className="relative flex w-full flex-col border-t border-border"
+          style={{ height }}
         >
+          <ResizeHandle
+            height={height}
+            min={MIN_DRAWER_HEIGHT_PX}
+            max={maxHeight}
+            onDrag={(px) => setDragHeight(clampToWindow(px))}
+            onCommit={(px) => {
+              setDragHeight(null);
+              setTabHeight(activeTab, clampToWindow(px));
+            }}
+          />
           <DockHeader
             activeTab={activeTab}
             onSelectTab={setActiveTab}
@@ -152,6 +186,84 @@ export function TimelineDrawer() {
           <Timebar />
         </div>
       </div>
+    </div>
+  );
+}
+
+function useWindowHeight(): number {
+  const [h, setH] = useState(() => (typeof window === 'undefined' ? 900 : window.innerHeight));
+  useEffect(() => {
+    const onResize = () => setH(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return h;
+}
+
+// #1703 — the drawer's top edge. Drag up for a taller drawer; arrow keys step it. The height is
+// remembered per tab by the caller (onCommit), so each tab keeps the size it was left at.
+function ResizeHandle({
+  height,
+  min,
+  max,
+  onDrag,
+  onCommit,
+}: {
+  height: number;
+  min: number;
+  max: number;
+  onDrag: (px: number) => void;
+  onCommit: (px: number) => void;
+}) {
+  const drag = useRef<{ startY: number; startH: number; last: number } | null>(null);
+
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { startY: e.clientY, startH: height, last: height };
+  }
+  function onPointerMove(e: PointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    d.last = d.startH + (d.startY - e.clientY);
+    onDrag(d.last);
+  }
+  function onPointerUp(e: PointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    onCommit(d.last);
+  }
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    e.stopPropagation();
+    onCommit(height + (e.key === 'ArrowUp' ? RESIZE_KEY_STEP_PX : -RESIZE_KEY_STEP_PX));
+  }
+
+  return (
+    <div
+      data-testid="timeline-drawer-resize-handle"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize the bottom drawer"
+      aria-valuenow={height}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      title="Drag to resize — each tab keeps its own height"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onKeyDown={onKeyDown}
+      className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-none"
+    >
+      <span className="h-1 w-10 rounded-full bg-border group-hover:bg-fg-dim group-focus-visible:bg-accent" />
     </div>
   );
 }
