@@ -24,6 +24,8 @@
 //   Cmd/Ctrl + I      — invert selection (#226 Slice 3)
 //   Cmd/Ctrl + Shift + C — camera-from-view (snapshot orbit pose into a
 //                       new PerspectiveCamera node)
+//   Cmd/Ctrl + L      — open/fold the chat column, focusing the composer on
+//                       open (#1704); works from any field, types nothing
 //
 // Animate-mode only (P6 W6):
 //   Space             — play / pause toggle
@@ -56,6 +58,9 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useMoveToCollectionMenuStore } from './stores/moveToCollectionMenuStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useChromeStore } from './stores/chromeStore';
+import { useChatColumnStore } from './stores/chatColumnStore';
+import { focusChatComposer } from './ChatColumn';
+import { NARROW_LAYOUT_QUERY } from './layoutIslands';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
@@ -457,6 +462,34 @@ export function KeyboardShortcuts() {
           else historyUndo();
           return;
         }
+      }
+      // #1704 — Cmd/Ctrl+L opens or folds the chat column. Before the typing guard, like Cmd+S: a
+      // modifier chord types nothing, so it is safe from any field (including the composer, where
+      // it folds the chat), and preventDefault keeps the browser's address-bar focus from taking it.
+      // A window keydown only arrives while the page has focus, so it never fires from the browser's
+      // own UI. Present mode hides the chat, so there it is left to the browser.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        (e.key === 'l' || e.key === 'L') &&
+        !useChromeStore.getState().presentMode
+      ) {
+        e.preventDefault();
+        const narrow =
+          typeof window.matchMedia === 'function' && window.matchMedia(NARROW_LAYOUT_QUERY).matches;
+        if (narrow) useChromeStore.getState().closeNarrowDrawers();
+        const nowOpen = useChatColumnStore.getState().toggle(narrow);
+        if (nowOpen) {
+          focusChatComposer();
+        } else if (
+          e.target instanceof HTMLElement &&
+          e.target.closest('[data-testid="agentdock-slot"]')
+        ) {
+          // Folding with focus inside the chat would leave focus on a hidden element.
+          e.target.blur();
+        }
+        return;
       }
       if (isTypingTarget(e.target)) return;
       const cmd = e.metaKey || e.ctrlKey;

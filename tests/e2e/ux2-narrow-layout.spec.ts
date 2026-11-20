@@ -3,7 +3,8 @@
 // Below LAYOUT_NARROW_MAX (1024px) the three columns of chrome won't fit, so
 // the side islands become OFF-CANVAS OVERLAY DRAWERS (closed by default; an
 // edge tab reveals one, a scrim dismisses it) and the centered surfaces (the
-// toolbar pill + the bottom agent/timeline stack) go FULL-WIDTH. The
+// toolbar pill + the bottom playback bar) go FULL-WIDTH. #1704 — the chat column
+// is an overlay drawer here too (p1704-chat-column.spec.ts C#8). The
 // bottom-right orbit gizmo + Persp/Ortho pill are hidden (their corner is taken
 // by the full-width stack).
 //
@@ -44,7 +45,8 @@ test.describe('narrow layout (<1024px)', () => {
   test('N#2 the toolbar + bottom stack go full-width', async ({ page }) => {
     const layout = await page.getByTestId('layout').boundingBox();
     const toolbar = await page.getByTestId('floating-viewport-toolbar').boundingBox();
-    const stack = await page.getByTestId('agentdock-slot').boundingBox();
+    // #1704 — the bottom-centre island is the playback bar alone now.
+    const stack = await page.getByTestId('timeline-slot').boundingBox();
     if (!layout || !toolbar || !stack) throw new Error('missing boxes');
     // Full-width minus the edge gaps (24px) → > 90% of the layout. With the
     // desktop reserve they would be ~half the width here → fails.

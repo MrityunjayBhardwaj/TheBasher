@@ -252,6 +252,15 @@ test('#6b beacon endpoint absent in prod build (dist/ has no middleware code)', 
 test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible();
+  // #1704 — the chat column takes its width from the window, beside the viewport. The baseline is
+  // the 1280×653 viewport, so widen the window by exactly the column's measured width: the
+  // viewport (and every island over it) is then the same size and place it was captured at.
+  const chat = await page.getByTestId('agentdock-slot').boundingBox();
+  if (!chat) throw new Error('no chat column box');
+  await page.setViewportSize({ width: 1280 + Math.round(chat.width), height: 720 });
+  await expect
+    .poll(async () => (await page.getByTestId('viewport-slot').boundingBox())?.width)
+    .toBe(1280);
   // Switch the editor to 'rendered' shading so the screenshot reflects
   // ONLY DAG-authored lights (P2.6 default is 'studio' for editing UX,
   // which adds editor-only fill rigs — those must NOT be the production

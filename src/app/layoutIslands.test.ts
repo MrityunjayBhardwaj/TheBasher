@@ -17,6 +17,9 @@ import {
   CENTER_SURFACE_MAX_WIDTH,
   centerSideReserved,
   centerSurfaceWidthCss,
+  CHAT_COLUMN_WIDTH,
+  CHAT_RAIL_WIDTH,
+  chatColumnWidth,
   COLLAPSED_STRIP,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
@@ -84,5 +87,25 @@ describe('centerSurfaceWidthCss — byte-identical to the three pre-extraction c
     // 1280 (the narrowest DESKTOP width) minus the widest reserve still leaves
     // a usable band — otherwise Apply/Reject would have nowhere to sit.
     expect(1280 - centerSideReserved(false, false)).toBeGreaterThan(300);
+  });
+});
+
+// #1704 — the chat is a grid column at the window's right; the bottom band holds only playback.
+describe('chatColumnWidth', () => {
+  it('is the column open, the rail folded', () => {
+    expect(chatColumnWidth({ isNarrow: false, isPresent: false, open: true })).toBe(
+      CHAT_COLUMN_WIDTH,
+    );
+    expect(chatColumnWidth({ isNarrow: false, isPresent: false, open: false })).toBe(
+      CHAT_RAIL_WIDTH,
+    );
+    expect(CHAT_RAIL_WIDTH).toBeLessThanOrEqual(40);
+  });
+
+  it('takes no width when narrow (it overlays) or in present mode (it is hidden)', () => {
+    for (const open of [true, false]) {
+      expect(chatColumnWidth({ isNarrow: true, isPresent: false, open })).toBe(0);
+      expect(chatColumnWidth({ isNarrow: false, isPresent: true, open })).toBe(0);
+    }
   });
 });

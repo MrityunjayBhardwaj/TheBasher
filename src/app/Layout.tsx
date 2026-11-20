@@ -15,10 +15,14 @@
 // tool buttons route through editorStore.setActiveTool — single writer to
 // gizmoStore.mode (V19 honored).
 //
-// UX-BACKLOG #2 — the grid is now a SINGLE full-bleed column × 3 rows
-// (projectTabs | menu | viewport). The outliner, inspector, agent chat, and
-// timeline are no longer grid bands: they float as absolute rounded islands
-// over the viewport (mounted inside <main>; geometry from ./layoutIslands).
+// UX-BACKLOG #2 — the outliner, inspector and playback bar are not grid bands:
+// they float as absolute rounded islands over the viewport (mounted inside
+// <main>; geometry from ./layoutIslands).
+//
+// #1704 — the agent's chat is a grid column of its own at the right, from under
+// the menu bar to the window's bottom (ChatColumn). The viewport and the bottom
+// drawer end at its left edge; folding it resizes <main>, never remounts the
+// Canvas.
 //
 // P6 W8 C5 — Skip-link (sr-only until focused) added as first focusable
 // element per D-W8-5. Target: <main id="viewport" tabIndex={-1}> wrapping
@@ -38,7 +42,7 @@ import { AssetDropZone } from './AssetDropZone';
 import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
 import { FloatingViewportToolbar } from './FloatingViewportToolbar';
-import { AgentDock } from './AgentDock';
+import { ChatColumn } from './ChatColumn';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
@@ -51,6 +55,7 @@ import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import { useViewportStore } from './stores/viewportStore';
@@ -59,6 +64,7 @@ import {
   CENTER_SURFACE_MAX_WIDTH,
   CENTER_SURFACE_TOP,
   centerSurfaceWidthCss,
+  chatColumnWidth,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
   OUTLINER_WIDTH,
@@ -82,9 +88,9 @@ export function Layout() {
   const viewportSummary = useSelectionSummary();
   // 3-column grid (v0.6 #4 W1 dropped the dedicated toolRail column — the four
   // tools consolidated into the ONE floating pill, Spline region ②; Wave C
-  // dropped the agent `drawer` column — the agent moved to a full-width bottom
-  // dock): tree | viewport | inspector. Present collapses everything but
-  // viewport.
+  // dropped the agent `drawer` column; #1704 brought the chat back as a full-height
+  // column at the far right): tree | viewport | inspector. Present collapses
+  // everything but viewport.
   //
   // Spline redesign Wave B — the scene outliner is ALWAYS-ON (default
   // expanded). When the user folds it the tree column shrinks to a 28px chevron
@@ -107,7 +113,12 @@ export function Layout() {
   const isNarrow = useIsNarrowLayout();
   const narrowLeftDrawerOpen = useChromeStore((s) => s.narrowLeftDrawerOpen);
   const narrowRightDrawerOpen = useChromeStore((s) => s.narrowRightDrawerOpen);
-  const toggleNarrowDrawer = useChromeStore((s) => s.toggleNarrowDrawer);
+  const toggleSideDrawer = useChromeStore((s) => s.toggleNarrowDrawer);
+  // #1704 — one overlay at a time on a narrow window: revealing a side panel folds the chat drawer.
+  const toggleNarrowDrawer = (side: 'left' | 'right') => {
+    useChatColumnStore.getState().setVisible(true, false);
+    toggleSideDrawer(side);
+  };
   const closeNarrowDrawers = useChromeStore((s) => s.closeNarrowDrawers);
 
   // ONE source for a side island's box (V46) across both layout modes. Desktop:
@@ -123,6 +134,9 @@ export function Layout() {
   const chromeHidden = isPresent || space === 'video';
   // #1703 — an open drawer is a row of its own under the viewport, never an island over it.
   const drawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
+  // #1704 — the chat column's width: open, the rail, or nothing (narrow overlays; present hides).
+  const chatOpen = useChatColumnStore((s) => s.open);
+  const chatWidth = chatColumnWidth({ isNarrow, isPresent, open: chatOpen });
   const sideIslandStyle = (side: 'left' | 'right', width: number, open: boolean): CSSProperties => {
     const base: CSSProperties = {
       position: 'absolute',
@@ -161,7 +175,7 @@ export function Layout() {
   // overlap family). It uses the SAME collapse-aware reserve as the other
   // centered surfaces (V46: one geometry source), but no 960px cap — the editor
   // fills the clear band. Starts below the toolbar (CENTER_SURFACE_TOP) and
-  // stops above the bottom agent/timeline stack (BOTTOM_BAND).
+  // stops above the bottom playback bar (BOTTOM_BAND).
   const twoDViewWidth = centerSurfaceWidthCss({
     isNarrow,
     leftCollapsed: leftSidebarCollapsed,
@@ -190,7 +204,7 @@ export function Layout() {
       data-testid="layout"
       data-present={isPresent ? 'true' : undefined}
       data-space={space}
-      className="grid h-full w-full bg-bg text-fg"
+      className="relative grid h-full w-full bg-bg text-fg"
       style={{
         // UX-BACKLOG #2 — the tree | viewport | inspector three-column grid
         // collapsed to ONE full-bleed column. The outliner + inspector are no
@@ -200,22 +214,26 @@ export function Layout() {
         // #1637 — `minmax(0, …)`: a bare `1fr` is `minmax(auto, 1fr)`, so the column
         // grew to its widest row's content — 38 project tabs made the editor 4,334 px in
         // a 1,512 px window and put the viewport's centre off-screen.
-        gridTemplateColumns: 'minmax(0, 1fr)',
+        // #1704 — a second column holds the chat (ChatColumn), sized here: open, the folded rail,
+        // or 0 (narrow, where the chat overlays; present, where it is hidden).
+        gridTemplateColumns: `minmax(0, 1fr) ${chatWidth}px`,
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu.
-        // UX-BACKLOG #2 slice 2 — the agentdock + timeline rows are GONE: the
-        // agent chat + timeline now float as a stacked bottom-center island over
-        // the full-bleed viewport (mounted inside <main>), so the viewport reads
-        // full-bleed top→bottom. Present collapses every row but the viewport.
-        // #1703 — a fourth row holds the open bottom drawer, full width, below the viewport: the
-        // viewport ends where the drawer begins, so the drawer never covers the picture.
+        // UX-BACKLOG #2 slice 2 — no agentdock / timeline rows: the closed playback bar floats as a
+        // bottom-center island over the viewport (mounted inside <main>). Present collapses every
+        // row but the viewport.
+        // #1703 — a fourth row holds the open bottom drawer below the viewport: the viewport ends
+        // where the drawer begins, so the drawer never covers the picture. #1704 — it spans the
+        // first column only, ending at the chat column.
         gridTemplateRows: isPresent ? '0 0 1fr 0' : '32px auto 1fr auto',
+        // #1704 — the chat spans the viewport and drawer rows, so it runs from under the menu bar to
+        // the window's bottom and the drawer ends at its left edge.
         gridTemplateAreas: `
-          "projectTabs"
-          "menu"
-          "viewport"
-          "drawer"
+          "projectTabs projectTabs"
+          "menu menu"
+          "viewport chat"
+          "drawer chat"
         `,
       }}
     >
@@ -329,8 +347,8 @@ export function Layout() {
             absolute islands OVER the full-bleed viewport (Spline ③/④). They are
             TOP-anchored and stop short of the bottom (BOTTOM_BAND) so the
             bottom-right orbit gizmo + Persp/Ortho pill and the bottom-center
-            agent/timeline stack stay clear — no viewport widget has to dodge
-            them (the H91/V45 floating-overlap trap). The wrappers carry the
+            playback bar stay clear — no viewport widget
+            has to dodge them (the H91/V45 floating-overlap trap). The wrappers carry the
             FloatingViewportToolbar surface tokens (rounded-2xl border bg-bg-2/95
             shadow-xl backdrop-blur-md — V39 over-stage chrome, contrast-matrix
             covered); the inner panels render transparent so the wrapper surface
@@ -398,19 +416,11 @@ export function Layout() {
           </>
         ) : null}
 
-        {/* UX-BACKLOG #2 slice 2 — the agent chat + timeline float as a
-                STACKED bottom-center island group (the user's chosen layout):
-                agent chat on top, timeline (always-visible Timebar + revealable
-                drawer body that expands upward) below it. Bottom-anchored, so
-                the stack grows UP (agent conversation / opened drawer) without
-                touching the side islands. Width-capped (centerSideReserved, the
-                same collapse-aware reserve as the toolbar — UX #2 follow-up 1:
-                folding a side panel frees the stack to reclaim that width) and
-                centered, so it stays in the clear center band —
-                the bottom-right orbit gizmo + Persp/Ortho pill sit to its right,
-                untouched. Each surface is its own rounded island (same tokens as
-                the side panels); the inner components render their own bg.
-                onContextMenu stops here too (it overlaps <main>). */}
+        {/* UX-BACKLOG #2 slice 2 — the bottom-centre island. #1704 — it holds only playback now:
+            the chat left for its own column (ChatColumn, the `chat` grid area). Bottom-anchored and
+            width-capped by the same collapse-aware reserve as the toolbar (centerSurfaceWidthCss),
+            so it stays in the clear band between the side islands, with the bottom-right orbit
+            gizmo + Persp/Ortho pill to its right. onContextMenu stops here (it overlaps <main>). */}
         <div
           onContextMenu={(e) => e.stopPropagation()}
           style={{
@@ -426,12 +436,6 @@ export function Layout() {
           }}
           className="z-20 flex flex-col gap-2"
         >
-          <div
-            data-testid="agentdock-slot"
-            className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-          >
-            <AgentDock />
-          </div>
           {/* The Timebar carries the always-on Auto-Key record indicator
                   (footgun mitigation — must stay visible); only the drawer BODY
                   is revealable. Mounted always (collapsed only in present, which
@@ -460,6 +464,8 @@ export function Layout() {
           <TimelineDrawer />
         </div>
       ) : null}
+      {/* #1704 — the chat column: every space (3D, 2D, Video), hidden only in present mode. */}
+      <ChatColumn isNarrow={isNarrow} hidden={isPresent} />
     </div>
   );
 }

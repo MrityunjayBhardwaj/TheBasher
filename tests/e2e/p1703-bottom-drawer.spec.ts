@@ -1,6 +1,9 @@
 // #1703 — the bottom drawer splits the window: with any tab open it takes the full width at the
 // bottom and the viewport and both side panels end above it. Nothing of the picture is under it.
-import { expect, test, type Page } from './_fixtures';
+// #1704 — "full width" is now the width left of the chat column: the chat runs from the menu bar
+// to the window's bottom and the drawer ends at its left edge (updated on purpose).
+import type { Page } from '@playwright/test';
+import { expect, test } from './_fixtures';
 
 type Box = { x: number; y: number; width: number; height: number };
 
@@ -30,8 +33,15 @@ test('with any drawer tab open, the drawer spans the window and nothing of the v
     await expect(tab).toHaveAttribute('aria-selected', 'true');
 
     const drawer = await box(page, 'timeline-drawer');
-    // Full width: the drawer is not a centred island.
-    expect(drawer.width, `${name}: drawer width`).toBeGreaterThanOrEqual(window.width - 1);
+    const chat = await box(page, 'agentdock-slot');
+    // Full width up to the chat column: the drawer is not a centred island.
+    expect(drawer.x, `${name}: drawer left`).toBeLessThanOrEqual(0.5);
+    expect(drawer.width, `${name}: drawer width`).toBeGreaterThanOrEqual(
+      window.width - chat.width - 1,
+    );
+    expect(drawer.x + drawer.width, `${name}: drawer ends at the chat`).toBeLessThanOrEqual(
+      chat.x + 0.5,
+    );
     // The 3D picture ends where the drawer begins.
     for (const id of ['view3d-slot', 'tree-slot', 'inspector-slot']) {
       const b = await box(page, id);

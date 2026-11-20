@@ -1,7 +1,7 @@
 // Agent chat UI — a single text bar + message history.
 //
-// Sits in the always-on AgentDock (the full-width bottom dock, Spline redesign
-// Wave C — previously the RightDrawer right column). The orchestrator handles
+// Sits in the AgentDock inside the right-hand chat column (#1704 — previously a
+// bottom-centre island above the playback bar). The orchestrator handles
 // the LLM turn and reads fresh DAG state on every round; this component just
 // drives it with the user message + selection.
 //
@@ -119,13 +119,15 @@ export function AgentChat() {
   };
 
   return (
-    <div className="flex flex-col font-mono text-xs text-fg" data-testid="agent-chat">
-      {/* Messages — mounted ONLY when there's a conversation, so an empty chat
-          collapses the dock to just the input bar (the grid row is `auto`, so
-          a zero-height message list reserves no void). Capped height; a long
-          thread scrolls within. */}
+    <div
+      className="flex min-h-0 flex-1 flex-col font-mono text-xs text-fg"
+      data-testid="agent-chat"
+    >
+      {/* Messages — mounted ONLY when there's a conversation. #1704 — the column is full height, so
+          the thread takes the space above the composer and scrolls within it (min-h-0: a flex
+          child otherwise grows to its content instead of scrolling). */}
       {session.messages.length > 0 || session.error ? (
-        <div className="max-h-[220px] overflow-auto px-2 py-2" data-testid="agent-messages">
+        <div className="min-h-0 flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
           {session.messages.map((msg) => {
             const isAgent = msg.role === 'assistant';
             return (
@@ -195,8 +197,8 @@ export function AgentChat() {
         </div>
       ) : null}
 
-      {/* Input area */}
-      <div className="border-t border-border p-2">
+      {/* Input area — pinned to the column's bottom (mt-auto) whether or not there is a thread. */}
+      <div className="mt-auto border-t border-border p-2">
         <div className="flex items-stretch gap-1.5">
           <textarea
             value={input}

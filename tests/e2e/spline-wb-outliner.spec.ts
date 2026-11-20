@@ -54,9 +54,9 @@ test('WB#3 the asset Library is a left-panel tab (UX #6 — one home, V34)', asy
 test('WB#4 §196 — agent surface + Add/Assets create paths survive the redesign', async ({
   page,
 }) => {
-  // The agent stays first-class: AgentChat is mounted in the always-present
-  // bottom AgentDock (Wave C moved it out of the cramped right column) even
-  // though the left panel no longer hosts an agent tab.
+  // The agent stays first-class: AgentChat is mounted in the AgentDock inside the
+  // right-hand chat column (#1704) even though the left panel no longer hosts an
+  // agent tab.
   await expect(page.getByTestId('agent-dock')).toBeVisible();
   await expect(page.getByTestId('agent-chat')).toBeVisible();
   // Create paths still reachable on the floating toolbar.

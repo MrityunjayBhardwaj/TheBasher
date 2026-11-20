@@ -16,6 +16,11 @@
 //
 // Reverting the grid→islands change (panels back as docked columns) flips the
 // position:absolute + full-bleed-width assertions → these fail.
+//
+// #1704 — the agent chat is no longer a bottom island: it is a full-height grid
+// column at the window's right (p1704-chat-column.spec.ts). "Full-bleed" here
+// is now measured against the layout MINUS that column, and the bottom-centre
+// island is the playback bar alone. Updated on purpose to the decided layout.
 
 import { expect, test } from './_fixtures';
 
@@ -34,10 +39,13 @@ test.beforeEach(async ({ page }) => {
 test('#2.1 the viewport is full-bleed — no reserved side columns', async ({ page }) => {
   const main = await page.getByTestId('viewport-slot').boundingBox();
   const layout = await page.getByTestId('layout').boundingBox();
-  if (!main || !layout) throw new Error('missing boxes');
-  // The viewport <main> spans (essentially) the full layout width. Revert to the
-  // tree | viewport | inspector grid → main shrinks by ~560px → this fails.
-  expect(main.width).toBeGreaterThan(layout.width * 0.98);
+  const chat = await page.getByTestId('agentdock-slot').boundingBox();
+  if (!main || !layout || !chat) throw new Error('missing boxes');
+  // The viewport <main> spans (essentially) the full layout width left of the
+  // chat column (#1704). Revert to the tree | viewport | inspector grid → main
+  // shrinks by another ~560px → this fails.
+  expect(main.x).toBeLessThan(layout.x + 1);
+  expect(main.width).toBeGreaterThan((layout.width - chat.width) * 0.98);
 });
 
 for (const { id, edge } of [
@@ -93,8 +101,9 @@ test('#2.4 V35 — collapsing the outliner island keeps its expand toggle reacha
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
 });
 
-// Slice 2 (bottom islands): the agent chat + timeline float as a STACKED
-// bottom-center island group; the viewport is now full-bleed top→bottom.
+// Slice 2 (bottom islands): the playback bar floats as a bottom-center island
+// (#1704 — alone: the chat moved to its own column); the viewport is full-bleed
+// top→bottom.
 test('#2.5 the viewport is full-bleed vertically — no docked bottom rows', async ({ page }) => {
   const main = await page.getByTestId('viewport-slot').boundingBox();
   const layout = await page.getByTestId('layout').boundingBox();
@@ -104,18 +113,18 @@ test('#2.5 the viewport is full-bleed vertically — no docked bottom rows', asy
   expect(main.y + main.height).toBeGreaterThan(layout.y + layout.height - 8);
 });
 
-test('#2.6 agent chat + timeline are a centered stack — chat ABOVE timeline', async ({ page }) => {
-  const agent = await page.getByTestId('agentdock-slot').boundingBox();
+test('#2.6 the bottom-center island is the playback bar alone, centered on the viewport', async ({
+  page,
+}) => {
   const timeline = await page.getByTestId('timeline-slot').boundingBox();
-  const layout = await page.getByTestId('layout').boundingBox();
-  if (!agent || !timeline || !layout) throw new Error('missing boxes');
-  // Both centered on the layout.
-  const layoutCenter = layout.x + layout.width / 2;
-  expect(Math.abs(agent.x + agent.width / 2 - layoutCenter)).toBeLessThan(24);
-  expect(Math.abs(timeline.x + timeline.width / 2 - layoutCenter)).toBeLessThan(24);
-  // Same width (one stack), and the chat sits directly above the timeline.
-  expect(Math.abs(agent.width - timeline.width)).toBeLessThan(2);
-  expect(agent.y + agent.height).toBeLessThanOrEqual(timeline.y + 1);
+  const main = await page.getByTestId('viewport-slot').boundingBox();
+  if (!timeline || !main) throw new Error('missing boxes');
+  // Centered on the viewport, sitting at its bottom.
+  const mainCenter = main.x + main.width / 2;
+  expect(Math.abs(timeline.x + timeline.width / 2 - mainCenter)).toBeLessThan(24);
+  expect(main.y + main.height - (timeline.y + timeline.height)).toBeLessThan(24);
+  // #1704 — nothing of the chat is in <main> any more (it was stacked above the bar).
+  await expect(page.getByTestId('viewport-slot').getByTestId('agent-chat')).toHaveCount(0);
 });
 
 // Follow-up 1: the centered-surface reserve (toolbar pill + bottom stack) is
@@ -125,7 +134,7 @@ test('#2.6 agent chat + timeline are a centered stack — chat ABOVE timeline', 
 // geometry source, no stale static reserve).
 test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async ({ page }) => {
   const toolbarBefore = await page.getByTestId('floating-viewport-toolbar').boundingBox();
-  const stackBefore = await page.getByTestId('agentdock-slot').boundingBox();
+  const stackBefore = await page.getByTestId('timeline-slot').boundingBox();
   if (!toolbarBefore || !stackBefore) throw new Error('missing boxes');
 
   // Fold both side islands to their chevron strips.
@@ -134,7 +143,7 @@ test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'true');
 
   const toolbarAfter = await page.getByTestId('floating-viewport-toolbar').boundingBox();
-  const stackAfter = await page.getByTestId('agentdock-slot').boundingBox();
+  const stackAfter = await page.getByTestId('timeline-slot').boundingBox();
   if (!toolbarAfter || !stackAfter) throw new Error('missing boxes');
 
   // Both centered surfaces are now wider. With a STATIC reserve they would be

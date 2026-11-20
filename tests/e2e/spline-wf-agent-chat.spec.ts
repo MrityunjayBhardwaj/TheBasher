@@ -47,20 +47,19 @@ test('WF#4 the send affordance is a labelled icon, not a "send" word', async ({ 
   await expect(send).not.toContainText('send');
 });
 
-test('WF#5 an empty chat collapses the dock to a slim bar — no reserved void', async ({ page }) => {
-  const dock = page.getByTestId('agent-dock');
-  const box = await dock.boundingBox();
-  if (!box) throw new Error('missing dock box');
-  // (a) Slim: re-adding `h-full` to the dock / a flex-1 message list fills the
-  // row → a void above the input → height balloons → this fails.
-  expect(box.height).toBeLessThan(110);
-  // The message list is not even mounted when there's nothing to show.
+// #1704 — the chat is a full-height column now (the user's call), so the old
+// "collapses to a slim bar stacked above the timeline" contract is replaced, on
+// purpose, by the column's: no message list until there is a conversation, and
+// the composer pinned to the column's bottom.
+test('WF#5 an empty chat mounts no message list; the composer sits at the column bottom', async ({
+  page,
+}) => {
   await expect(page.getByTestId('agent-messages')).toHaveCount(0);
-  // (b) Stacked directly above the timeline: UX-BACKLOG #2 slice 2 floats the
-  // agent + timeline as a stacked bottom-center island group with a small ~8px
-  // island gap between them (no large reserved void). Re-adding a fixed tall
-  // dock height or a big gap → this fails.
-  const timeline = await page.getByTestId('timeline-slot').boundingBox();
-  if (!timeline) throw new Error('missing timeline box');
-  expect(Math.abs(box.y + box.height - timeline.y)).toBeLessThanOrEqual(12);
+  const column = await page.getByTestId('agentdock-slot').boundingBox();
+  const input = await page.getByTestId('agent-input').boundingBox();
+  if (!column || !input) throw new Error('missing boxes');
+  // Drop the composer's mt-auto (or let the dock stop filling the column) → the
+  // composer floats up under the header → this fails.
+  expect(column.y + column.height - (input.y + input.height)).toBeLessThan(24);
+  expect(column.height).toBeGreaterThan(400);
 });

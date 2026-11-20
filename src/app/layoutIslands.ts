@@ -1,6 +1,6 @@
 // Floating-island geometry — UX-BACKLOG #2.
 //
-// The chrome panels (outliner, inspector, agent chat, timeline) are detached
+// The chrome panels (outliner, inspector, playback bar) are detached
 // rounded islands floating OVER a full-bleed viewport (Spline-style), not
 // docked grid bands. These constants are the ONE source of truth for their
 // footprint so the panels, the viewport's own bottom-right widgets (the orbit
@@ -10,11 +10,15 @@
 // Why a reserved BOTTOM_BAND: the side islands are TOP-anchored and stop short
 // of the bottom so the bottom strip stays clear for (a) the bottom-right orbit
 // gizmo + ProjectionToggle (already floating, untouched) and (b) the
-// bottom-center agent + timeline stack. Full-height side islands would cover
-// the bottom-right gizmo (it lives within ~120px of the bottom edge) — the
-// H91/V45 family of "a relocated chrome surface silently overlaps another
-// floating surface". Keeping the band clear is the lowest-coupling fix: no
-// viewport widget needs to dodge the inspector.
+// bottom-center playback bar. Full-height side islands would cover the
+// bottom-right gizmo (it lives within ~120px of the bottom edge) — the H91/V45
+// family of "a relocated chrome surface silently overlaps another floating
+// surface". Keeping the band clear is the lowest-coupling fix: no viewport
+// widget needs to dodge the inspector.
+//
+// #1704 — the agent chat left the bottom-centre stack for its own full-height
+// column at the window's right (CHAT_COLUMN_WIDTH, a grid column — not an
+// island). The bottom-centre island is the playback bar alone.
 //
 // The surface tokens (rounded-2xl border bg-bg-2/95 shadow-xl backdrop-blur-md)
 // are NOT here — they live as Tailwind classes on the island wrappers, matching
@@ -49,13 +53,32 @@ export const CENTER_SURFACE_TOP = 60;
 /** Reserved clear strip along the bottom of the viewport. The side islands'
  *  bottom edge sits this far above the viewport's bottom, leaving room for the
  *  bottom-right orbit gizmo (≈ bottom 40–120px) + Persp/Ortho pill and the
- *  bottom-center agent + timeline stack — none of which the side islands cover. */
+ *  bottom-center playback bar — none of which the side islands cover. */
 export const BOTTOM_BAND = 140;
 
+/** #1704 — the chat column's width when open (the design's ~360px column). */
+export const CHAT_COLUMN_WIDTH = 360;
+
+/** #1704 — the folded chat column: a slim rail with the chat icon + ⌘L hint. */
+export const CHAT_RAIL_WIDTH = 36;
+
+/** #1704 — the width of the chat's grid column. Narrow: 0 — the chat is an
+ *  overlay drawer, so the viewport keeps its width. Present: 0 — every chrome
+ *  region collapses. Otherwise the open column or the folded rail. */
+export function chatColumnWidth(opts: {
+  isNarrow: boolean;
+  isPresent: boolean;
+  open: boolean;
+}): number {
+  if (opts.isNarrow || opts.isPresent) return 0;
+  return opts.open ? CHAT_COLUMN_WIDTH : CHAT_RAIL_WIDTH;
+}
+
 /** Below this CSS width the island layout switches to its NARROW variant
- *  (UX-BACKLOG #2 follow-up 2): the side panels become off-canvas overlay
- *  drawers (closed by default), and the centered surfaces (toolbar pill +
- *  bottom stack) go full-width instead of reserving columns for the islands.
+ *  (UX-BACKLOG #2 follow-up 2): the side panels and the chat column (#1704)
+ *  become off-canvas overlay drawers (closed by default), and the centered
+ *  surfaces (toolbar pill + playback bar) go full-width instead of reserving
+ *  columns for the islands.
  *  At or above it, the desktop side-by-side island layout applies. Spline and
  *  Blender are desktop tools; rather than let three columns of chrome overlap
  *  when the window is dragged narrow, the editor re-docks to a single column
@@ -95,7 +118,7 @@ export function centerSideReserved(leftCollapsed: boolean, inspectorCollapsed: b
 }
 
 /** Width cap for a centered surface that should not stretch the full clear band
- *  (the toolbar pill and the bottom agent/timeline stack). The 2D View and the
+ *  (the toolbar pill and the bottom playback bar). The 2D View and the
  *  DiffBar are bars/editors — they fill the band and pass no cap. */
 export const CENTER_SURFACE_MAX_WIDTH = 960;
 

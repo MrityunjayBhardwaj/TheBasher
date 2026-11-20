@@ -163,8 +163,12 @@ test('P6.W3#6 AddMenu reachable from RMB and toolbar + button (D-04 regression)'
   // Path 1 — RMB on the CLEAR viewport (center). UX-BACKLOG #2 floated the
   // outliner as a left island over the viewport, so (200,200) is now under the
   // panel (whose contextmenu is stopped); right-click the open center instead.
+  // #1704 — the centre is measured, not assumed: the chat column narrowed the
+  // viewport, and the old literal x=640 (half of 1280) now lands on the inspector.
   const viewport = page.getByTestId('viewport-slot');
-  await viewport.click({ button: 'right', position: { x: 640, y: 300 } });
+  const vbox = await viewport.boundingBox();
+  if (!vbox) throw new Error('no viewport box');
+  await viewport.click({ button: 'right', position: { x: vbox.width / 2, y: 300 } });
   await expect(page.getByTestId('add-menu')).toBeVisible();
   // Close via Escape (existing handler) and confirm.
   await page.keyboard.press('Escape');
