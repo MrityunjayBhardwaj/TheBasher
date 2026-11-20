@@ -22,7 +22,8 @@
 // H91/V45 (the floating-surface overlap family — the toolbar and the 2D View
 // were re-bounded for this same reason; the DiffBar predates the islands).
 
-import { expect, test, type Page } from './_fixtures';
+import type { Page } from '@playwright/test';
+import { expect, test } from './_fixtures';
 import { splitCurveOps } from './_splitCurve';
 
 interface DiffWin {
@@ -144,7 +145,7 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
   test('reachable in the NARROW layout too (the other branch of the reserve)', async ({ page }) => {
     // Below the breakpoint the side panels become off-canvas drawers that
     // OVERLAY rather than reserve, so the bar takes the full width minus the
-    // edge gaps — a different branch of centerSurfaceWidthCss, and one nothing
+    // edge gaps — a different branch of centerSurfaceBox, and one nothing
     // else would have exercised.
     //
     // (An OPEN drawer sits at zIndex 40, above this bar. That is not this bug

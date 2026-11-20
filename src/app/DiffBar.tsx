@@ -24,7 +24,7 @@
 //      the director was asked to judge it.
 //
 // The fix is the same collapse-aware reserve every other centered surface uses
-// (centerSurfaceWidthCss — the ONE geometry source, V46), NOT a z-index bump: a
+// (centerSurfaceBox — the ONE geometry source, V46), NOT a z-index bump: a
 // bump would keep the bar full-bleed and merely trade which surface is buried
 // (the sibling AssetErrorBanner took the z-index road in #261 and now covers the
 // inspector when it fires). Reserving the band means the bar and the islands
@@ -39,7 +39,7 @@ import { useDiffStore, acceptSelectedOps } from '../agent/diff';
 import { useDagStore } from '../core/dag/store';
 import { countBySource, extractTimeRange, formatTimeRange, hasMetaToShow } from './DiffBar.helpers';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
-import { CENTER_SURFACE_TOP, centerSurfaceWidthCss } from './layoutIslands';
+import { CENTER_SURFACE_TOP, centerSurfaceBox } from './layoutIslands';
 import { useChromeStore } from './stores/chromeStore';
 import { badgeLabel } from './badges';
 import type { Reportable } from '../core/dag/ops';
@@ -105,9 +105,7 @@ export function DiffBar() {
         // diff arrives. See the geometry note at the top of this file.
         position: 'absolute',
         top: CENTER_SURFACE_TOP,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: centerSurfaceWidthCss({ isNarrow, leftCollapsed, inspectorCollapsed }),
+        ...centerSurfaceBox({ isNarrow, leftCollapsed, inspectorCollapsed, band: 'top' }),
         // Below the side islands (20): the reserve already keeps them apart, so
         // if the two ever disagree the islands win rather than this bar burying
         // them — the failure mode stays visible instead of swapping victims.

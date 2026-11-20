@@ -75,8 +75,9 @@ for (const { id, edge } of [
     // since the chat left the bottom band (#1704), so it runs to the island gap.
     expect(box.y - main.y).toBeLessThan(24);
     const bottomGap = main.y + main.height - (box.y + box.height);
+    // #1704 — the outliner stops just above the floating playback bar, which owns the bottom band.
     if (edge === 'right') expect(bottomGap).toBeGreaterThan(100);
-    else expect(bottomGap).toBeLessThan(24);
+    else expect(bottomGap).toBeLessThanOrEqual(61);
   });
 }
 
@@ -116,26 +117,32 @@ test('#2.5 the viewport is full-bleed vertically — no docked bottom rows', asy
   expect(main.y + main.height).toBeGreaterThan(layout.y + layout.height - 8);
 });
 
-test('#2.6 the bottom-center island is the playback bar alone, centered on the viewport', async ({
+test('#2.6 the bottom island is the playback bar alone, centred in the bottom band', async ({
   page,
 }) => {
   const timeline = await page.getByTestId('timeline-slot').boundingBox();
   const main = await page.getByTestId('viewport-slot').boundingBox();
-  if (!timeline || !main) throw new Error('missing boxes');
-  // Centered on the viewport, sitting at its bottom.
-  const mainCenter = main.x + main.width / 2;
-  expect(Math.abs(timeline.x + timeline.width / 2 - mainCenter)).toBeLessThan(24);
+  const pill = await page.getByTestId('projection-toggle').boundingBox();
+  if (!timeline || !main || !pill) throw new Error('missing boxes');
+  // #1704 — centred between the viewport's left edge and the bottom-right Persp/Ortho pill (the
+  // band the playback bar owns), never running under the pill; sitting at the bottom.
+  const bandCenter = (main.x + pill.x) / 2;
+  expect(Math.abs(timeline.x + timeline.width / 2 - bandCenter)).toBeLessThan(24);
+  expect(timeline.x + timeline.width).toBeLessThanOrEqual(pill.x);
   expect(main.y + main.height - (timeline.y + timeline.height)).toBeLessThan(24);
   // #1704 — nothing of the chat is in <main> any more (it was stacked above the bar).
   await expect(page.getByTestId('viewport-slot').getByTestId('agent-chat')).toHaveCount(0);
 });
 
-// Follow-up 1: the centered-surface reserve (toolbar pill + bottom stack) is
-// collapse-AWARE — folding both side panels to their 28px strips frees the
-// centered band, so the toolbar and the bottom stack reclaim the width that was
-// previously reserved for the expanded islands (V46: ONE collapse-aware
-// geometry source, no stale static reserve).
-test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async ({ page }) => {
+// Follow-up 1: the centered-surface reserve is collapse-AWARE — folding both
+// side panels to their 28px strips frees the centered band, so the toolbar
+// reclaims the width that was reserved for the expanded islands (V46: ONE
+// collapse-aware geometry source). #1704 — the playback bar no longer depends on
+// the panels at all: they stop above the bottom band it owns, so its width
+// holds steady (updated on purpose from "widens").
+test('#2.8 collapsing both side panels widens the toolbar; the playback bar keeps its band', async ({
+  page,
+}) => {
   const toolbarBefore = await page.getByTestId('floating-viewport-toolbar').boundingBox();
   const stackBefore = await page.getByTestId('timeline-slot').boundingBox();
   if (!toolbarBefore || !stackBefore) throw new Error('missing boxes');
@@ -149,10 +156,10 @@ test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async
   const stackAfter = await page.getByTestId('timeline-slot').boundingBox();
   if (!toolbarAfter || !stackAfter) throw new Error('missing boxes');
 
-  // Both centered surfaces are now wider. With a STATIC reserve they would be
-  // pinned to the expanded footprint regardless of collapse → these fail.
+  // The toolbar is wider. With a STATIC reserve it would be pinned to the
+  // expanded footprint regardless of collapse → this fails.
   expect(toolbarAfter.width).toBeGreaterThan(toolbarBefore.width + 40);
-  expect(stackAfter.width).toBeGreaterThan(stackBefore.width + 40);
+  expect(Math.abs(stackAfter.width - stackBefore.width)).toBeLessThan(2);
 });
 
 // Follow-up 3: the first-run orbit hint sits just above the bottom-center stack

@@ -55,7 +55,7 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editorStore';
 import { useGizmoStore } from './stores/gizmoStore';
-import { centerSurfaceWidthCss } from './layoutIslands';
+import { centerSurfaceBox } from './layoutIslands';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useLeftSidebarStore } from './stores/leftSidebarStore';
 import { useTimeStore } from './stores/timeStore';
@@ -325,19 +325,19 @@ export function FloatingViewportToolbar(): ReactNode {
       role="toolbar"
       aria-orientation="horizontal"
       aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
-      // UX-BACKLOG #2 — the viewport is now full-bleed and the outliner/inspector
-      // float as side islands over it. A toolbar centered on the viewport
+      // UX-BACKLOG #2 — the viewport is full-bleed and the outliner/inspector
+      // float as side islands over it. A toolbar centred on the viewport
       // midpoint would slide UNDER those islands at narrow widths (its right end
-      // disappeared behind the inspector — observed at 1100px). Cap its width so
-      // it stays in the clear center band between the islands; it still scrolls
-      // horizontally (overflow-x-auto) when the controls exceed that band. The
-      // reserve tracks the LIVE collapse flags (UX #2 follow-up 1) — folding a
-      // side panel to its 28px strip lets the pill reclaim that width instead of
-      // staying pinned to the expanded footprint.
-      style={{
-        maxWidth: centerSurfaceWidthCss({ isNarrow, leftCollapsed, inspectorCollapsed }),
-      }}
-      className="no-scrollbar absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
+      // disappeared behind the inspector — observed at 1100px). It is centred in
+      // the clear band BETWEEN the islands and capped at that band's width; it
+      // still scrolls horizontally (overflow-x-auto) when the controls exceed it.
+      // The band tracks the LIVE collapse flags (#1704: each side reserves its
+      // own island, so folding a panel to its 28px strip frees its whole width).
+      style={(() => {
+        const box = centerSurfaceBox({ isNarrow, leftCollapsed, inspectorCollapsed, band: 'top' });
+        return { left: box.left, transform: box.transform, maxWidth: box.width };
+      })()}
+      className="no-scrollbar absolute top-4 z-10 flex items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
     >
       {TOOLS.map((t) => (
         <ToolButton

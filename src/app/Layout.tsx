@@ -63,7 +63,7 @@ import { useViewportStore } from './stores/viewportStore';
 import {
   CENTER_SURFACE_MAX_WIDTH,
   CENTER_SURFACE_TOP,
-  centerSurfaceWidthCss,
+  centerSurfaceBox,
   chatColumnWidth,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
@@ -151,9 +151,10 @@ export function Layout() {
       // Narrow drawers overlay the bottom stack; desktop islands sit beside it.
       zIndex: isNarrow ? 40 : 20,
     };
-    // #1704 — the chat left the bottom band, so only the inspector still has something below it
-    // (the orbit gizmo + Persp/Ortho pill); the outliner runs down to the island gap.
-    if (!isNarrow) return { ...base, bottom: sideIslandBottom(side) };
+    // #1704 — the inspector stops above the orbit gizmo + Persp/Ortho pill; the outliner stops
+    // above the floating playback bar (which owns the bottom band), or runs to the gap when the
+    // drawer is open in its own row.
+    if (!isNarrow) return { ...base, bottom: sideIslandBottom(side, drawerOpen) };
     const offscreen =
       side === 'left'
         ? `translateX(calc(-100% - ${ISLAND_GAP}px))`
@@ -166,12 +167,13 @@ export function Layout() {
     };
   };
 
-  // Centered surfaces (toolbar + bottom stack): the collapse-aware reserve, from
-  // the ONE geometry source (V46) — see centerSurfaceWidthCss. Capped at 960.
-  const centerSurfaceWidth = centerSurfaceWidthCss({
+  // The playback bar: centred in the BOTTOM band (the side islands stop above it; only the
+  // gizmo corner is reserved), from the ONE geometry source (V46) — centerSurfaceBox. Capped at 960.
+  const playbackBox = centerSurfaceBox({
     isNarrow,
     leftCollapsed: leftSidebarCollapsed,
     inspectorCollapsed,
+    band: 'bottom',
     capPx: CENTER_SURFACE_MAX_WIDTH,
   });
 
@@ -183,10 +185,12 @@ export function Layout() {
   // fills the clear band. Starts below the toolbar (CENTER_SURFACE_TOP) and
   // stops above the floating playback bar (PLAYBACK_BAND), or at the island gap when the drawer is
   // open in its own row and nothing floats at the bottom (#1704).
-  const twoDViewWidth = centerSurfaceWidthCss({
+  // #1704 — centred on the clear band between the islands (it spans down beside them: 'top').
+  const twoDViewBox = centerSurfaceBox({
     isNarrow,
     leftCollapsed: leftSidebarCollapsed,
     inspectorCollapsed,
+    band: 'top',
   });
   const twoDViewStyle: CSSProperties = {
     // 'block' (not 'flex') — TwoDView is h-full/w-full and owns its own flex
@@ -195,9 +199,7 @@ export function Layout() {
     position: 'absolute',
     top: CENTER_SURFACE_TOP,
     bottom: drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    width: twoDViewWidth,
+    ...twoDViewBox,
     zIndex: 15,
   };
   // #1556 — the Spreadsheet takes the same bounded center surface, so the outliner stays beside
@@ -354,8 +356,8 @@ export function Layout() {
             absolute islands OVER the full-bleed viewport (Spline ③/④). They are
             TOP-anchored; the inspector stops short of the bottom (GIZMO_BAND) so
             the bottom-right orbit gizmo + Persp/Ortho pill stay clear, and the
-            outliner runs to the island gap (#1704 — nothing is under it now that
-            the chat left the bottom band; sideIslandBottom). No viewport widget
+            outliner stops above the floating playback bar (#1704 —
+            sideIslandBottom). No viewport widget
             has to dodge them (the H91/V45 floating-overlap trap). The wrappers carry the
             FloatingViewportToolbar surface tokens (rounded-2xl border bg-bg-2/95
             shadow-xl backdrop-blur-md — V39 over-stage chrome, contrast-matrix
@@ -425,18 +427,15 @@ export function Layout() {
         ) : null}
 
         {/* UX-BACKLOG #2 slice 2 — the bottom-centre island. #1704 — it holds only playback now:
-            the chat left for its own column (ChatColumn, the `chat` grid area). Bottom-anchored and
-            width-capped by the same collapse-aware reserve as the toolbar (centerSurfaceWidthCss),
-            so it stays in the clear band between the side islands, with the bottom-right orbit
-            gizmo + Persp/Ortho pill to its right. onContextMenu stops here (it overlaps <main>). */}
+            the chat left for its own column (ChatColumn, the `chat` grid area). Bottom-anchored in
+            the bottom band, which the side islands stop above; it reserves the bottom-right orbit
+            gizmo + Persp/Ortho pill's footprint on its right (centerSurfaceBox 'bottom'). onContextMenu stops here (it overlaps <main>). */}
         <div
           onContextMenu={(e) => e.stopPropagation()}
           style={{
             position: 'absolute',
             bottom: ISLAND_GAP,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: centerSurfaceWidth,
+            ...playbackBox,
             // #237 — hidden in VIDEO too (the 3D TimelineDrawer z-20 was COVERED
             // by video-slot z-45, so a click on the covered drawer was
             // intercepted — H122/H129). The compositor has its own LayerTimeline.

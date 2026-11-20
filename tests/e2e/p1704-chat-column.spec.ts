@@ -245,7 +245,7 @@ test.describe('narrow (<1024 px)', () => {
   });
 });
 
-test('#1704 C#9 the side panels reclaim the old chat band: outliner runs to the bottom, inspector still clears the gizmo', async ({
+test('#1704 C#9 the side panels reclaim the old chat band: the outliner stops just above the playback bar (or runs to the bottom), the inspector still clears the gizmo', async ({
   page,
 }) => {
   await boot(page);
@@ -256,11 +256,13 @@ test('#1704 C#9 the side panels reclaim the old chat band: outliner runs to the 
     const tree = await box(page, 'tree-slot');
     const insp = await box(page, 'inspector-slot');
     const mainBottom = main.y + main.height;
-    // The outliner runs down to the island gap (the old 140 px band held the chat).
+    // The old 140 px band held the chat. Now the outliner stops just above the floating playback
+    // bar (the bar owns the bottom band, so it can run under the outliner's column), and runs
+    // down to the island gap when the drawer is open and nothing floats there.
     expect(
       mainBottom - (tree.y + tree.height),
       `outliner bottom gap (drawer open=${open})`,
-    ).toBeLessThanOrEqual(13);
+    ).toBeLessThanOrEqual(open ? 13 : 61);
     // The inspector still stops above the orbit gizmo (centre 80 px from the corner, ~45 px radius)
     // and the Persp/Ortho pill.
     const pill = await box(page, 'projection-toggle');
@@ -269,9 +271,9 @@ test('#1704 C#9 the side panels reclaim the old chat band: outliner runs to the 
       128,
     );
     if (!open) {
-      // The playback bar sits between the islands, never under the outliner.
+      // The playback bar sits below the outliner, never under it.
       const bar = await box(page, 'timeline-slot');
-      expect(tree.x + tree.width).toBeLessThan(bar.x);
+      expect(tree.y + tree.height).toBeLessThanOrEqual(bar.y);
     }
   }
 });
@@ -319,3 +321,49 @@ test('#1704 C#11 above 1440 px nothing auto-folds', async ({ page }) => {
   await page.getByTestId('inspector-expand-toggle').click();
   await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
 });
+
+function overlaps(a: Box, b: Box): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+for (const width of [1440, 1280]) {
+  test(`#1704 C#12 at ${width}×800 with chat open: the playback bar is whole and nothing overlaps`, async ({
+    page,
+  }) => {
+    await boot(page, width, 800);
+    // Open chat the way a director does, so the fold rule has run.
+    await page.keyboard.press('Meta+l');
+    await page.keyboard.press('Meta+l');
+    await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
+    await expect(page.getByTestId('inspector-expand-toggle')).toBeVisible();
+
+    const bar = await box(page, 'timeline-slot');
+    // The bar's content fits: End and Speed are inside its box, nothing scrolled/clipped.
+    const clipped = await page
+      .getByTestId('timeline-slot')
+      .evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(clipped, 'playback bar clipped by px').toBeLessThanOrEqual(0);
+    for (const id of ['timebar-end', 'timebar-speed']) {
+      const b = await box(page, id);
+      expect(b.x + b.width, `${id} inside the bar`).toBeLessThanOrEqual(bar.x + bar.width);
+    }
+    // Nothing overlaps: the bar vs the side islands, the gizmo corner and the chat column; the
+    // toolbar vs the side islands and the chat column.
+    const toolbar = await box(page, 'floating-viewport-toolbar');
+    for (const id of ['tree-slot', 'inspector-slot', 'projection-toggle', 'agentdock-slot']) {
+      expect(overlaps(bar, await box(page, id)), `playback bar overlaps ${id}`).toBe(false);
+    }
+    for (const id of ['tree-slot', 'inspector-slot', 'agentdock-slot']) {
+      expect(overlaps(toolbar, await box(page, id)), `toolbar overlaps ${id}`).toBe(false);
+    }
+    // The bar keeps clear of the orbit gizmo's column (centre 80 px from the viewport corner).
+    const main = await box(page, 'viewport-slot');
+    expect(bar.x + bar.width, 'bar left of the gizmo').toBeLessThanOrEqual(
+      main.x + main.width - 120,
+    );
+    // The toolbar sits in the clear band: a folded inspector frees its whole width, so the
+    // toolbar's right edge reaches past where the expanded inspector would have started.
+    const insp = await box(page, 'inspector-slot');
+    expect(toolbar.x + toolbar.width, 'toolbar uses the freed band').toBeGreaterThan(insp.x - 300);
+  });
+}

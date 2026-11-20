@@ -17,9 +17,8 @@
 // #1704 — the agent chat left the bottom-centre stack for its own full-height
 // column at the window's right (CHAT_COLUMN_WIDTH, a grid column — not an
 // island). The bottom-centre island is the playback bar alone, and it sits in
-// the clear band between the side islands (centerSurfaceWidthCss), so it never
-// shares x with either. Nothing is left under the OUTLINER: it runs down to
-// the island gap (sideIslandBottom).
+// the bottom band, which the side islands stop above (sideIslandBottom); it
+// reserves only the gizmo corner on its right (centerBandInsets).
 //
 // The surface tokens (rounded-2xl border bg-bg-2/95 shadow-xl backdrop-blur-md)
 // are NOT here — they live as Tailwind classes on the island wrappers, matching
@@ -64,10 +63,12 @@ export const GIZMO_BAND = 140;
 export const PLAYBACK_BAND = 60;
 
 /** #1704 — a side island's bottom inset on the desktop layout. The inspector
- *  clears the gizmo corner; the outliner has nothing under it since the chat
- *  left the bottom band, so it runs down to the island gap. */
-export function sideIslandBottom(side: 'left' | 'right'): number {
-  return side === 'right' ? GIZMO_BAND : ISLAND_GAP;
+ *  clears the gizmo corner. The outliner stops above the floating playback bar
+ *  (so the bar can use the whole bottom band, centerBandInsets 'bottom'), and
+ *  runs down to the island gap when the drawer is open and nothing floats there. */
+export function sideIslandBottom(side: 'left' | 'right', drawerOpen: boolean): number {
+  if (side === 'right') return GIZMO_BAND;
+  return drawerOpen ? ISLAND_GAP : PLAYBACK_BAND;
 }
 
 /** #1704 — the chat column's width when open (the design's ~360px column). */
@@ -116,53 +117,67 @@ export function sideIslandWidth(collapsed: boolean, expandedWidth: number): numb
   return collapsed ? COLLAPSED_STRIP : expandedWidth;
 }
 
-/** Width a VIEWPORT-CENTERED surface (the toolbar pill, the bottom-center
- *  stack) must subtract from 100% so it stays clear of BOTH side islands.
- *  Centered on the viewport midpoint (not the inter-island midpoint), so it
- *  reserves the WIDER island on both sides plus a gap each side — this gives a
- *  positive clearance regardless of the left/right width asymmetry. Without
- *  this, a full-bleed viewport lets a centered pill slide under a side island
- *  (the H91/V45 floating-overlap trap).
- *
- *  RESPONDS to the live collapse flags (V46: ONE geometry source, no stale
- *  reserve): when a panel is folded to its 28px strip the centered surface
- *  reclaims that width instead of reserving for the expanded footprint it no
- *  longer has. Both expanded → 2*(12 + 300 + 12) = 648, identical to the old
- *  static constant, so the default geometry is unchanged. */
-export function centerSideReserved(leftCollapsed: boolean, inspectorCollapsed: boolean): number {
-  const leftW = sideIslandWidth(leftCollapsed, OUTLINER_WIDTH);
-  const rightW = sideIslandWidth(inspectorCollapsed, INSPECTOR_WIDTH);
-  return 2 * (ISLAND_GAP + Math.max(leftW, rightW) + ISLAND_GAP);
-}
-
 /** Width cap for a centered surface that should not stretch the full clear band
  *  (the toolbar pill and the bottom playback bar). The 2D View and the
  *  DiffBar are bars/editors — they fill the band and pass no cap. */
 export const CENTER_SURFACE_MAX_WIDTH = 960;
 
-/** The CSS width a VIEWPORT-CENTERED surface must take to stay in the clear band
- *  between the side islands — the ONE place that decision is spelled, so a new
- *  centered surface CANNOT be born un-reserved.
- *
- *  Every centered surface had been hand-copying this same ternary (toolbar,
- *  2D View, bottom stack — three copies). The DiffBar was never given a copy,
- *  and so its right-aligned Apply/Reject sat UNDER the inspector island: the
- *  agent proposed and the director could not accept (#327 — the button was
- *  visible and unreachable, which is why a `toBeVisible()` suite never saw it).
- *  A hand-copied geometry rule drifts exactly like a hand-copied vocabulary
- *  does (V101); the reserve is now DERIVED by every centered surface from this
- *  one function instead of re-stated by each.
- *
- *  Narrow: the side panels are off-canvas drawers that OVERLAY rather than
- *  reserve, so a centered surface takes the full width minus the edge gaps. */
-export function centerSurfaceWidthCss(opts: {
+/** #1704 — the bottom-right viewport widgets' footprint, from the viewport's
+ *  right edge: the Persp/Ortho pill (≈102px wide, 16px in — measured 1440×900)
+ *  and the orbit gizmo's column (centre 80px in, ≈40px radius), plus the gap. A
+ *  bottom-band surface never runs under them. */
+export const BOTTOM_RIGHT_WIDGETS = 132;
+
+/** Which horizontal band a centred surface lives in. `top`: beside the side
+ *  islands (toolbar pill, DiffBar, 2D View / Spreadsheet, which spans down
+ *  beside them). `bottom`: the floating playback bar's strip, which the side
+ *  islands stop above (sideIslandBottom) — only the gizmo corner is reserved. */
+export type CenterBand = 'top' | 'bottom';
+
+/** The px a centred surface keeps clear of the viewport's left and right edges.
+ *  #1704 — each side reserves ITS OWN island (plus a gap each side of it), so
+ *  folding a panel to its 28px strip frees that panel's whole width. (Before,
+ *  surfaces centred on the viewport midpoint and so reserved the WIDER island on
+ *  both sides: with chat open at 1440 px a folded inspector freed nothing.)
+ *  Narrow: the panels are overlay drawers and the gizmo is hidden, so only the
+ *  edge gaps come off. */
+export function centerBandInsets(opts: {
   isNarrow: boolean;
   leftCollapsed: boolean;
   inspectorCollapsed: boolean;
+  band: CenterBand;
+}): { left: number; right: number } {
+  if (opts.isNarrow) return { left: ISLAND_GAP, right: ISLAND_GAP };
+  if (opts.band === 'bottom') return { left: ISLAND_GAP, right: BOTTOM_RIGHT_WIDGETS };
+  return {
+    left: 2 * ISLAND_GAP + sideIslandWidth(opts.leftCollapsed, OUTLINER_WIDTH),
+    right: 2 * ISLAND_GAP + sideIslandWidth(opts.inspectorCollapsed, INSPECTOR_WIDTH),
+  };
+}
+
+/** The box of a CENTRED surface — the ONE place that decision is spelled, so a
+ *  new centred surface CANNOT be born un-reserved (every one had been
+ *  hand-copying the rule; the DiffBar never got a copy and its Apply/Reject sat
+ *  under the inspector, #327 — a hand-copied geometry rule drifts like a
+ *  hand-copied vocabulary does, V101).
+ *
+ *  Use as `left` + `transform` + `width` (or `maxWidth` for a shrink-to-fit
+ *  pill): the surface is centred on the middle of the clear band and is at most
+ *  the band wide (capped at `capPx` when given). */
+export function centerSurfaceBox(opts: {
+  isNarrow: boolean;
+  leftCollapsed: boolean;
+  inspectorCollapsed: boolean;
+  band: CenterBand;
   /** Optional px cap; omit to fill the whole clear band. */
   capPx?: number;
-}): string {
-  if (opts.isNarrow) return `calc(100% - ${2 * ISLAND_GAP}px)`;
-  const band = `calc(100% - ${centerSideReserved(opts.leftCollapsed, opts.inspectorCollapsed)}px)`;
-  return opts.capPx === undefined ? band : `min(${opts.capPx}px, ${band})`;
+}): { left: string; width: string; transform: string } {
+  const { left, right } = centerBandInsets(opts);
+  const band = `calc(100% - ${left + right}px)`;
+  return {
+    left: `calc(${left}px + (100% - ${left + right}px) / 2)`,
+    // Narrow: no cap — a full-width bar is the point of the narrow layout.
+    width: opts.capPx === undefined || opts.isNarrow ? band : `min(${opts.capPx}px, ${band})`,
+    transform: 'translateX(-50%)',
+  };
 }
