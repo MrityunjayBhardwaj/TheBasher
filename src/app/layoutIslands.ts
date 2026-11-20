@@ -76,6 +76,10 @@ export const CHAT_COLUMN_WIDTH = 360;
 /** #1704 — the folded chat column: a slim rail with the chat icon + ⌘L hint. */
 export const CHAT_RAIL_WIDTH = 36;
 
+/** #1704 — at or below this window width, opening chat folds the inspector and unfolding the
+ *  inspector folds chat (chatInspectorFold.ts): both open leave too little centre band. */
+export const CHAT_INSPECTOR_FOLD_MAX = 1440;
+
 /** #1704 — the width of the chat's grid column. Narrow: 0 — the chat is an
  *  overlay drawer, so the viewport keeps its width. Present: 0 — every chrome
  *  region collapses. Otherwise the open column or the folded rail. */

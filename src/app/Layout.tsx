@@ -43,6 +43,7 @@ import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
 import { FloatingViewportToolbar } from './FloatingViewportToolbar';
 import { ChatColumn } from './ChatColumn';
+import { useChatInspectorFold } from './chatInspectorFold';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
@@ -112,6 +113,8 @@ export function Layout() {
   // the breakpoint nothing here changes — the desktop side-by-side islands
   // render byte-identically (every branch below guards on isNarrow).
   const isNarrow = useIsNarrowLayout();
+  // #1704 — at ≤ 1440 px opening chat folds the inspector, and unfolding the inspector folds chat.
+  useChatInspectorFold();
   const narrowLeftDrawerOpen = useChromeStore((s) => s.narrowLeftDrawerOpen);
   const narrowRightDrawerOpen = useChromeStore((s) => s.narrowRightDrawerOpen);
   const toggleSideDrawer = useChromeStore((s) => s.toggleNarrowDrawer);

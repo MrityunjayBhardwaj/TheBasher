@@ -275,3 +275,47 @@ test('#1704 C#9 the side panels reclaim the old chat band: outliner runs to the 
     }
   }
 });
+
+// ── The fold rule and the clear band (#1704, second pass) ──────────────────────────────────────
+// At window widths ≤ 1440 the chat column and the inspector cannot both be open and leave the
+// centre usable, so the issue's decided rule: opening chat folds the inspector to its rail, and
+// unfolding the inspector folds chat. Only on that transition — nothing re-folds on its own after.
+
+async function inspectorCollapsed(page: Page): Promise<boolean> {
+  return (await page.getByTestId('inspector-expand-toggle').count()) > 0;
+}
+
+for (const width of [1440, 1280]) {
+  test(`#1704 C#10 at ${width} px opening chat folds the inspector, and unfolding the inspector folds chat`, async ({
+    page,
+  }) => {
+    await boot(page, width, 900);
+    // Boot: both open (the persisted/default state is left alone).
+    await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
+    expect(await inspectorCollapsed(page)).toBe(false);
+
+    await page.keyboard.press('Meta+l'); // fold chat
+    await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'false');
+    expect(await inspectorCollapsed(page), 'folding chat leaves the inspector alone').toBe(false);
+
+    await page.getByTestId('chat-rail').click(); // open chat → inspector folds
+    await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
+    await expect(page.getByTestId('inspector-expand-toggle')).toBeVisible();
+
+    await page.getByTestId('inspector-expand-toggle').click(); // unfold inspector → chat folds
+    await expect(page.getByTestId('inspector-collapse-toggle')).toBeVisible();
+    await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'false');
+  });
+}
+
+test('#1704 C#11 above 1440 px nothing auto-folds', async ({ page }) => {
+  await boot(page, 1600, 900);
+  await page.keyboard.press('Meta+l');
+  await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'false');
+  await page.getByTestId('chat-rail').click();
+  await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
+  expect(await inspectorCollapsed(page)).toBe(false);
+  await page.getByTestId('inspector-collapse-toggle').click();
+  await page.getByTestId('inspector-expand-toggle').click();
+  await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
+});
