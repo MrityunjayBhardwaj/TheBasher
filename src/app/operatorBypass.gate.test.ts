@@ -339,22 +339,26 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ColorCorrect',
       'ComponentGroupOp',
       'Layer', // #1879
+      'FollowPath', // #1894 S0b — the second constraint step, now a chain declarer
       'MaskModifier',
       'MaterialOverride',
       'MaterialOverrideOp',
       'MirrorModifier',
       'SetMaterialOp',
+      'TrackTo', // #1894 S0b — the first constraint step, now a chain declarer
       'Transform',
       'UVProjectModifier',
     ]);
 
-    // Two operators declare no bypass. Nothing says whether that is a decision or an
-    // omission, because there is nowhere to say it — and the cast that reads the field
-    // gives both the same answer as an operator that declared `false` on purpose.
+    // Four operators carry no `muted` passthrough bypass: the two scene-lane wrappers and,
+    // #1894 S0b, the two constraint steps. All four declare `bypass: none` — a DECIDED answer,
+    // not the omission a missing field used to produce. The constraints are muteable, but their
+    // mute is a `mute` param honoured on the WORLD path (`worldStepFold`), not the `chainBypass`
+    // machinery this census is about — so they belong here, apart from the `muted` declarers.
     const chainMinusMuted = chainInputDeclarers().filter(
       (t) => !registeredDeclaring('muted').includes(t),
     );
-    expect(chainMinusMuted).toEqual(['MaterialOverride', 'Transform']);
+    expect(chainMinusMuted).toEqual(['FollowPath', 'MaterialOverride', 'TrackTo', 'Transform']);
   });
 
   it('THREE membership lists remain, each with a reason it cannot be derived', () => {

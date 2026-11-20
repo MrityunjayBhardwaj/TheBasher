@@ -589,8 +589,14 @@ export type BypassKind =
  *
  * `'layer'` (#1879): a composition's layer stack, on the Image lane. Its door is Add Layer, which
  * wraps a source as a layer, so no "+ Add" menu lists the bare type.
+ *
+ * `'constraint'` is the constraint stack (#1894 S0b): Track To / Follow Path, the two
+ * `worldStep` steps, declare it so the shared layer panel can SEE them. It is additive
+ * metadata only — the step's world transform still renders through `worldStepFold`
+ * (`evaluator.ts`), never through the operator fold, because `worldStep: true` stays on
+ * both and the world-path dispatch keys on it alone.
  */
-export type OperatorSection = 'modifier' | 'material' | 'effect' | 'layer' | 'none';
+export type OperatorSection = 'modifier' | 'material' | 'effect' | 'constraint' | 'layer' | 'none';
 
 /**
  * Why a `none` mix has no amount to blend — the reason the panel shows DIMMED beside the

@@ -241,12 +241,18 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // `'declined'` deferral on an `ObjectData` spine (Blender's vertex-group limit, not built).
     // #1353 — `CaptureModifier` is the sixth, by the same `'declined'` deferral (a point group).
     // #1879 — `Layer` is the seventh, for the OTHER reason: an image has no component domain.
+    // #1894 S0b — the two constraint steps are exempt the way `ColorCorrect` / the scene wrappers
+    // are: their spine carries a `Matrix4` (the world coming up the chain), which has no component
+    // domain, so they declare `unscoped / no-component-domain` and the cross-check has nothing to
+    // honour against them.
     expect(exempt.sort()).toEqual([
       'ArmatureModifier',
       'CaptureModifier',
       'ColorCorrect',
       'Layer',
+      'FollowPath',
       'MaterialOverride',
+      'TrackTo',
       'Transform',
       'UVProjectModifier',
     ]);

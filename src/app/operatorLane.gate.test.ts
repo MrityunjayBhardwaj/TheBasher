@@ -195,9 +195,10 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(importsOf('src/core/dag/socketMembership.ts')).toEqual(['./types']);
   });
 
-  it('THE LANE MAP: all fourteen chain declarers land on a lane, none unreadable', () => {
+  it('THE LANE MAP: all sixteen chain declarers land on a lane, none unreadable', () => {
     // Stated as a literal rather than derived a second way. Two derivations checked against
-    // each other agree when BOTH are wrong; a literal is the row that cannot.
+    // each other agree when BOTH are wrong; a literal is the row that cannot. EXACTLY fifteen:
+    // the thirteen below plus the two constraint steps (#1894 S0b); nothing else moved.
     expect(laneMap()).toEqual({
       // #393 — the seventh geometry modifier. Its second input is the armature Object, and the
       // lane is still the spine's: an `ObjectData` flows through it like any other.
@@ -216,11 +217,16 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       // #1879 — a composition's layer: the stack below flows through on `below`, and its own
       // picture is a side input of the same type, so the lane is the spine's, as for a modifier.
       Layer: 'Image',
+      // #1894 S0b — a constraint step. Its carrying output is `world` (a `Matrix4`), not its
+      // introspection `out` (a `Constraint`); spine `in` → `world`, both `Matrix4`, so it lands
+      // on the `Matrix4` lane. This is the generalisation `operatorLaneOf` gained in S0b.
+      FollowPath: 'Matrix4',
       MaskModifier: 'ObjectData',
       MaterialOverride: 'SceneObject',
       MaterialOverrideOp: 'ObjectData',
       MirrorModifier: 'ObjectData',
       SetMaterialOp: 'ObjectData',
+      TrackTo: 'Matrix4',
       Transform: 'SceneObject',
       // #994 — the fifth geometry modifier, and the sharpest case this row makes. It reshapes
       // no geometry at all, and it still lands on the data lane, because the lane is about what
@@ -230,19 +236,30 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(Object.values(laneMap())).not.toContain('NO LANE');
   });
 
-  it('LAYER_LANES covers the CURRENT lanes only, and no constraint lane yet (#1894 S0a)', () => {
-    // A literal census of the table's own keys, NOT the G2 derivation (LAYER_LANES ⊇ every lane a
-    // declarer stands on). G2 straddles the S0a/S0b split and is deferred: S0b makes TrackTo /
-    // FollowPath chain declarers on the `Matrix4` lane AND adds that lane here in the same commit.
-    // This row is what reddens on the day `Matrix4` is added, so the constraint lane cannot arrive
-    // without a deliberate, visible edit to the table.
-    expect(Object.keys(LAYER_LANES).sort()).toEqual(['Image', 'ObjectData', 'SceneObject']);
-    // The three current lanes carry operators that don't blend, so each offers no modes and does
-    // not wrap — the wrap builder belongs to the constraint lane (S0b), offered modes to an
-    // `own`-mix layer (the Image Layer, #1879).
-    for (const lane of Object.values(LAYER_LANES)) {
-      expect(lane).toEqual({ modes: [], wraps: false });
+  it('G2: LAYER_LANES covers every lane a declarer stands on, constraint lane included (#1894 S0b)', () => {
+    // A literal census of the table's own keys. S0a deferred G2 and this row RED-flagged the day
+    // the `Matrix4` lane arrives; S0b is that day — TrackTo / FollowPath become chain declarers on
+    // `Matrix4` AND the lane joins the table in the same commit, so G2 ("LAYER_LANES ⊇ every lane a
+    // declarer stands on") now holds. Asserted below against the derived lane set so the two can
+    // never silently drift apart.
+    expect(Object.keys(LAYER_LANES).sort()).toEqual([
+      'Image',
+      'Matrix4',
+      'ObjectData',
+      'SceneObject',
+    ]);
+    // G2 proper: every lane a chain declarer actually stands on has a LAYER_LANES entry.
+    const lanesStoodOn = [...new Set(Object.values(laneMap()))].sort();
+    for (const lane of lanesStoodOn) {
+      expect(Object.keys(LAYER_LANES)).toContain(lane);
     }
+    // The three ORIGINAL lanes carry operators that don't blend, so each offers no modes and does
+    // not wrap. The constraint `Matrix4` lane wraps — constraint influence lives in small nodes
+    // around the step (#1811) — and offers no modes (influence is a scalar, not a mode choice).
+    expect(LAYER_LANES.ObjectData).toEqual({ modes: [], wraps: false });
+    expect(LAYER_LANES.SceneObject).toEqual({ modes: [], wraps: false });
+    expect(LAYER_LANES.Image).toEqual({ modes: [], wraps: false });
+    expect(LAYER_LANES.Matrix4).toEqual({ modes: [], wraps: true });
   });
 
   it('THE LANE IS NOT THE SECTION: nine on the data lane, seven in the modifier set', () => {
@@ -279,6 +296,10 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(laneMembers('SceneObject')).toEqual(['MaterialOverride', 'Transform']);
     // #1879 — two on the image lane, in two sections: an effect adjusts, a layer composites.
     expect(laneMembers('Image')).toEqual(['ColorCorrect', 'Layer']);
+    // #1894 S0b — the constraint lane: the two `worldStep` steps, standing on `Matrix4` by their
+    // `world` carrying output. Section is `constraint`, a different question from the lane (same
+    // split the rows above make): they are NOT in the modifier set asserted above.
+    expect(laneMembers('Matrix4')).toEqual(['FollowPath', 'TrackTo']);
   });
 
   it('THE DERIVED SET FOLLOWS THE REGISTRY; THE HAND-MAINTAINED LIST DOES NOT', () => {
@@ -347,11 +368,13 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(isEffectNode(node)).toBe(false);
   });
 
-  it('A NODE WHOSE SPINE AND OUTPUT DISAGREE HAS NO LANE', () => {
+  it('A NODE WHOSE SPINE AND CARRYING OUTPUT DISAGREE HAS NO LANE', () => {
     // A real thing to be able to build — a converter, not an operator. Nothing flows THROUGH
     // it, so no stack may walk down it. The agreement is checked rather than assumed from
     // `chain` merely being present, which is the difference between "declares a spine" and
-    // "is an operator".
+    // "is an operator". The carrying output is `out` here (no `world` output), so the #1894 S0b
+    // generalisation does not reach this node: its spine `ObjectData` and carrier `Image` still
+    // disagree, so it still has no lane.
     registerLaneOp('Ns2SyntheticConverter', 'ObjectData', 'Image');
     const node = nodeOfType('Ns2SyntheticConverter');
 

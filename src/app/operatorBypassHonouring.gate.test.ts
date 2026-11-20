@@ -368,10 +368,12 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), likewise.
     // 100 -> 101 -> 102 at #1811 (PolarSplit, OwnWorld). 102 -> 103 at #1811 (Value).
     // 103 -> 104 at #1720 (ModelGenerate, no operator).
-    // #1879 — `Layer` becomes an operator (a composition's layer stack): the type count stays at
-    // 104 and the operator count moves 13 -> 14.
+    // #1879 — `Layer` becomes an operator (a composition's layer stack): types 103 -> 104, operators +1.
+    // #1894 S0b — TrackTo + FollowPath also became chain declarers: no new TYPES (two existing
+    // `worldStep` steps gained a `chain` declaration), operators +2. Combined from the base of 13:
+    // operators 13 + 1 (Layer) + 2 (constraints) = 16; types land at 104.
     expect(listNodeTypes()).toHaveLength(104);
-    expect(operators()).toHaveLength(14);
+    expect(operators()).toHaveLength(16);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

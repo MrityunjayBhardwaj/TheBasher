@@ -97,6 +97,10 @@ const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> =
   material: 'ObjectData',
   effect: 'Image',
   layer: 'Image',
+  // #1894 S0b — the constraint stack runs on the `Matrix4` lane: a Track-To / Follow-Path step's
+  // spine (`in`) carries the world transform coming up the chain. The step still RENDERS through
+  // `worldStepFold` (it keeps `worldStep: true`); this entry only lets the shared panel find it.
+  constraint: 'Matrix4',
 };
 
 /**
@@ -106,14 +110,17 @@ const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> =
  * wrap, because none of their declarers blends — the wrap builder belongs to the constraint lane
  * (S0b adds `Matrix4`), and offered modes to an `own`-mix layer (the Image Layer, #1879).
  *
- * 🔴 DELIBERATELY NOT YET COMPLETE. G2 ("`LAYER_LANES` covers every lane a chain declarer stands
- * on") straddles the S0a/S0b split and is deferred to S0b: coupling the constraint `Matrix4` lane
- * in here now, before its declarers exist, would be a lane offering a member it cannot carry.
+ * #1894 S0b — G2 COMPLETE. The constraint `Matrix4` lane joins here in the same commit that makes
+ * Track To / Follow Path chain declarers on it, so `LAYER_LANES` now covers every lane a chain
+ * declarer stands on. It `wraps: true` — the constraint-influence blend lives in small nodes
+ * around the step (#1811, `stackTree.ts`), which is exactly what `wrap` names; it offers no modes
+ * because influence is a scalar, not a choice of blend mode.
  */
 export const LAYER_LANES: Readonly<Partial<Record<SocketTypeName, LayerLane>>> = {
   ObjectData: { modes: [], wraps: false },
   SceneObject: { modes: [], wraps: false },
   Image: { modes: [], wraps: false },
+  Matrix4: { modes: [], wraps: true },
 };
 
 function assertChainDeclaration(def: NodeDefinition): void {

@@ -326,12 +326,15 @@ export const SHARED_WIRES: readonly string[] = [
   'GltfSkeleton.asset',
   // #1811 — a constraint chain's wires: deleting one step or object never takes what it reads.
   // What dies with an object is decided with the doors that build a chain.
-  'FollowPath.in',
+  // #1894 S0b — the chain SPINE (`FollowPath.in` / `TrackTo.in`) is no longer listed here: it now
+  // owns `'stack'` by its `chain.input` declaration, exactly like every other operator spine
+  // (`wireOwnership`), which re-stitches the stack on delete rather than cascading — the same
+  // "never takes what it reads" the line above states, now carried by the declaration. The
+  // NON-spine constraint wires (`curve`, `aim`, `parent`) stay shared: they are not the spine.
   'FollowPath.curve',
   'Group.constraints',
   'Null.constraints',
   'Object.constraints',
-  'TrackTo.in',
   'TrackTo.aim',
   'TrackTo.parent',
   // #1810 — an object's parent: deleting a child never takes what it hangs from.

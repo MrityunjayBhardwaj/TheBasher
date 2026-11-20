@@ -86,7 +86,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all fourteen operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all sixteen operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArmatureModifier', // data lane — geometry (#393, the first that DEFORMS over time)
       'ArrayModifier', // data lane — geometry
@@ -95,11 +95,13 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
       'Layer', // image lane — a composition's layer stack (#1879)
+      'FollowPath', // constraint lane — Matrix4 (#1894 S0b, the second worldStep step)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
       'MirrorModifier', // data lane — geometry
       'SetMaterialOp', // data lane — material
+      'TrackTo', // constraint lane — Matrix4 (#1894 S0b, the first worldStep step)
       'Transform', // scene lane
       'UVProjectModifier', // data lane — geometry (#994, the first that RESHAPES NOTHING)
     ]);
@@ -135,10 +137,12 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'MaterialOverrideOp',
       'SetMaterialOp',
     ]);
-    // Not a choice: the spine value has no components at all.
+    // Not a choice: the spine value has no components at all. #1894 S0b adds the two constraint
+    // steps — their spine carries a `Matrix4` (the world coming up the chain), which has no
+    // components, so `no-component-domain` is the honest answer, not `declined`.
     expect(
       where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'no-component-domain'),
-    ).toEqual(['ColorCorrect', 'Layer', 'MaterialOverride', 'Transform']);
+    ).toEqual(['ColorCorrect', 'FollowPath', 'Layer', 'MaterialOverride', 'TrackTo', 'Transform']);
 
     // 🔴 THIS ASSERTED THE EMPTY SET UNTIL ns-2 STEP 17, AND THE ROW DID EXACTLY WHAT IT
     // WAS WRITTEN FOR. `declined` means "could be scoped, is not, YET", and the comment
@@ -208,7 +212,17 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
   });
 
   it('BYPASS is declared, and `none` is an ANSWER rather than an omission', () => {
-    expect(where((c) => c.bypass.kind === 'none')).toEqual(['MaterialOverride', 'Transform']);
+    // #1894 S0b adds the two constraint steps with `bypass: none` — NOT because they cannot be
+    // muted (they carry a `mute` param), but because their mute is honoured on the WORLD path
+    // (`worldStepFold` / `constraintChain`), not by the `chainBypass` operator machinery this
+    // field feeds. `none` is the honest "nothing for THAT machinery to do here"; `muteParamOf`
+    // still finds their `mute` through its constraint fallback (`stackEdit.ts`).
+    expect(where((c) => c.bypass.kind === 'none')).toEqual([
+      'FollowPath',
+      'MaterialOverride',
+      'TrackTo',
+      'Transform',
+    ]);
 
     // Every passthrough names a param its own schema really declares — which is what the
     // registration refusal enforces, asserted here so the enforcement has a witness.
@@ -222,7 +236,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     }
   });
 
-  it('SECTION is declared, and the two nodes in no stack are the two with nothing to bypass', () => {
+  it('SECTION is declared; section:none is a SUBSET of bypass:none, the extra two being the constraints', () => {
     expect(where((c) => c.section === 'modifier')).toEqual([
       'ArmatureModifier', // #393
       'ArrayModifier',
@@ -239,26 +253,40 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // 'none' at first, a layer broke the symmetry below: it has a bypass (hiding it), so it
     // belongs to a stack. That was the question this row exists to raise.
     expect(where((c) => c.section === 'layer')).toEqual(['Layer']);
+    // #1894 S0b — the constraint stack's two members.
+    expect(where((c) => c.section === 'constraint')).toEqual(['FollowPath', 'TrackTo']);
     expect(where((c) => c.section === 'none')).toEqual(['MaterialOverride', 'Transform']);
 
-    // THE SYMMETRY IS THE EVIDENCE THE BOUNDARY IS DRAWN RIGHT, and it is worth asserting
-    // rather than admiring: the operators that belong to no offered stack are exactly the
-    // operators that have nothing to bypass. Two independently-declared fields agreeing
-    // member for member is a much stronger signal than either alone — and if a later
-    // declaration breaks the agreement, that is a real question, not a formatting slip.
-    expect(where((c) => c.section === 'none')).toEqual(where((c) => c.bypass.kind === 'none'));
+    // THE SYMMETRY WAS THE EVIDENCE THE BOUNDARY IS DRAWN RIGHT, and S0b is the "later
+    // declaration breaks the agreement" the original row anticipated as "a real question, not a
+    // formatting slip" — so the agreement is RE-STATED as the stronger claim it now is, never
+    // deleted. Before S0b the no-stack operators were EXACTLY the nothing-to-bypass operators.
+    // The constraint steps are the first members that belong to a stack (`constraint`) yet
+    // declare `bypass: none` — because their mute lives on the WORLD path (`worldStepFold`), not
+    // the `chainBypass` machinery. So section:none is now a strict SUBSET of bypass:none, and the
+    // exactly-two extras are the constraints. Two independently-declared fields standing in a
+    // KNOWN relation is still a much stronger signal than either alone, and this is what reds if
+    // a future declarer breaks it in a way the subset does not explain.
+    const noneBypass = where((c) => c.bypass.kind === 'none');
+    const noneSection = where((c) => c.section === 'none');
+    expect(noneSection.every((t) => noneBypass.includes(t))).toBe(true); // subset
+    expect(noneBypass.filter((t) => !noneSection.includes(t))).toEqual(['FollowPath', 'TrackTo']); // the constraints
   });
 
-  it('MIX is declared, and every current operator is `none` because none of them blends', () => {
-    // #1894 S0a. The 13 operators censused above are modifiers, the two scene-lane wrappers, the
-    // image effect, and the material/component writers — none is a constraint step (the only
-    // `wrap`, whose influence lives in small nodes, #1811) and none is the composite Image Layer
-    // (the only `own`, whose own params ARE the blend, #1879). So the measured answer for all of
-    // them is `none`: nothing to mix. The KIND being uniform is the finding, not a guess — each
-    // declarer was read and matched to what it already does.
-    expect(where((c) => c.mix.kind === 'none')).toEqual(operators().map(([type]) => type));
+  it('MIX is declared: the two constraint steps are `wrap`, every other operator is `none`', () => {
+    // #1894 S0a declared all 13 then-operators `none` (none blends). S0b adds the two constraint
+    // steps as the FIRST `wrap` members — constraint influence lives in small nodes around the
+    // step (#1811), which is exactly what `wrap` names. Still no `own` (the composite Image Layer,
+    // #1879, is the first; it is not in this tree yet). The KIND is the finding, not a guess —
+    // each declarer was read and matched to what it already does.
+    const wrap = ['FollowPath', 'TrackTo'];
+    expect(where((c) => c.mix.kind === 'wrap')).toEqual(wrap);
+    expect(where((c) => c.mix.kind === 'none')).toEqual(
+      operators()
+        .map(([type]) => type)
+        .filter((type) => !wrap.includes(type)),
+    );
     expect(where((c) => c.mix.kind === 'own')).toEqual([]);
-    expect(where((c) => c.mix.kind === 'wrap')).toEqual([]);
 
     // The two that carry an `opacity` param say so APART from the rest: that opacity is the
     // material's OWN transparency, not a layer blend over the stack — the exact trap the issue
