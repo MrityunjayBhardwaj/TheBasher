@@ -3,7 +3,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { foldRuleApplies, installChatInspectorFold } from './chatInspectorFold';
+import {
+  foldRuleApplies,
+  installChatInspectorFold,
+  unfoldInspectorKeepingChat,
+} from './chatInspectorFold';
 import { useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 
@@ -43,6 +47,16 @@ describe('installChatInspectorFold', () => {
   it('unfolding the inspector folds chat; folding the inspector does not touch chat', () => {
     useChromeStore.getState().setInspectorCollapsed(true);
     expect(useChatColumnStore.getState().open).toBe(true);
+    useChromeStore.getState().toggleInspector();
+    expect(useChatColumnStore.getState().open).toBe(false);
+  });
+
+  it('#1706 — an unfold by navigation (from the proposal card) keeps chat open; the next user unfold still folds it', () => {
+    useChromeStore.getState().setInspectorCollapsed(true);
+    unfoldInspectorKeepingChat();
+    expect(useChromeStore.getState().inspectorCollapsed).toBe(false);
+    expect(useChatColumnStore.getState().open).toBe(true);
+    useChromeStore.getState().setInspectorCollapsed(true);
     useChromeStore.getState().toggleInspector();
     expect(useChatColumnStore.getState().open).toBe(false);
   });

@@ -302,3 +302,26 @@ test('#1706 — a proposed keyframe change is marked in the Dopesheet and Curves
   await expect(page.getByTestId('timeline-canvas')).toHaveAttribute('data-proposed-rows', '0');
   await expect(page.getByTestId('timeline-tab-dopesheet-proposed')).toHaveCount(0);
 });
+
+test('#1706 — going to a line in the inspector at 1440 px unfolds it and keeps the card open', async ({
+  page,
+}) => {
+  await runTurn(page);
+  // Fold the inspector, as the #1704 rule would have when the chat opened.
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __basher_chrome: { getState(): { setInspectorCollapsed: (v: boolean) => void } };
+    };
+    w.__basher_chrome.getState().setInspectorCollapsed(true);
+  });
+  await expect(page.getByTestId('inspector-proposed')).toHaveCount(0);
+
+  // Navigation from the card is not the user unfolding the inspector: chat stays open.
+  await page.getByTestId('proposal-line').nth(0).getByTestId('proposal-line-go').click();
+  const mark = page.getByTestId('inspector-proposed');
+  await expect(mark).toBeVisible();
+  await expect(mark).toContainText('0, 0, 0');
+  await expect(mark).toContainText('2, 0, 0');
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
+  await expect(page.getByTestId('agentdock-slot')).toHaveAttribute('data-open', 'true');
+});

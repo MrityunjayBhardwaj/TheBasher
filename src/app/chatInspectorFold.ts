@@ -15,6 +15,24 @@ import { CHAT_INSPECTOR_FOLD_MAX, LAYOUT_NARROW_MAX } from './layoutIslands';
 import { useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 
+// #1706 — the rule reacts to the USER toggling a panel. Going to a proposal line from the chat's
+// change list also unfolds the inspector, but the director is reviewing in the chat: folding it
+// would hide the card they just clicked. Both open is a legal state, so that unfold goes through
+// `unfoldInspectorKeepingChat`, which the reaction below skips. (Zustand notifies subscribers
+// synchronously inside `set`, so the flag is up for exactly that one transition.)
+let programmaticUnfold = false;
+
+/** Unfold the inspector without the rule folding chat (navigation, not a user toggle). */
+export function unfoldInspectorKeepingChat(): void {
+  if (!useChromeStore.getState().inspectorCollapsed) return;
+  programmaticUnfold = true;
+  try {
+    useChromeStore.getState().setInspectorCollapsed(false);
+  } finally {
+    programmaticUnfold = false;
+  }
+}
+
 /** Does the fold rule apply at this window width? */
 export function foldRuleApplies(windowWidth: number): boolean {
   return windowWidth >= LAYOUT_NARROW_MAX && windowWidth <= CHAT_INSPECTOR_FOLD_MAX;
@@ -30,7 +48,12 @@ export function installChatInspectorFold(windowWidth: () => number): () => void 
     }
   });
   const offInspector = useChromeStore.subscribe((s, prev) => {
-    if (prev.inspectorCollapsed && !s.inspectorCollapsed && foldRuleApplies(windowWidth())) {
+    if (
+      prev.inspectorCollapsed &&
+      !s.inspectorCollapsed &&
+      !programmaticUnfold &&
+      foldRuleApplies(windowWidth())
+    ) {
       if (useChatColumnStore.getState().open)
         useChatColumnStore.getState().setVisible(false, false);
     }

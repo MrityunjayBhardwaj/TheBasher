@@ -13,7 +13,7 @@ import type { ProposalLine } from '../agent/diff/proposalLines';
 import { objectOf } from '../agent/diff/proposalLines';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from '../timeline/timelineSelection';
-import { useChromeStore } from './stores/chromeStore';
+import { unfoldInspectorKeepingChat } from './chatInspectorFold';
 import { useEditorStore } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimelineDockStore } from './stores/timelineDockStore';
@@ -29,10 +29,11 @@ export function goToProposalLine(line: ProposalLine, opts: { isNarrow: boolean }
     // The viewport draws Objects: a data half's change is shown — and selected — on its Object.
     if (editorStore.space !== 'view3d') editorStore.setSpace('view3d');
     if (exists) useSelectionStore.getState().select(objectOf(state, nodeId));
-    // Desktop: bring the inspector back if it is folded. (The narrow layout's inspector is an
-    // overlay drawer that would cover the chat this click came from, so it is left closed there.)
-    const chrome = useChromeStore.getState();
-    if (!opts.isNarrow && chrome.inspectorCollapsed) chrome.setInspectorCollapsed(false);
+    // Desktop: bring the inspector back if it is folded, keeping the chat open — this click came
+    // from the change list, and folding chat would hide it mid-review (the #1704 fold rule reacts
+    // to a user toggle, not to this). The narrow layout's inspector is an overlay drawer that would
+    // cover the chat, so it is left closed there.
+    if (!opts.isNarrow) unfoldInspectorKeepingChat();
     return;
   }
 
