@@ -85,6 +85,8 @@ const TABS: readonly { id: TimelineTab; label: string }[] = [
   { id: 'lightStudio', label: 'Light Studio' },
   { id: 'controllers', label: 'Controllers' },
 ];
+/** #1703 — the time editors: a key pressed over one of them belongs to the timeline (#1483). */
+const TIME_TABS: readonly TimelineTab[] = ['dopesheet', 'curve', 'nla'];
 /** The tabs that edit keys on the active channel, so the Key/Delete/… toolbar applies. */
 const KEY_TABS: readonly TimelineTab[] = ['dopesheet', 'curve'];
 const TOOLBAR_HEIGHT_PX = 28;
@@ -116,8 +118,6 @@ export function TimelineDrawer() {
     <div
       data-testid="timeline-drawer"
       data-open={open}
-      // #1483 — keys pressed over this region belong to the timeline (KeyboardShortcuts).
-      data-key-region="timeline"
       role="region"
       aria-label={`Timeline — frame ${frame}`}
       className="flex w-full flex-col"
@@ -125,6 +125,11 @@ export function TimelineDrawer() {
       {open && (
         <div
           data-testid="timeline-drawer-body"
+          // #1483 — keys pressed over a time editor belong to the timeline (KeyboardShortcuts).
+          // #1703 — only the time editors: Shots, Nodes, Library and Controllers are not, so a
+          // key pressed over them keeps the meaning it had in their old homes (Delete after
+          // clicking a shot deletes the selected object, as it did in the left panel).
+          data-key-region={TIME_TABS.includes(activeTab) ? 'timeline' : undefined}
           className="relative flex w-full flex-col border-t border-border"
           style={{ height }}
         >
@@ -222,7 +227,8 @@ export function TimelineDrawer() {
           {KEY_TABS.includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}
-      <div className="flex items-stretch">
+      {/* The playback bar is the timeline's own, whichever tab is up. */}
+      <div className="flex items-stretch" data-key-region="timeline">
         <button
           type="button"
           data-testid="timeline-drawer-toggle"

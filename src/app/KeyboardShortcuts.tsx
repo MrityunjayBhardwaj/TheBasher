@@ -231,9 +231,13 @@ function buildKeyframeDeleteOp(): Op[] | null {
  * #1483 — whether the pointer is over the timeline (dope sheet, curve editor, NLA…). A key pressed
  * there belongs to the timeline, as Blender sends a key to the editor under the pointer. Read off
  * the DOM's own hover state at the moment of the key, so nothing has to track it.
+ * #1703 — the region is more than one element (the open drawer's time editors and the playback
+ * bar; the drawer's other tabs are not in it), so every one of them is asked.
  */
 export function pointerOverTimeline(): boolean {
-  return document.querySelector('[data-key-region="timeline"]')?.matches(':hover') ?? false;
+  return Array.from(document.querySelectorAll('[data-key-region="timeline"]')).some((el) =>
+    el.matches(':hover'),
+  );
 }
 
 /** #1483 — why Delete removed no key, in words for the notice. */

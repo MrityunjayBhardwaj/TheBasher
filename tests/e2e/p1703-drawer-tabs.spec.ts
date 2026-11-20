@@ -72,3 +72,24 @@ test('Library is a placeholder that says what arrives there', async ({ page }) =
   await expect(pane).toBeVisible();
   await expect(pane).toContainText(/asset library/i);
 });
+
+// Keys pressed over a tab that is not a time editor keep the meaning they had in that tab's old
+// home: the timeline's key region (#1483 — Delete deletes keys only) covers the time panes and the
+// playback bar, not Shots. Before #1703 the shots list was in the left panel, where Delete after
+// clicking a shot deleted the selected object; it must still do that from the drawer.
+test('Delete after a real click on a shot row deletes the selected object, as it did in the left panel', async ({
+  page,
+}) => {
+  await page.getByTestId('scene-tree-row-n_box').click();
+  await openDrawerTab(page, 'shots');
+  await page.getByTestId('shot-select-0').click();
+  await page.keyboard.press('Delete');
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const { useDagStore } = await import('/src/core/dag/store.ts');
+        return 'n_box' in useDagStore.getState().state.nodes;
+      }),
+    )
+    .toBe(false);
+});
