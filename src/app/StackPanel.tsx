@@ -19,7 +19,8 @@
 
 import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
-import type { NodeRef } from '../core/dag/types';
+import type { EvalCtx, NodeRef } from '../core/dag/types';
+import { usePlayheadFor } from './animate/usePlayheadFor';
 import { useSelectionStore } from './stores/selectionStore';
 import { planStackEdit, type StackEdit, type StackPlace } from './stackEdit';
 import {
@@ -69,6 +70,13 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
   const select = useSelectionStore((s) => s.select);
   const rows = useMemo(() => stackOf(state, output), [state, output]);
   const paths = useMemo(() => openPaths(rows), [rows]);
+  // The playhead the row model reads folded values at, so a keyed/driven influence shows what
+  // renders (read == render). Subscribed only while the stack's object value can move (#1731).
+  const { frame, seconds, normalized } = usePlayheadFor(output.node);
+  const ctx = useMemo<EvalCtx>(
+    () => ({ time: { frame, seconds, normalized } }),
+    [frame, seconds, normalized],
+  );
 
   // Groups are open and template insides closed until a person says otherwise: `flipped` holds
   // the keys they have toggled away from that.
@@ -266,7 +274,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
     named: string | null,
   ): ReactNode {
     const editable = named === null;
-    const view = rowView(state, row);
+    const view = rowView(state, row, ctx);
     const active = row.nodeId === selectedNodeId;
     const empty = emptySockets(state, row);
     const inside = row.template ? isOpen(insideKey(row), false) : false;
