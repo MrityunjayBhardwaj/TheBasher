@@ -24,7 +24,8 @@ import { create } from 'zustand';
 const STORAGE_KEY = 'basher.timelineDock.v1';
 
 // #1703 — the decided drawer: Shots · Dopesheet · NLA · Curves · Nodes · Library. The Curves tab
-// keeps the id 'curve'. Controllers stays after them until its fate is decided.
+// keeps the id 'curve'. Controllers stays after them until its fate is decided. The Light Studio
+// left for the right panel, so a persisted 'lightStudio' coerces to the default.
 export type TimelineTab =
   | 'shots'
   | 'dopesheet'
@@ -32,7 +33,6 @@ export type TimelineTab =
   | 'curve'
   | 'nodes'
   | 'library'
-  | 'lightStudio'
   | 'controllers';
 
 const VALID_TABS: readonly TimelineTab[] = [
@@ -42,7 +42,6 @@ const VALID_TABS: readonly TimelineTab[] = [
   'curve',
   'nodes',
   'library',
-  'lightStudio',
   'controllers',
 ];
 

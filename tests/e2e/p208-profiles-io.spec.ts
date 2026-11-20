@@ -10,17 +10,10 @@
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §7.5; vyapti V63.
 
 import { expect, test } from './_fixtures';
+import { openLightStudio } from './_rightPanel';
 
 interface PanelWindow {
   __basher_dag: { getState: () => { state: { outputs: { scene?: { node: string } } } } };
-}
-
-async function openLightStudio(page: import('@playwright/test').Page): Promise<void> {
-  const toggle = page.getByTestId('timeline-drawer-toggle');
-  const drawer = page.getByTestId('timeline-drawer');
-  if ((await drawer.getAttribute('data-open')) !== 'true') await toggle.click();
-  await page.getByTestId('timeline-tab-lightStudio').click();
-  await expect(page.getByTestId('light-studio-panel')).toBeVisible();
 }
 
 function puckCount(page: import('@playwright/test').Page): Promise<number> {

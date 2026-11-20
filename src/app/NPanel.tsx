@@ -178,6 +178,8 @@ import {
 } from '../nodes/channelModifiers';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
+import { useRightPanelStore, type RightPanelTab } from './stores/rightPanelStore';
+import { LightStudioPanel } from '../timeline/LightStudioPanel';
 import { useSelectionStore } from './stores/selectionStore';
 import { transformControllerOf, type TransformController } from './nodeConstraints';
 import { useRenameStore } from './stores/renameStore';
@@ -5127,6 +5129,36 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
   );
 }
 
+/** #1703 — one of the right panel's tabs (Inspector · Lights). */
+function PanelTab({
+  id,
+  label,
+  active,
+  onSelect,
+}: {
+  id: RightPanelTab;
+  label: string;
+  active: RightPanelTab;
+  onSelect: (tab: RightPanelTab) => void;
+}) {
+  const on = active === id;
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={on}
+      data-testid={`inspector-tab-${id}`}
+      data-active={on}
+      onClick={() => onSelect(id)}
+      className={`rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        on ? 'bg-bg-1 text-fg' : 'text-fg-dim hover:text-fg'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
@@ -5164,6 +5196,8 @@ export function NPanel() {
   // inspector is right-docked: `‹` expands leftward, `›` collapses rightward.
   const collapsed = useChromeStore((s) => s.inspectorCollapsed);
   const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
+  const panelTab = useRightPanelStore((s) => s.tab);
+  const setPanelTab = useRightPanelStore((s) => s.setTab);
 
   // Resolve the node's declared inspectorSections through the ONE read seam
   // (which resolves via the registry — the source of truth, V14 alignment).
@@ -5315,9 +5349,22 @@ export function NPanel() {
         >
           ›
         </button>
-        <span className="flex-1">Inspector</span>
+        {/* #1703 — the right panel's two faces (design board "Lighting"): the selected node's
+            params, or the Light Studio, which moved here from the bottom drawer. */}
+        <div
+          role="tablist"
+          aria-label="Right panel"
+          className="flex flex-1 items-center gap-1 text-[12px] normal-case tracking-normal"
+        >
+          <PanelTab id="inspector" label="Inspector" active={panelTab} onSelect={setPanelTab} />
+          <PanelTab id="lights" label="Lights" active={panelTab} onSelect={setPanelTab} />
+        </div>
       </header>
-      {!node ? (
+      {panelTab === 'lights' ? (
+        <div role="tabpanel" aria-label="Lights" data-testid="inspector-lights-panel">
+          <LightStudioPanel />
+        </div>
+      ) : !node ? (
         // v0.6 #4 W5 (D-09) — first-run empty-state guidance. Plain text only:
         // the inspector (R7) is the W8 #2-EXCLUDED region precisely because its
         // empty body has no tabbable controls — keep it that way (no buttons),

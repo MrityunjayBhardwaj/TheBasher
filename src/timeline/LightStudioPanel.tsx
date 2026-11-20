@@ -1,5 +1,7 @@
-// LightStudioPanel — the 2D Light-Studio surface (epic #201, slice #206), a third
-// tab in the timeline drawer beside the Dopesheet and Curve Editor. It is a
+// LightStudioPanel — the 2D Light-Studio surface (epic #201, slice #206). #1703 — it
+// lives in the right panel's Lights tab (it was a bottom-drawer tab), laid out as one
+// column for the panel's width: profiles, add + brush, the light list, the sphere
+// unwrap at a 2:1 aspect, then the selected light's controls. It is a
 // lat-long (equirectangular) flattening of the rig sphere around the lights' aim
 // centre: each rig light (an AreaLight aimed by a Track-To) draws as a puck at the
 // canvas point its world position maps to (`studioLightPanelXY`, the placement
@@ -214,7 +216,7 @@ export function LightStudioPanel() {
   const selectedLight = lights.find((l) => l.nodeId === primaryNodeId) ?? null;
 
   return (
-    <div data-testid="light-studio-panel" className="flex h-full w-full flex-col bg-bg text-fg">
+    <div data-testid="light-studio-panel" className="flex w-full flex-col text-fg">
       {/* #208 — the Profiles bar (BLS "Profiles"): switch the live profile, add a
           new one, delete the current. Grounded in BLS light_profiles.py / gui.py. */}
       <ProfilesBar
@@ -226,9 +228,11 @@ export function LightStudioPanel() {
         onImport={onImportProfiles}
       />
 
-      <div className="flex min-h-0 flex-1">
-        {/* Left rail — add + light list + the selected light's params / tex. */}
-        <div className="flex w-48 shrink-0 flex-col border-r border-border text-xs">
+      <div className="flex flex-col">
+        {/* Add + brush + light list. The selected light's params sit BELOW the sphere: pressing a
+            puck selects its light, and controls appearing above the sphere would move it out from
+            under the cursor mid-drag. */}
+        <div className="flex flex-col border-b border-border text-xs">
           <button
             type="button"
             data-testid="light-studio-add"
@@ -238,7 +242,7 @@ export function LightStudioPanel() {
             + Light
           </button>
           <LightBrushControls hasSelectedLight={selectedLight !== null} />
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="max-h-40 overflow-y-auto">
             {lights.map((light) => (
               <button
                 key={light.nodeId}
@@ -259,12 +263,11 @@ export function LightStudioPanel() {
               </button>
             ))}
           </div>
-          {selectedLight ? <StudioLightControls light={selectedLight} /> : null}
         </div>
 
-        {/* Right region — the lat-long canvas (the sphere unwrap). Equator + centre
-          meridian give the director a sense of front (+Z, centre) / up (+Y, top). */}
-        <div className="relative flex-1">
+        {/* The lat-long canvas (the sphere unwrap, 2:1 like any equirectangular map). Equator +
+          centre meridian give the director a sense of front (+Z, centre) / up (+Y, top). */}
+        <div className="relative aspect-[2/1] w-full">
           <div
             ref={canvasRef}
             data-testid="light-studio-canvas"
@@ -323,6 +326,11 @@ export function LightStudioPanel() {
             </div>
           ) : null}
         </div>
+        {selectedLight ? (
+          <div className="border-t border-border text-xs">
+            <StudioLightControls light={selectedLight} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -352,7 +360,7 @@ function ProfilesBar({
   return (
     <div
       data-testid="light-studio-profiles-bar"
-      className="flex items-center gap-2 border-b border-border px-2 py-1.5 text-[11px]"
+      className="flex flex-wrap items-center gap-2 border-b border-border px-2 py-1.5 text-[11px]"
     >
       <span className="font-mono text-fg/50">Profiles</span>
       {profiles.length > 0 ? (

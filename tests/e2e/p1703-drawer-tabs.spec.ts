@@ -23,7 +23,6 @@ test('the drawer shows the decided tabs, in the decided order', async ({ page })
     'Curves',
     'Nodes',
     'Library',
-    'Light Studio',
     'Controllers',
   ]);
 });

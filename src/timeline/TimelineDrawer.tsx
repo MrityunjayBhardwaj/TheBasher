@@ -1,7 +1,7 @@
 // TimelineDrawer — Timebar (always visible) + collapsible drawer body
 // hosting the dopesheet view (TimelineCanvas, the canvas-2D surface
-// the SVG Dopesheet was replaced by in P6 W9), CurveEditor, and the
-// LightStudioPanel (the 2D light-rig surface, #206) as tabs
+// the SVG Dopesheet was replaced by in P6 W9), CurveEditor and the other
+// bottom editors as tabs
 // (P6 W5 — UI-SPEC §5.9; D-UX-2). The "Dopesheet" tab id/label is
 // unchanged — only the rendering technology advanced (D-W9-2). Bottom
 // toolbar with track-ops buttons added P6 W6.
@@ -54,7 +54,6 @@ import { useNotificationStore } from '../app/stores/notificationStore';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
-import { LightStudioPanel } from './LightStudioPanel';
 import { NlaLanePane } from './NlaLanePane';
 import { ControllersDockPane } from './ControllersDockPane';
 import { ShotsPanel } from '../app/ShotsPanel';
@@ -73,7 +72,8 @@ const RESIZE_KEY_STEP_PX = 16;
 const HEADER_HEIGHT_PX = 28;
 
 // #1703 — the drawer's tabs, in the decided order: Shots · Dopesheet · NLA · Curves · Nodes ·
-// Library. Light Studio and Controllers follow until their moves land.
+// Library. Controllers follows until its fate is decided. (The Light Studio moved to the right
+// panel's Lights tab.)
 const TABS: readonly { id: TimelineTab; label: string }[] = [
   { id: 'shots', label: 'Shots' },
   { id: 'dopesheet', label: 'Dopesheet' },
@@ -82,7 +82,6 @@ const TABS: readonly { id: TimelineTab; label: string }[] = [
   { id: 'curve', label: 'Curves' },
   { id: 'nodes', label: 'Nodes' },
   { id: 'library', label: 'Library' },
-  { id: 'lightStudio', label: 'Light Studio' },
   { id: 'controllers', label: 'Controllers' },
 ];
 /** #1703 — the time editors: a key pressed over one of them belongs to the timeline (#1483). */
@@ -205,14 +204,6 @@ export function TimelineDrawer() {
               </span>
             </div>
             <div
-              data-testid="light-studio-pane"
-              data-active={activeTab === 'lightStudio'}
-              className="absolute inset-0"
-              style={{ display: activeTab === 'lightStudio' ? 'flex' : 'none' }}
-            >
-              <LightStudioPanel />
-            </div>
-            <div
               data-testid="controllers-pane"
               data-active={activeTab === 'controllers'}
               className="absolute inset-0"
@@ -223,7 +214,7 @@ export function TimelineDrawer() {
           </div>
           {/* The track-ops toolbar is keyframe-specific — only the key tabs (Dopesheet, Curves)
               show it. Every other tab acts on something else: shots, strips/tracks, nodes,
-              assets, lights, controllers — each with its own affordances. */}
+              assets, controllers — each with its own affordances. */}
           {KEY_TABS.includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}

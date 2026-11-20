@@ -13,6 +13,7 @@
 //      src/viewport/SceneFromDAG.tsx (the onClick brush branch); vyapti V60/V37/V62.
 
 import { expect, test } from './_fixtures';
+import { openLightStudio } from './_rightPanel';
 import { splitLightOps } from './_splitLight';
 
 interface Op {
@@ -184,7 +185,7 @@ test('#207 — brushing the model moves the selected light onto its shell; the l
   const toggle = page.getByTestId('timeline-drawer-toggle');
   if ((await page.getByTestId('timeline-drawer').getAttribute('data-open')) !== 'true')
     await toggle.click();
-  await page.getByTestId('timeline-tab-lightStudio').click();
+  await openLightStudio(page);
   await page.getByTestId('light-studio-brush-toggle').click();
   await expect(page.getByTestId('light-studio-brush-toggle')).toHaveAttribute(
     'aria-pressed',

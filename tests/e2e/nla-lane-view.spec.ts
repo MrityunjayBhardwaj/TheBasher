@@ -123,11 +123,10 @@ test('NLA 5B#1 — nla tab activates the pane; siblings stay mounted (hidden); e
 
   await openNlaTab(page);
 
-  // Hidden-not-unmounted siblings (D-W5-1): all four panes in the DOM.
+  // Hidden-not-unmounted siblings (D-W5-1): the sibling panes stay in the DOM.
   await expect(page.getByTestId('timeline-canvas-pane')).toHaveCount(1);
   await expect(page.getByTestId('timeline-canvas-pane')).toHaveAttribute('data-active', 'false');
   await expect(page.getByTestId('curve-editor-pane')).toHaveCount(1);
-  await expect(page.getByTestId('light-studio-pane')).toHaveCount(1);
 
   // The keyframe DockToolbar is hidden for 'nla' (it acts on timelineSelection
   // channels, not strips).

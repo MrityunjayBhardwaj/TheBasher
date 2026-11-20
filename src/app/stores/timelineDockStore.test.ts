@@ -151,4 +151,15 @@ describe('timelineDockStore', () => {
       nla: 280,
     });
   });
+
+  it('#1703 — a remembered Light Studio tab (moved to the right panel) falls back to the default', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ activeTab: 'lightStudio', heights: { lightStudio: 300, nla: 260 } }),
+    );
+    vi.resetModules();
+    const mod = await import('./timelineDockStore');
+    expect(mod.useTimelineDockStore.getState().activeTab).toBe('dopesheet');
+    expect(mod.useTimelineDockStore.getState().heights).toEqual({ nla: 260 });
+  });
 });

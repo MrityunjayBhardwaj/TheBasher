@@ -15,6 +15,7 @@
 //      src/timeline/studioPanelGeometry.ts; vyapti V60/V37; hetvabhasa H95.
 
 import { expect, test } from './_fixtures';
+import { openLightStudio } from './_rightPanel';
 import {
   resolveStudioLightTransform,
   studioLightPanelXY,
@@ -90,15 +91,6 @@ async function addAreaLight(
     },
     { id, aimPoint, lightOps },
   );
-}
-
-/** Open the timeline drawer (if collapsed) and switch to the Light Studio tab. */
-async function openLightStudio(page: import('@playwright/test').Page): Promise<void> {
-  const toggle = page.getByTestId('timeline-drawer-toggle');
-  const drawer = page.getByTestId('timeline-drawer');
-  if ((await drawer.getAttribute('data-open')) !== 'true') await toggle.click();
-  await page.getByTestId('timeline-tab-lightStudio').click();
-  await expect(page.getByTestId('light-studio-panel')).toBeVisible();
 }
 
 test.beforeEach(async ({ page }) => {

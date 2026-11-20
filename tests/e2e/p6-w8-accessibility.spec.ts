@@ -175,9 +175,9 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
   // populate its sections, and assert the inspector now has tabbable
   // descendants where it had none.
 
-  // Baseline: no selection → inspector has exactly 1 tabbable descendant
-  // — the #173 collapse chevron (an always-present chrome affordance, like
-  // R5's toggle). It had 0 before the collapse wiring; the selection-
+  // Baseline: no selection → inspector has exactly 3 tabbable descendants
+  // — the #173 collapse chevron and (#1703) the Inspector · Lights tabs, all
+  // always-present chrome affordances, like R5's toggle. It had 0 before the collapse wiring; the selection-
   // adaptive contract still governs CONTENT controls (0 until a node is
   // selected), which the delta below observes (chrome → chrome+content).
   await expect(page.getByTestId('inspector')).toBeVisible();
@@ -190,8 +190,8 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
   });
   expect(
     beforeCount,
-    'no-selection NPanel has exactly 1 tabbable — the #173 collapse chevron',
-  ).toBe(1);
+    'no-selection NPanel has exactly 3 tabbables — the #173 collapse chevron + the #1703 Inspector/Lights tabs',
+  ).toBe(3);
 
   // Expand the LeftSidebar so the SceneTree row is interactable, then
   // select the Cube (same dev seam + node id the W4 inspector specs
