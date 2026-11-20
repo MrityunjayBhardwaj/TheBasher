@@ -70,10 +70,13 @@ for (const { id, edge } of [
     } else {
       expect(main.x + main.width - (box.x + box.width)).toBeLessThan(24);
     }
-    // Top-anchored, and STOPS SHORT of the bottom so the bottom widget band
-    // (orbit gizmo / Persp-Ortho / the bottom-center stack) stays clear.
+    // Top-anchored. The inspector STOPS SHORT of the bottom so the bottom-right
+    // orbit gizmo + Persp/Ortho stay clear; the outliner has nothing under it
+    // since the chat left the bottom band (#1704), so it runs to the island gap.
     expect(box.y - main.y).toBeLessThan(24);
-    expect(main.y + main.height - (box.y + box.height)).toBeGreaterThan(100);
+    const bottomGap = main.y + main.height - (box.y + box.height);
+    if (edge === 'right') expect(bottomGap).toBeGreaterThan(100);
+    else expect(bottomGap).toBeLessThan(24);
   });
 }
 

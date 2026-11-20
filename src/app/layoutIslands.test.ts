@@ -21,9 +21,11 @@ import {
   CHAT_RAIL_WIDTH,
   chatColumnWidth,
   COLLAPSED_STRIP,
+  GIZMO_BAND,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
   OUTLINER_WIDTH,
+  sideIslandBottom,
   sideIslandWidth,
 } from './layoutIslands';
 
@@ -107,5 +109,16 @@ describe('chatColumnWidth', () => {
       expect(chatColumnWidth({ isNarrow: true, isPresent: false, open })).toBe(0);
       expect(chatColumnWidth({ isNarrow: false, isPresent: true, open })).toBe(0);
     }
+  });
+});
+
+describe('sideIslandBottom — the side panels reclaim the old chat band', () => {
+  it('the outliner runs down to the island gap: nothing floats under it any more', () => {
+    expect(sideIslandBottom('left')).toBe(ISLAND_GAP);
+  });
+
+  it('the inspector still stops above the orbit gizmo (centre 80px from the corner)', () => {
+    expect(sideIslandBottom('right')).toBe(GIZMO_BAND);
+    expect(GIZMO_BAND).toBeGreaterThan(80 + 40);
   });
 });

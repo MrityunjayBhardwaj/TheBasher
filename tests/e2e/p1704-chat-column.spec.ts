@@ -244,3 +244,34 @@ test.describe('narrow (<1024 px)', () => {
     expect(chat.width).toBeGreaterThan(300);
   });
 });
+
+test('#1704 C#9 the side panels reclaim the old chat band: outliner runs to the bottom, inspector still clears the gizmo', async ({
+  page,
+}) => {
+  await boot(page);
+  for (const open of [false, true]) {
+    if (open) await page.getByTestId('timeline-drawer-toggle').click();
+    await expect(page.getByTestId('timeline-slot')).toHaveAttribute('data-docked', String(open));
+    const main = await box(page, 'viewport-slot');
+    const tree = await box(page, 'tree-slot');
+    const insp = await box(page, 'inspector-slot');
+    const mainBottom = main.y + main.height;
+    // The outliner runs down to the island gap (the old 140 px band held the chat).
+    expect(
+      mainBottom - (tree.y + tree.height),
+      `outliner bottom gap (drawer open=${open})`,
+    ).toBeLessThanOrEqual(13);
+    // The inspector still stops above the orbit gizmo (centre 80 px from the corner, ~45 px radius)
+    // and the Persp/Ortho pill.
+    const pill = await box(page, 'projection-toggle');
+    expect(insp.y + insp.height, 'inspector above the pill').toBeLessThan(pill.y);
+    expect(mainBottom - (insp.y + insp.height), 'inspector above the gizmo').toBeGreaterThanOrEqual(
+      128,
+    );
+    if (!open) {
+      // The playback bar sits between the islands, never under the outliner.
+      const bar = await box(page, 'timeline-slot');
+      expect(tree.x + tree.width).toBeLessThan(bar.x);
+    }
+  }
+});

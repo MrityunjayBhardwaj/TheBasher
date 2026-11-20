@@ -60,7 +60,6 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
 import { useViewportStore } from './stores/viewportStore';
 import {
-  BOTTOM_BAND,
   CENTER_SURFACE_MAX_WIDTH,
   CENTER_SURFACE_TOP,
   centerSurfaceWidthCss,
@@ -68,6 +67,8 @@ import {
   INSPECTOR_WIDTH,
   ISLAND_GAP,
   OUTLINER_WIDTH,
+  PLAYBACK_BAND,
+  sideIslandBottom,
   sideIslandWidth,
 } from './layoutIslands';
 
@@ -147,7 +148,9 @@ export function Layout() {
       // Narrow drawers overlay the bottom stack; desktop islands sit beside it.
       zIndex: isNarrow ? 40 : 20,
     };
-    if (!isNarrow) return { ...base, bottom: BOTTOM_BAND };
+    // #1704 — the chat left the bottom band, so only the inspector still has something below it
+    // (the orbit gizmo + Persp/Ortho pill); the outliner runs down to the island gap.
+    if (!isNarrow) return { ...base, bottom: sideIslandBottom(side) };
     const offscreen =
       side === 'left'
         ? `translateX(calc(-100% - ${ISLAND_GAP}px))`
@@ -175,7 +178,8 @@ export function Layout() {
   // overlap family). It uses the SAME collapse-aware reserve as the other
   // centered surfaces (V46: one geometry source), but no 960px cap — the editor
   // fills the clear band. Starts below the toolbar (CENTER_SURFACE_TOP) and
-  // stops above the bottom playback bar (BOTTOM_BAND).
+  // stops above the floating playback bar (PLAYBACK_BAND), or at the island gap when the drawer is
+  // open in its own row and nothing floats at the bottom (#1704).
   const twoDViewWidth = centerSurfaceWidthCss({
     isNarrow,
     leftCollapsed: leftSidebarCollapsed,
@@ -187,7 +191,7 @@ export function Layout() {
     display: space === 'uv' ? 'block' : 'none',
     position: 'absolute',
     top: CENTER_SURFACE_TOP,
-    bottom: BOTTOM_BAND,
+    bottom: drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
     left: '50%',
     transform: 'translateX(-50%)',
     width: twoDViewWidth,
@@ -345,9 +349,10 @@ export function Layout() {
 
         {/* UX-BACKLOG #2 — the outliner (left) + inspector (right) float as
             absolute islands OVER the full-bleed viewport (Spline ③/④). They are
-            TOP-anchored and stop short of the bottom (BOTTOM_BAND) so the
-            bottom-right orbit gizmo + Persp/Ortho pill and the bottom-center
-            playback bar stay clear — no viewport widget
+            TOP-anchored; the inspector stops short of the bottom (GIZMO_BAND) so
+            the bottom-right orbit gizmo + Persp/Ortho pill stay clear, and the
+            outliner runs to the island gap (#1704 — nothing is under it now that
+            the chat left the bottom band; sideIslandBottom). No viewport widget
             has to dodge them (the H91/V45 floating-overlap trap). The wrappers carry the
             FloatingViewportToolbar surface tokens (rounded-2xl border bg-bg-2/95
             shadow-xl backdrop-blur-md — V39 over-stage chrome, contrast-matrix

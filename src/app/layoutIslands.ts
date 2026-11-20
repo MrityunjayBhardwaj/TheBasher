@@ -7,18 +7,19 @@
 // axis gizmo + Persp/Ortho pill), and the e2e gates all agree on where the
 // islands sit.
 //
-// Why a reserved BOTTOM_BAND: the side islands are TOP-anchored and stop short
-// of the bottom so the bottom strip stays clear for (a) the bottom-right orbit
-// gizmo + ProjectionToggle (already floating, untouched) and (b) the
-// bottom-center playback bar. Full-height side islands would cover the
-// bottom-right gizmo (it lives within ~120px of the bottom edge) — the H91/V45
+// Why the INSPECTOR stops short of the bottom (GIZMO_BAND): the bottom-right
+// orbit gizmo + ProjectionToggle float under it (the gizmo lives within ~125px
+// of the bottom edge). A full-height inspector would cover them — the H91/V45
 // family of "a relocated chrome surface silently overlaps another floating
-// surface". Keeping the band clear is the lowest-coupling fix: no viewport
+// surface". Keeping that corner clear is the lowest-coupling fix: no viewport
 // widget needs to dodge the inspector.
 //
 // #1704 — the agent chat left the bottom-centre stack for its own full-height
 // column at the window's right (CHAT_COLUMN_WIDTH, a grid column — not an
-// island). The bottom-centre island is the playback bar alone.
+// island). The bottom-centre island is the playback bar alone, and it sits in
+// the clear band between the side islands (centerSurfaceWidthCss), so it never
+// shares x with either. Nothing is left under the OUTLINER: it runs down to
+// the island gap (sideIslandBottom).
 //
 // The surface tokens (rounded-2xl border bg-bg-2/95 shadow-xl backdrop-blur-md)
 // are NOT here — they live as Tailwind classes on the island wrappers, matching
@@ -50,11 +51,24 @@ export const COLLAPSED_STRIP = 28;
  *  overlap family). */
 export const CENTER_SURFACE_TOP = 60;
 
-/** Reserved clear strip along the bottom of the viewport. The side islands'
- *  bottom edge sits this far above the viewport's bottom, leaving room for the
- *  bottom-right orbit gizmo (≈ bottom 40–120px) + Persp/Ortho pill and the
- *  bottom-center playback bar — none of which the side islands cover. */
-export const BOTTOM_BAND = 140;
+/** How far above the viewport's bottom the INSPECTOR (right island) stops, so
+ *  the bottom-right orbit gizmo (drei GizmoHelper, centre 80px from the corner;
+ *  measured top ≈ 125px above the bottom at 1440×900) and the Persp/Ortho pill
+ *  stay uncovered. */
+export const GIZMO_BAND = 140;
+
+/** Clear strip a bottom-anchored CENTRED surface (the 2D View, the Spreadsheet)
+ *  leaves for the floating playback bar: the bar (34px measured) plus the island
+ *  gap below and above it. With the drawer open the bar moves into its own grid
+ *  row and nothing floats there. */
+export const PLAYBACK_BAND = 60;
+
+/** #1704 — a side island's bottom inset on the desktop layout. The inspector
+ *  clears the gizmo corner; the outliner has nothing under it since the chat
+ *  left the bottom band, so it runs down to the island gap. */
+export function sideIslandBottom(side: 'left' | 'right'): number {
+  return side === 'right' ? GIZMO_BAND : ISLAND_GAP;
+}
 
 /** #1704 — the chat column's width when open (the design's ~360px column). */
 export const CHAT_COLUMN_WIDTH = 360;
