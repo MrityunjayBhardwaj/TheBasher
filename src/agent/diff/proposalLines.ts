@@ -296,6 +296,11 @@ function ownerObjects(state: DagState, id: NodeId): NodeId[] {
     .map((w) => w.node);
 }
 
+/** The Object a person sees for a node: its owner when it is a data half, else itself. */
+export function objectOf(state: DagState, id: NodeId): NodeId {
+  return ownerObjects(state, id)[0] ?? id;
+}
+
 /**
  * The nodes a proposal marks in one editor. `selectedOnly` keeps only the ops still ticked, so an
  * unticked line's mark goes away with it. The viewport set also holds each touched data half's

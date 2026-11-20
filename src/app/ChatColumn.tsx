@@ -16,6 +16,9 @@ import { useEffect, useRef, type CSSProperties } from 'react';
 
 import { AgentDock } from './AgentDock';
 import { useAgentSessionStore } from '../agent/session/store';
+import { useDiffStore } from '../agent/diff';
+import { usePendingProposal } from '../agent/diff/useProposal';
+import { PROPOSAL_AMBER } from './ProposalCard';
 import { agentReplyKey, chatVisible, useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { CHAT_COLUMN_WIDTH } from './layoutIslands';
@@ -72,6 +75,25 @@ export function ChatColumn({ isNarrow, hidden }: { isNarrow: boolean; hidden: bo
     if (open && !hidden) useChatColumnStore.getState().setUnread(false);
   }, [open, hidden]);
 
+  // #1706 — a proposal must never be invisible: its change list (and its only Accept) is in this
+  // column, so one that arrives while the column is folded opens it. Keyed on the proposal, so a
+  // director who folds the column again while it waits keeps it folded (the rail then carries the
+  // amber "proposal waiting" cue). An effect, not a store subscription: a user-side mutator proposes
+  // and accepts in one go (`dispatchMutator`), and by the time React commits that proposal is no
+  // longer pending, so it never opens the column.
+  const pending = usePendingProposal();
+  const pendingKey = pending?.createdAt ?? null;
+  const narrowRef = useRef(isNarrow);
+  narrowRef.current = isNarrow;
+  useEffect(() => {
+    if (pendingKey === null) return;
+    if (useDiffStore.getState().status !== 'pending') return;
+    if (!chatVisible(useChatColumnStore.getState(), narrowRef.current)) {
+      if (narrowRef.current) useChromeStore.getState().closeNarrowDrawers();
+      useChatColumnStore.getState().setVisible(narrowRef.current, true);
+    }
+  }, [pendingKey]);
+
   const reveal = () => {
     if (isNarrow) useChromeStore.getState().closeNarrowDrawers();
     setVisible(isNarrow, true);
@@ -112,7 +134,13 @@ export function ChatColumn({ isNarrow, hidden }: { isNarrow: boolean; hidden: bo
         <button
           type="button"
           data-testid="chat-rail"
-          aria-label={unread ? 'Open chat (new reply)' : 'Open chat'}
+          aria-label={
+            pending
+              ? 'Open chat (a proposal is waiting)'
+              : unread
+                ? 'Open chat (new reply)'
+                : 'Open chat'
+          }
           title={`Chat (${CHAT_SHORTCUT_LABEL})`}
           onClick={reveal}
           className={[
@@ -123,6 +151,14 @@ export function ChatColumn({ isNarrow, hidden }: { isNarrow: boolean; hidden: bo
           <ChatIcon />
           {!isNarrow ? (
             <span className="text-[9px] leading-none text-fg/40">{CHAT_SHORTCUT_LABEL}</span>
+          ) : null}
+          {pending ? (
+            <span
+              data-testid="chat-proposal-cue"
+              aria-hidden
+              className="absolute left-1.5 top-2 h-2 w-2 rounded-full"
+              style={{ background: PROPOSAL_AMBER }}
+            />
           ) : null}
           {unread ? (
             <span

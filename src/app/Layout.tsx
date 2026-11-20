@@ -39,7 +39,6 @@
 import type { CSSProperties } from 'react';
 
 import { AssetDropZone } from './AssetDropZone';
-import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
 import { FloatingViewportToolbar } from './FloatingViewportToolbar';
 import { ChatColumn } from './ChatColumn';
@@ -48,6 +47,7 @@ import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
+import { ProposalViewportEdge } from './ProposalViewportEdge';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
 import { SpreadsheetView } from './SpreadsheetView';
@@ -295,7 +295,9 @@ export function Layout() {
           }}
           data-testid="view3d-slot"
         >
-          <DiffBar />
+          {/* #1706 — a pending proposal is accepted from the chat column (ProposalCard), which every
+              space shows; the 3D slot only marks it, with an amber edge. */}
+          <ProposalViewportEdge />
           <AssetErrorBanner />
           <AssetDropZone>
             <Viewport />

@@ -210,11 +210,11 @@ test.skip('P3#5 SUPERSEDED — per-channel mute shipped (#263/#264); covered by 
   // intentionally empty — coverage lives in p263-channel-mute.spec.ts.
 });
 
-test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pending', async ({
+test('P3#6 the proposal shows the time-range when an animation Mutator chain is pending', async ({
   page,
 }) => {
   // Stage a pending diff carrying a KeyframeChannelVec3 addNode with two
-  // keyframes spanning t=0 → t=2. The DiffBar's time-range indicator
+  // keyframes spanning t=0 → t=2. The proposal card's time-range indicator (the DiffBar's, before #1706)
   // should surface "0 → 2s" so the user sees where the change lands in time.
   await page.waitForFunction(() => {
     const w = window as unknown as { __basher_diff?: unknown };
@@ -257,7 +257,7 @@ test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pendi
       .getState()
       .propose(state, ops, 'test bounce', ['agent:mutator.timeline.addChannel']);
   });
-  await expect(page.getByTestId('diffbar-time-range')).toBeVisible();
-  await expect(page.getByTestId('diffbar-time-range')).toContainText('0');
-  await expect(page.getByTestId('diffbar-time-range')).toContainText('2');
+  await expect(page.getByTestId('proposal-time-range')).toBeVisible();
+  await expect(page.getByTestId('proposal-time-range')).toContainText('0');
+  await expect(page.getByTestId('proposal-time-range')).toContainText('2');
 });

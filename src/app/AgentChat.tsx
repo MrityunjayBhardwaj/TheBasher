@@ -23,6 +23,7 @@ import { runAgentTurn } from '../agent/orchestrator';
 import type { LLMConfig } from '../agent/transport/types';
 import { getComfyCapability, getMotionCapability, getModelCapability, getStorage } from './boot';
 import { useSettingsStore } from './stores/settingsStore';
+import { ProposalCard } from './ProposalCard';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
 const DEFAULT_MODEL = 'google/gemma-4-31B-it';
@@ -182,6 +183,10 @@ export function AgentChat() {
           ) : null}
         </div>
       ) : null}
+
+      {/* #1706 — a pending proposal: its change list, under the thread and above the composer, so
+          Accept / Reject are on screen in every space (this column is). */}
+      <ProposalCard />
 
       {/* Token usage footer */}
       {session.tokenUsage.total > 0 ? (

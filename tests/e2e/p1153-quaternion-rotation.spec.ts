@@ -300,7 +300,7 @@ test('#1153 — the diff ghost of a quaternion-mode proposal draws the quaternio
     },
     { decoy: DECOY, q: Q170 },
   );
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
   // The ghost's own signature (DiffOverlay's styling: wireframe at opacity 0.35) plus the
   // cube's width — p352's discriminator, never `editorChrome` (H171).
   const ghostQuats = () =>
