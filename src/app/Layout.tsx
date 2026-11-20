@@ -54,6 +54,7 @@ import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
+import { useViewportStore } from './stores/viewportStore';
 import {
   BOTTOM_BAND,
   CENTER_SURFACE_MAX_WIDTH,
@@ -121,6 +122,8 @@ export function Layout() {
   // unmount) so mount-once state survives the space switch, same discipline as
   // the view3d/uv/video slots themselves.
   const chromeHidden = isPresent || space === 'video';
+  // #1703 — an open drawer is a row of its own under the viewport, never an island over it.
+  const drawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
   const sideIslandStyle = (side: 'left' | 'right', width: number, open: boolean): CSSProperties => {
     const base: CSSProperties = {
       position: 'absolute',
@@ -212,11 +215,14 @@ export function Layout() {
         // agent chat + timeline now float as a stacked bottom-center island over
         // the full-bleed viewport (mounted inside <main>), so the viewport reads
         // full-bleed top→bottom. Present collapses every row but the viewport.
-        gridTemplateRows: isPresent ? '0 0 1fr' : '32px auto 1fr',
+        // #1703 — a fourth row holds the open bottom drawer, full width, below the viewport: the
+        // viewport ends where the drawer begins, so the drawer never covers the picture.
+        gridTemplateRows: isPresent ? '0 0 1fr 0' : '32px auto 1fr auto',
         gridTemplateAreas: `
           "projectTabs"
           "menu"
           "viewport"
+          "drawer"
         `,
       }}
     >
@@ -447,14 +453,30 @@ export function Layout() {
                   (footgun mitigation — must stay visible); only the drawer BODY
                   is revealable. Mounted always (collapsed only in present, which
                   hides the whole stack). */}
-          <div
-            data-testid="timeline-slot"
-            className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-          >
-            <TimelineDrawer />
-          </div>
+          {/* #1703 — closed, the playback bar floats here; open, the drawer moves to its own
+              full-width row below <main> (the `drawer` grid area). */}
+          {!drawerOpen ? (
+            <div
+              data-testid="timeline-slot"
+              data-docked="false"
+              className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+            >
+              <TimelineDrawer />
+            </div>
+          ) : null}
         </div>
       </main>
+      {drawerOpen ? (
+        <div
+          data-testid="timeline-slot"
+          data-docked="true"
+          onContextMenu={(e) => e.stopPropagation()}
+          style={{ gridArea: 'drawer', display: chromeHidden ? 'none' : 'block' }}
+          className="min-w-0 border-t border-border bg-bg-2"
+        >
+          <TimelineDrawer />
+        </div>
+      ) : null}
     </div>
   );
 }
