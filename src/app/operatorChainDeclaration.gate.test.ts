@@ -105,7 +105,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     ]);
 
     for (const [type, chain] of operators()) {
-      for (const field of ['input', 'scope', 'bypass', 'section'] as const) {
+      for (const field of ['input', 'scope', 'bypass', 'section', 'mix'] as const) {
         expect(chain[field], `${type}.chain.${field}`).toBeDefined();
       }
     }
@@ -249,6 +249,44 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     expect(where((c) => c.section === 'none')).toEqual(where((c) => c.bypass.kind === 'none'));
   });
 
+  it('MIX is declared, and every current operator is `none` because none of them blends', () => {
+    // #1894 S0a. The 13 operators censused above are modifiers, the two scene-lane wrappers, the
+    // image effect, and the material/component writers — none is a constraint step (the only
+    // `wrap`, whose influence lives in small nodes, #1811) and none is the composite Image Layer
+    // (the only `own`, whose own params ARE the blend, #1879). So the measured answer for all of
+    // them is `none`: nothing to mix. The KIND being uniform is the finding, not a guess — each
+    // declarer was read and matched to what it already does.
+    expect(where((c) => c.mix.kind === 'none')).toEqual(operators().map(([type]) => type));
+    expect(where((c) => c.mix.kind === 'own')).toEqual([]);
+    expect(where((c) => c.mix.kind === 'wrap')).toEqual([]);
+
+    // The two that carry an `opacity` param say so APART from the rest: that opacity is the
+    // material's OWN transparency, not a layer blend over the stack — the exact trap the issue
+    // calls out ("Material Override's opacity is not a layer amount"). The other eleven have no
+    // amount-looking param at all, so they say `no-blend`.
+    expect(where((c) => c.mix.kind === 'none' && c.mix.why === 'material-transparency')).toEqual([
+      'MaterialOverride',
+      'MaterialOverrideOp',
+    ]);
+  });
+
+  it('REFUSAL 0: a chain declaration missing `mix` is refused at registration, by name', () => {
+    // G1's missing-field half for the newest field (#1894 S0a). Without `mix` required, a
+    // declarer that forgot it would register and the panel would have nothing to read for its
+    // amount bar — the same silent half the other four fields are refused for. MEASURED RED:
+    // drop `'mix'` from the required-field list in `registry.ts` and this stops throwing.
+    expect(() =>
+      registerNodeType(
+        probeDef({
+          input: 'target',
+          scope: { kind: 'source', domain: 'face' },
+          bypass: { kind: 'passthrough', param: 'muted' },
+          section: 'modifier',
+        }) as never,
+      ),
+    ).toThrow(/missing mix/);
+  });
+
   it('REFUSAL 1: a partial chain declaration is refused at registration, by name', () => {
     // The type already requires all four. It is refused at runtime as well because every
     // synthetic definition in this suite registers through an `as never`, typecheck skips
@@ -283,6 +321,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
           scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'bypassed' },
           section: 'modifier',
+          mix: { kind: 'none', why: 'no-blend' },
         }) as never,
       ),
     ).toThrow(/names param 'bypassed', which this node's paramSchema does not declare/);
@@ -307,6 +346,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
           scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'modifier',
+          mix: { kind: 'none', why: 'no-blend' },
         }) as never,
       ),
     ).toThrow(/names socket 'nonesuch', which this node does not declare as an input/);
@@ -319,6 +359,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
             scope: { kind: 'source', domain: 'face' },
             bypass: { kind: 'passthrough', param: 'muted' },
             section: 'modifier',
+            mix: { kind: 'none', why: 'no-blend' },
           },
           { inputs: { target: { type: 'ObjectData', cardinality: 'list' } } },
         ) as never,
@@ -345,6 +386,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
             scope: { kind: 'source', domain: 'face' },
             bypass: { kind: 'passthrough', param: 'muted' },
             section: 'modifier',
+            mix: { kind: 'none', why: 'no-blend' },
           },
           { paramSchema: z.object({ muted: z.number().default(0) }) },
         ) as never,
@@ -360,6 +402,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
           scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'modifier',
+          mix: { kind: 'none', why: 'no-blend' },
         }) as never,
       ),
     ).not.toThrow();

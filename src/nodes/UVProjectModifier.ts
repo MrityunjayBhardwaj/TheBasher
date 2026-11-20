@@ -110,6 +110,8 @@ export const UVProjectModifierNode: NodeDefinition<UVProjectModifierParams, Obje
     scope: { kind: 'unscoped', why: 'declined' },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
+    // No layer blend: it rewrites UVs on its spine and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   inspectorSections: ['modifier'],
   home: {

@@ -44,7 +44,12 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
+import {
+  __resetRegistryForTests,
+  getNodeType,
+  LAYER_LANES,
+  listNodeTypes,
+} from '../core/dag/registry';
 import { registerNodeType } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { operatorLaneOf } from '../core/dag/operatorLane';
@@ -129,6 +134,7 @@ function registerLaneOp(
           : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,
+      mix: { kind: 'none', why: 'no-blend' },
     },
     evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
   } as never);
@@ -222,6 +228,21 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       UVProjectModifier: 'ObjectData',
     });
     expect(Object.values(laneMap())).not.toContain('NO LANE');
+  });
+
+  it('LAYER_LANES covers the CURRENT lanes only, and no constraint lane yet (#1894 S0a)', () => {
+    // A literal census of the table's own keys, NOT the G2 derivation (LAYER_LANES ⊇ every lane a
+    // declarer stands on). G2 straddles the S0a/S0b split and is deferred: S0b makes TrackTo /
+    // FollowPath chain declarers on the `Matrix4` lane AND adds that lane here in the same commit.
+    // This row is what reddens on the day `Matrix4` is added, so the constraint lane cannot arrive
+    // without a deliberate, visible edit to the table.
+    expect(Object.keys(LAYER_LANES).sort()).toEqual(['Image', 'ObjectData', 'SceneObject']);
+    // The three current lanes carry operators that don't blend, so each offers no modes and does
+    // not wrap — the wrap builder belongs to the constraint lane (S0b), offered modes to an
+    // `own`-mix layer (the Image Layer, #1879).
+    for (const lane of Object.values(LAYER_LANES)) {
+      expect(lane).toEqual({ modes: [], wraps: false });
+    }
   });
 
   it('THE LANE IS NOT THE SECTION: nine on the data lane, seven in the modifier set', () => {

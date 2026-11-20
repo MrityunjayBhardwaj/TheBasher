@@ -38,6 +38,8 @@ export const TransformNode: NodeDefinition<TransformParams, TransformValue> = {
     bypass: { kind: 'none' },
     // Not a member of any offered stack — see OperatorSection.
     section: 'none',
+    // The scene-lane wrapper: it carries a SceneObject through and offers no layer amount to blend.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],

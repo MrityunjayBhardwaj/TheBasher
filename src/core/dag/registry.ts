@@ -6,6 +6,7 @@
 
 import type {
   InputDescriptor,
+  LayerLane,
   NodeDefinition,
   NodeTypeId,
   OperatorSection,
@@ -98,18 +99,35 @@ const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> =
   layer: 'Image',
 };
 
+/**
+ * #1894 — what each LANE offers a layer that stands on it: the blend modes, and whether the lane
+ * wraps a step in small nodes for influence. One entry per lane a chain declarer stands on today
+ * (`operatorLane.gate.test.ts`'s `laneMap`): the three current lanes offer no modes and do not
+ * wrap, because none of their declarers blends — the wrap builder belongs to the constraint lane
+ * (S0b adds `Matrix4`), and offered modes to an `own`-mix layer (the Image Layer, #1879).
+ *
+ * 🔴 DELIBERATELY NOT YET COMPLETE. G2 ("`LAYER_LANES` covers every lane a chain declarer stands
+ * on") straddles the S0a/S0b split and is deferred to S0b: coupling the constraint `Matrix4` lane
+ * in here now, before its declarers exist, would be a lane offering a member it cannot carry.
+ */
+export const LAYER_LANES: Readonly<Partial<Record<SocketTypeName, LayerLane>>> = {
+  ObjectData: { modes: [], wraps: false },
+  SceneObject: { modes: [], wraps: false },
+  Image: { modes: [], wraps: false },
+};
+
 function assertChainDeclaration(def: NodeDefinition): void {
   const chain = def.chain;
   if (chain === undefined) return; // not an operator — the one legal way to say nothing
 
-  const missing = (['input', 'scope', 'bypass', 'section'] as const).filter(
+  const missing = (['input', 'scope', 'bypass', 'section', 'mix'] as const).filter(
     (field) => chain[field] === undefined,
   );
   if (missing.length > 0) {
     throw new Error(
       `registerNodeType(${def.type}): chain declaration is missing ${missing.join(', ')}. ` +
         `A chain is optional to declare and TOTAL once declared — being an operator is one ` +
-        `claim, not four independent ones.`,
+        `claim, not five independent ones.`,
     );
   }
 

@@ -263,6 +263,7 @@ function registerProbeOperator(): void {
       scope: { kind: 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'modifier',
+      mix: { kind: 'none', why: 'no-blend' },
     },
     inspectorSections: ['modifier'],
     home: { turns: 'modifier', muted: 'modifier' },

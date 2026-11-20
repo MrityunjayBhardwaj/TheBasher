@@ -108,7 +108,13 @@ describe('a main input that could not continue a stack is refused', () => {
       'repeats the chain',
       {
         ...NAMED,
-        chain: { input: 'in', scope: 'none', bypass: { kind: 'none' }, section: 'none' },
+        chain: {
+          input: 'in',
+          scope: 'none',
+          bypass: { kind: 'none' },
+          section: 'none',
+          mix: { kind: 'none', why: 'no-blend' },
+        },
       },
       /both chain and mainInput/,
     ],

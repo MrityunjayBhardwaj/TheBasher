@@ -44,6 +44,7 @@ const SpineWrapper: NodeDefinition<Record<string, never>, unknown> = {
     scope: { kind: 'unscoped', why: 'no-component-domain' },
     bypass: { kind: 'none' },
     section: 'none',
+    mix: { kind: 'none', why: 'no-blend' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   evaluate: () => ({ kind: 'Transform', child: null }),

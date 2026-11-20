@@ -116,6 +116,8 @@ export const MaskModifierNode: NodeDefinition<MaskModifierParams, ObjectData> = 
     scope: { kind: 'target', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
+    // A writer, not a blend: it drops faces on its spine and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   inspectorSections: ['modifier'],
   home: {

@@ -593,10 +593,41 @@ export type BypassKind =
 export type OperatorSection = 'modifier' | 'material' | 'effect' | 'layer' | 'none';
 
 /**
+ * Why a `none` mix has no amount to blend — the reason the panel shows DIMMED beside the
+ * (absent) amount bar (#1894). An enum, like `ScopeKind`'s `why`, so it is checkable and the
+ * day a new reason is needed it is said out loud in the declaration rather than in a free string.
+ *
+ * - `no-blend`: the operator edits or replaces what flows down its spine; there is no separate
+ *   amount to blend over the stack. Every modifier, the two scene-lane wrappers, the image
+ *   effect, and the material/component writers are this.
+ * - `material-transparency`: the operator HAS an amount-looking param (`opacity`), but it is the
+ *   material's own transparency, NOT a layer blend over the stack. Named apart from `no-blend`
+ *   because the distinction is exactly the "three forms of a layer's amount, only one of them a
+ *   real blend" the issue calls out — Material Override's `opacity` is the trap.
+ */
+export type MixNoneReason = 'no-blend' | 'material-transparency';
+
+/**
+ * HOW a layer blends onto the stack beneath it — the third cross-cutting operator property,
+ * declared once the way `bypass` is, so the panel reads it instead of branching on node kind
+ * (#1894). Three kinds, matching the "three forms of a layer's amount, spelled once":
+ *
+ * - `own`: the operator's own params ARE the blend — it names its amount and its mode, and
+ *   registration can check its schema carries them (the Image Layer's `opacity` + `blendMode`).
+ * - `wrap`: the lane wraps the step in small nodes the first time the amount leaves its default
+ *   (constraint influence, decided on #1811). The blend lives in the graph, not in a param here.
+ * - `none`: nothing to mix; the amount bar is shown dimmed with `why`.
+ */
+export type MixKind =
+  | { readonly kind: 'own'; readonly amount: string; readonly mode: string }
+  | { readonly kind: 'wrap' }
+  | { readonly kind: 'none'; readonly why: MixNoneReason };
+
+/**
  * Everything that is true of a node BECAUSE it is an operator, declared once.
  *
  * TOTAL: a node either declares no chain at all (it is not an operator) or declares all
- * four fields. There is no partial operator, and `registerNodeType` refuses one by name.
+ * FIVE fields. There is no partial operator, and `registerNodeType` refuses one by name.
  */
 export interface ChainDeclaration {
   /** What `chainInput` was: the spine a stack walks down. */
@@ -607,6 +638,20 @@ export interface ChainDeclaration {
   readonly bypass: BypassKind;
   /** Which stack offers it. */
   readonly section: OperatorSection;
+  /** How this operator blends onto the stack beneath it — see `MixKind`. */
+  readonly mix: MixKind;
+}
+
+/**
+ * What a LANE offers a layer that stands on it, holding what a lane decides rather than a node
+ * (#1894): the blend modes it offers, and whether it wraps a step in small nodes for influence.
+ * One `LAYER_LANES` entry per lane; the mask (#1892) joins later.
+ */
+export interface LayerLane {
+  /** The blend modes a layer on this lane may choose. Empty until a lane carries an `own`-mix layer. */
+  readonly modes: readonly string[];
+  /** Whether this lane wraps a step in small nodes for influence (the constraint lane; #1811). */
+  readonly wraps: boolean;
 }
 
 export interface NodeDefinition<P = unknown, O = unknown> {

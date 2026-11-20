@@ -53,6 +53,7 @@ function registerBinaryOp(type: string, spine: SocketId): void {
       scope: { kind: 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'modifier',
+      mix: { kind: 'none', why: 'no-blend' },
     },
     evaluate: (_p, inputs) => inputs[spine],
   } as never);

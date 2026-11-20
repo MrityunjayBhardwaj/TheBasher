@@ -84,6 +84,7 @@ function registerOp(name: string, section: OperatorSection, lane: SocketTypeName
           : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,
+      mix: { kind: 'none', why: 'no-blend' },
     },
     evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
   } as never);

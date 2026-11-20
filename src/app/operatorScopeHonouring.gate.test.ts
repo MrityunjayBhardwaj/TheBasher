@@ -284,6 +284,7 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
         scope: { kind: 'source', domain: 'face' },
         bypass: { kind: 'passthrough', param: 'muted' },
         section: 'modifier',
+        mix: { kind: 'none', why: 'no-blend' },
       },
       evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
     } as never);
