@@ -320,7 +320,7 @@ function ResizeHandle({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onKeyDown={onKeyDown}
-      className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-none"
+      className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       <span className="h-1 w-10 rounded-full bg-border group-hover:bg-fg-dim group-focus-visible:bg-accent" />
     </div>
