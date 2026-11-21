@@ -118,7 +118,7 @@ test("the agent's shot is listed in the Shots tab and is the camera the viewport
   ).toBe(false);
 
   // The viewport cuts to it at its start and back at its end.
-  await page.getByTestId('shot-select-1').click();
+  await page.getByTestId('shot-select-1').dblclick(); // #1708 — double-click looks through
   await expect
     .poll(() =>
       page.evaluate(() => (window as unknown as W).__basher_viewport.getState().lookThroughCamera),

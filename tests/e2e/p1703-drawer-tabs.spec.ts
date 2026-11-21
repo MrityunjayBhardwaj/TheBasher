@@ -7,6 +7,9 @@ import { openDrawerTab } from './_drawer';
 
 interface DagWindow {
   __basher_dag: { getState: () => { state: { nodes: Record<string, unknown> } } };
+  __basher_selection: {
+    getState: () => { primaryNodeId: string | null; select: (id: string) => void };
+  };
 }
 
 test.beforeEach(async ({ page }) => {
@@ -81,12 +84,22 @@ test('Library holds the asset library (#1707 — no longer a placeholder)', asyn
 // home: the timeline's key region (#1483 — Delete deletes keys only) covers the time panes and the
 // playback bar, not Shots. Before #1703 the shots list was in the left panel, where Delete after
 // clicking a shot deleted the selected object; it must still do that from the drawer.
+// #1708 — a click on a shot now selects the shot's camera, so the object is re-selected through
+// the store (not a click, which would move focus off the Shots tab) before Delete is pressed.
 test('Delete after a real click on a shot row deletes the selected object, as it did in the left panel', async ({
   page,
 }) => {
-  await page.getByTestId('scene-tree-row-n_box').click();
   await openDrawerTab(page, 'shots');
   await page.getByTestId('shot-select-0').click();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as DagWindow).__basher_selection.getState().primaryNodeId,
+    ),
+    'the shot selected its camera',
+  ).toBe('n_camera');
+  await page.evaluate(() =>
+    (window as unknown as DagWindow).__basher_selection.getState().select('n_box'),
+  );
   await page.keyboard.press('Delete');
   await expect
     .poll(() =>

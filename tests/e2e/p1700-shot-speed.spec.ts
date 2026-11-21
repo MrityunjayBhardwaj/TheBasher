@@ -89,7 +89,7 @@ test('a shot slowed in the panel gets longer, the later cut and End follow, one 
   await page.getByTestId('shots-cut-camera').selectOption(CAM2);
   await page.getByTestId('shots-cut-here').click();
   await expect(rows(page)).toHaveCount(3);
-  await page.getByTestId('shot-select-0').click();
+  await page.getByTestId('shot-select-0').dblclick(); // #1708 — double-click looks through
   expect(await drawnAt(page, 3)).toBe(40);
   expect(await drawnAt(page, 4.5)).toBe(20);
   await expect(page.getByTestId('shot-speed-1')).toHaveValue('100');

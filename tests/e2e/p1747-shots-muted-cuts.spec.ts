@@ -90,7 +90,7 @@ test('a muted cuts channel is one shot on the camera that plays, and the panel s
   await page.getByTestId('shots-cut-here').click();
   await expect(rows(page)).toHaveCount(3);
   await expect(page.getByTestId('shots-cuts-muted')).toHaveCount(0);
-  await page.getByTestId('shot-select-0').click(); // look through the film's camera
+  await page.getByTestId('shot-select-0').dblclick(); // look through the film's camera (#1708)
   expect(await drawnAt(page, 3)).toBe(40);
 
   await muteCuts(page, true);

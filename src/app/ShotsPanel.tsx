@@ -7,7 +7,10 @@
 //
 //   row     — Shot N · its time range · the camera that films it (a picker) · its speed · remove
 //             its cut
-//   click   — look through the camera and put the playhead on the shot's first frame
+//   click   — select the shot's camera and put the playhead on the shot's first frame; the view
+//             stays where it is (#1708: look-through is a viewport setting, not a side effect)
+//   double-click — the same, and look through the camera (Numpad 0 / Esc / an orbit drag toggle
+//             it back)
 //   footer  — cut at the playhead to a chosen camera · a new camera from the current view ·
 //             keep length (a speed change leaves the shot's length alone)
 //
@@ -23,6 +26,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore } from './stores/viewportStore';
+import { useSelectionStore } from './stores/selectionStore';
 import { enumerateCameraNodeIds } from './activeCamera';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { sceneEndSeconds } from './sceneRange';
@@ -54,9 +58,15 @@ export function ShotsPanel(): ReactNode {
       ? cutTo
       : (cameras.find((c) => c !== current?.cameraId) ?? null);
 
-  const goTo = (start: number) => {
+  // #1708 — a click picks the shot: its camera becomes the selection and the playhead goes to its
+  // first frame. The view is left alone; looking through is the double-click (or Numpad 0).
+  const goTo = (shot: { start: number; cameraId: string | null }) => {
+    if (shot.cameraId) useSelectionStore.getState().select(shot.cameraId);
+    useTimeStore.getState().setTime(shot.start);
+  };
+  const lookThrough = (shot: { start: number; cameraId: string | null }) => {
+    goTo(shot);
     useViewportStore.getState().setLookThroughCamera(true);
-    useTimeStore.getState().setTime(start);
   };
 
   // #1706 — a pending proposal that changes the cuts (the CameraSelect or its channel) frames the
@@ -97,8 +107,9 @@ export function ShotsPanel(): ReactNode {
               <button
                 type="button"
                 data-testid={`shot-select-${shot.index}`}
-                onClick={() => goTo(shot.start)}
-                title="Look through this shot's camera"
+                onClick={() => goTo(shot)}
+                onDoubleClick={() => lookThrough(shot)}
+                title="Select this shot's camera · Double-click to look through it"
                 className="flex items-baseline gap-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <span className="font-medium text-fg">Shot {shot.index + 1}</span>

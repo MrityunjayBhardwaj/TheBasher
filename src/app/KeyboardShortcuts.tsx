@@ -345,6 +345,12 @@ function dismissTopmostTransient(): void {
     useMoveToCollectionMenuStore.getState().close();
     return;
   }
+  if (useViewportStore.getState().lookThroughCamera) {
+    // 2c. #1708 — leave the camera view for the free view (Blender's Numpad 0 back out). Above
+    // the selection floor: a shot double-clicked into camera view keeps its camera selected.
+    useViewportStore.getState().setLookThroughCamera(false);
+    return;
+  }
   // 3. Floor: clear the selection (the pre-existing Esc behavior). We do NOT
   // auto-close the docked timeline drawer — dismissing a docked surface on Esc
   // would surprise; the ladder only dismisses OVERLAY transients.

@@ -40,6 +40,7 @@ import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
 import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
 import { attachWheelZoom } from './wheelZoom';
+import { attachOrbitExitsLookThrough } from './orbitExitsLookThrough';
 import { viewportEvents } from './viewportEvents';
 import { installShadowInvalidation } from './contentShadows';
 
@@ -50,6 +51,7 @@ function EditorOrbit() {
   const dragging = useGizmoStore((s) => s.dragging);
   // #165: while looking THROUGH the scene camera, the editor view mirrors the
   // DAG camera pose — orbit must be off so the user can't drift the preview.
+  // #1708: an orbit DRAG there leaves camera view instead (`attachOrbitExitsLookThrough`).
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
   // c-1 (P6 W10 UIR): the real camera-zoom signal. OrbitControls fires
@@ -107,6 +109,13 @@ function EditorOrbit() {
     if (!controls) return;
     return attachWheelZoom(wheelTarget, controls);
   }, [wheelTarget, camera]);
+
+  // #1708 — an orbit drag while looking through leaves camera view for the free view (Blender's
+  // camera view does the same on a view rotate). Orbit itself stays off in camera view, so the
+  // drag that exits does not also move the view; the next one orbits from where the camera stood.
+  // A click (no travel) is a pick and stays in camera view, and a gizmo or box-select drag is not
+  // an orbit.
+  useEffect(() => attachOrbitExitsLookThrough(wheelTarget), [wheelTarget]);
 
   return (
     <OrbitControls

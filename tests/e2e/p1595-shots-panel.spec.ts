@@ -121,8 +121,9 @@ test('shots are listed from the cuts, edited one undo at a time, and a dragged c
   await expect(page.getByTestId('shot-camera-1')).toHaveValue(CAM3);
   await expect(page.getByTestId('shot-camera-2')).toHaveValue(CAM2);
 
-  // Selecting a shot looks through its camera at its first frame.
-  await page.getByTestId('shot-select-1').click();
+  // Double-clicking a shot looks through its camera at its first frame (#1708: a single click
+  // selects the camera and leaves the view alone — p1708).
+  await page.getByTestId('shot-select-1').dblclick();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as W).__basher_time.getState().filmSeconds))
     .toBe(2);
