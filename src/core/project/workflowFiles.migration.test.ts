@@ -22,6 +22,7 @@ import { socketsOfWorkflow } from '../comfy/workflowSockets';
 import type { ComfyApiJson } from '../comfy/comfyGraph';
 import { STYLIZED_REALISM_WORKFLOW } from '../comfy/builtinWorkflows';
 import { workflowSocketsOf } from '../../nodes/ComfyUIWorkflow';
+import { workflowMadeState } from '../../nodes/comfyWorkflowMade';
 
 type Ref = { node: string; socket: string };
 type RawNode = {
@@ -195,6 +196,22 @@ describe('v30 → v31: a preset node holds the preset’s workflow file (#1715)'
     );
     const state = applyOps(emptyDagState(), ops).next;
     expect(state.nodes.wf.inputs['pass-input']).toEqual([r('ids')]);
+  });
+
+  // #1718 — a node records the hash its pictures landed from (`madeFrom`), and nothing before
+  // v31 recorded one. A migrated node must read "not generated yet": not current (that would
+  // claim pictures nobody can trace to this file), and not stale (nothing changed under it).
+  it('a migrated workflow reads not generated yet, through every later step and a save', async () => {
+    const { storage, project } = await loaded();
+    for (const id of ['wf', 'imported']) {
+      expect((project.state.nodes[id].params as { madeFrom?: unknown }).madeFrom ?? null).toBe(
+        null,
+      );
+      expect(workflowMadeState(project.state, id), id).toBe('unmade');
+    }
+    await saveProject(storage, project);
+    const again = await loadProject(storage, project.id);
+    expect(workflowMadeState(again.state, 'wf')).toBe('unmade');
   });
 
   it('saving and loading again changes nothing', async () => {
