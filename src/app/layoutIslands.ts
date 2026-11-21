@@ -181,3 +181,81 @@ export function centerSurfaceBox(opts: {
     transform: 'translateX(-50%)',
   };
 }
+
+/** #1709 — the draggable divider between the two sides of the fixed split (board 11a). */
+export const SPLIT_DIVIDER_WIDTH = 6;
+
+/** #1709 — a collapsed 3D side: a slim strip holding the expand button (board 11b). */
+export const SPLIT_COLLAPSED_STRIP = 34;
+
+/** A horizontal span inside <main>, as CSS `left` + `width`. */
+export interface HSpan {
+  left: string;
+  width: string;
+}
+
+/** #1709 — where each part of the fixed 2D | 3D split sits across the clear band (the same band
+ *  a lone 2D View fills, `centerBandInsets` 'top', so the split never runs under a side island).
+ *
+ *  Not collapsed: [first side][divider][second side], the 2D side taking `twoDShare` of the room
+ *  left after the divider. Collapsed: the 2D side fills the band but for the 3D strip on the 3D
+ *  side's edge, and there is no divider. `swapped` puts the 3D side on the left.
+ *
+ *  Spelled as calc() against <main>'s width so it follows a window or chat-column resize without
+ *  a re-render. */
+export function splitPaneBoxes(opts: {
+  insets: { left: number; right: number };
+  twoDShare: number;
+  collapsed: boolean;
+  swapped: boolean;
+}): { twoD: HSpan; view3d: HSpan | null; divider: HSpan | null; strip: HSpan | null } {
+  const L = opts.insets.left;
+  const R = opts.insets.right;
+  const band = `(100% - ${L + R}px)`;
+  if (opts.collapsed) {
+    const twoDWidth = `calc(${band} - ${SPLIT_COLLAPSED_STRIP}px)`;
+    const stripW = `${SPLIT_COLLAPSED_STRIP}px`;
+    return opts.swapped
+      ? {
+          twoD: { left: `${L + SPLIT_COLLAPSED_STRIP}px`, width: twoDWidth },
+          view3d: null,
+          divider: null,
+          strip: { left: `${L}px`, width: stripW },
+        }
+      : {
+          twoD: { left: `${L}px`, width: twoDWidth },
+          view3d: null,
+          divider: null,
+          strip: { left: `calc(100% - ${R + SPLIT_COLLAPSED_STRIP}px)`, width: stripW },
+        };
+  }
+  const room = `(${band} - ${SPLIT_DIVIDER_WIDTH}px)`;
+  const firstShare = opts.swapped ? 1 - opts.twoDShare : opts.twoDShare;
+  const first: HSpan = { left: `${L}px`, width: `calc(${room} * ${firstShare})` };
+  const divider: HSpan = {
+    left: `calc(${L}px + ${room} * ${firstShare})`,
+    width: `${SPLIT_DIVIDER_WIDTH}px`,
+  };
+  const second: HSpan = {
+    left: `calc(${L + SPLIT_DIVIDER_WIDTH}px + ${room} * ${firstShare})`,
+    width: `calc(${room} * ${1 - firstShare})`,
+  };
+  return opts.swapped
+    ? { twoD: second, view3d: first, divider, strip: null }
+    : { twoD: first, view3d: second, divider, strip: null };
+}
+
+/** #1709 — the 2D side's share for a divider dragged to `pointerX`, from the band's left edge
+ *  and width in px (the inverse of splitPaneBoxes). Unclamped: the store clamps. */
+export function twoDShareAt(opts: {
+  pointerX: number;
+  bandLeft: number;
+  bandWidth: number;
+  swapped: boolean;
+}): number {
+  const room = opts.bandWidth - SPLIT_DIVIDER_WIDTH;
+  if (room <= 0) return 0.5;
+  // The pointer holds the divider's middle.
+  const firstShare = (opts.pointerX - opts.bandLeft - SPLIT_DIVIDER_WIDTH / 2) / room;
+  return opts.swapped ? 1 - firstShare : firstShare;
+}
