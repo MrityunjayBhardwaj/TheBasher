@@ -7,6 +7,9 @@
 //
 // REF: THESIS.md §14, P1 Wave B.
 
+import { MODEL_RECORDS } from '../../core/licensing/allowedModels';
+import { BASHER_MIT_LICENCE, licenceOfRecord, type Licence } from '../../core/licensing/licence';
+
 export interface CatalogEntry {
   /** Storage-relative path (becomes the OPFS path AND the GltfAsset.assetRef). */
   readonly path: string;
@@ -16,6 +19,35 @@ export interface CatalogEntry {
   readonly seedUrl: string;
   /** Display swatch color (CSS) for the placeholder thumbnail. */
   readonly swatch: string;
+  /**
+   * #1722 — what a director may do with it, and the credit it needs. Recorded per entry because
+   * the catalog is where an asset is added: a new sample without a licence does not compile.
+   */
+  readonly licence: Licence;
+}
+
+/**
+ * The motion shelf's licence: the Kimodo open-model checkpoints that generated it (see the
+ * PROVENANCE note below). Read from the manifest record by id rather than restated, so the credit
+ * is the one NOTICE carries and cannot drift from it.
+ */
+const KIMODO_SHELF_RECORD_ID = 'kimodo-open-model-checkpoints';
+function kimodoShelfLicence(): Licence {
+  const record = MODEL_RECORDS.find((r) => r.id === KIMODO_SHELF_RECORD_ID);
+  if (!record) {
+    return {
+      kind: 'unknown',
+      name: 'Unknown',
+      commercial: 'unknown',
+      credit: null,
+      why: `The licence record "${KIMODO_SHELF_RECORD_ID}" these clips were generated under is missing.`,
+    };
+  }
+  const licence = licenceOfRecord(record);
+  return {
+    ...licence,
+    why: `Generated with NVIDIA's Kimodo SOMA checkpoints, under the ${record.licence}.`,
+  };
 }
 
 export const ASSET_CATALOG: readonly CatalogEntry[] = [
@@ -24,18 +56,21 @@ export const ASSET_CATALOG: readonly CatalogEntry[] = [
     name: 'Cube',
     seedUrl: '/assets/cube.gltf',
     swatch: '#5af07a',
+    licence: BASHER_MIT_LICENCE,
   },
   {
     path: 'assets/sphere.gltf',
     name: 'Sphere',
     seedUrl: '/assets/sphere.gltf',
     swatch: '#7aaaff',
+    licence: BASHER_MIT_LICENCE,
   },
   {
     path: 'assets/cone.gltf',
     name: 'Cone',
     seedUrl: '/assets/cone.gltf',
     swatch: '#ff8a5a',
+    licence: BASHER_MIT_LICENCE,
   },
   {
     // #88 — a 2-bone skinned bar. Dropping it exercises the glTF skinned
@@ -46,6 +81,7 @@ export const ASSET_CATALOG: readonly CatalogEntry[] = [
     name: 'Skinned Bar',
     seedUrl: '/assets/skinned-bar.glb',
     swatch: '#b07aff',
+    licence: BASHER_MIT_LICENCE,
   },
   // ── Motion shelf (#815) ────────────────────────────────────────────────
   // A director should be able to PICK a motion, not go find a .bvh. These
@@ -78,6 +114,7 @@ export const ASSET_CATALOG: readonly CatalogEntry[] = [
     name: 'Stand-in Character',
     seedUrl: '/fixtures/rig/standin-character.glb',
     swatch: '#e0a0ff',
+    licence: BASHER_MIT_LICENCE,
   },
   ...(
     [
@@ -95,6 +132,7 @@ export const ASSET_CATALOG: readonly CatalogEntry[] = [
     // One colour for the whole shelf: motion is a different KIND of asset from
     // a mesh, and a per-clip colour would imply a distinction that isn't there.
     swatch: '#f0c05a',
+    licence: kimodoShelfLicence(),
   })),
 ];
 

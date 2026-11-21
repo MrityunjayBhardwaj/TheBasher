@@ -18,6 +18,7 @@ import { pickEntryFile } from '../asset/importFormats';
 import { getStorage } from '../boot';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { kindOf, type LibraryEntry } from './libraryEntries';
+import { importLicenceOf } from '../licence/assetLicences';
 
 /** The swatch for your imports — an amber chip distinct from every bundled swatch and from the
  *  `accent` green, so your own assets read as yours at a glance. Asset-identity DATA colours (like
@@ -37,6 +38,7 @@ function sampleEntries(presence: readonly boolean[] | null): LibraryEntry[] {
     kind: kindOf(c.path),
     swatch: c.swatch,
     available: presence?.[i] ?? false,
+    licence: c.licence,
   }));
 }
 
@@ -103,6 +105,7 @@ export function useLibraryEntries(): LibraryEntries {
               kind: kindOf(path),
               swatch: MY_IMPORT_SWATCH,
               available: true,
+              licence: await importLicenceOf(path),
             });
           } catch {
             // The folder vanished between the outer list and this read — skip it.

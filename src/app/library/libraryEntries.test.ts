@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ASSET_CATALOG } from '../asset/catalog';
+import { UNKNOWN_IMPORT_LICENCE } from '../../core/licensing/licence';
 import { countBySource, filterEntries, kindOf, type LibraryEntry } from './libraryEntries';
 
 const samples: LibraryEntry[] = ASSET_CATALOG.map((c) => ({
@@ -13,6 +14,7 @@ const samples: LibraryEntry[] = ASSET_CATALOG.map((c) => ({
   kind: kindOf(c.path),
   swatch: c.swatch,
   available: true,
+  licence: c.licence,
 }));
 const imports: LibraryEntry[] = [
   {
@@ -22,6 +24,7 @@ const imports: LibraryEntry[] = [
     kind: 'model',
     swatch: '#000',
     available: true,
+    licence: UNKNOWN_IMPORT_LICENCE,
   },
   {
     path: 'user-imports/my-walk/walk.bvh',
@@ -30,6 +33,7 @@ const imports: LibraryEntry[] = [
     kind: 'motion',
     swatch: '#000',
     available: true,
+    licence: UNKNOWN_IMPORT_LICENCE,
   },
 ];
 const all = [...samples, ...imports];

@@ -17,6 +17,7 @@
 // REF: src/app/asset/importFormats.ts (the extension → family table); src/app/asset/catalog.ts.
 
 import { importFormatOf, type ImportFamily } from '../asset/importFormats';
+import type { Licence } from '../../core/licensing/licence';
 
 export type LibrarySource = 'sample' | 'import';
 export type LibraryKind = ImportFamily;
@@ -32,6 +33,9 @@ export interface LibraryEntry {
   readonly swatch: string;
   /** A bundled sample is listed before its seed lands in the store; it can be dragged once it has. */
   readonly available: boolean;
+  /** #1722 — what a director may do with it and the credit it needs: a sample's from the
+   *  catalog, an import's from the records beside it (`importLicenceOf`), unknown otherwise. */
+  readonly licence: Licence;
 }
 
 export type SourceFilter = 'all' | LibrarySource;

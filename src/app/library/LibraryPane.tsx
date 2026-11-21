@@ -50,6 +50,7 @@ import {
   type SourceFilter,
 } from './libraryEntries';
 import { useLibraryEntries } from './useLibraryEntries';
+import { LicenceBadge, LicenceDetails } from './LicencePanel';
 
 const FOCUS_RING = 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
 
@@ -427,6 +428,7 @@ function Tile({
           <span className="absolute bottom-0.5 right-1 font-mono text-[9px] text-fg-mute">
             {entry.available ? badge : '—'}
           </span>
+          <LicenceBadge licence={entry.licence} testId={`library-licence-${entry.path}`} />
         </span>
         <span
           className={`truncate text-[12px] font-medium ${entry.available ? 'text-fg/90' : 'text-fg-mute'}`}
@@ -494,6 +496,7 @@ function Details({ entry, files }: { entry: LibraryEntry; files: string[] | null
           ? 'Drag onto the viewport to add it to the scene.'
           : 'Still being copied into the asset store.'}
       </p>
+      <LicenceDetails entry={entry} />
       {entry.source === 'import' && <GeneratedFrom path={entry.path} />}
       {files && (
         <ul
