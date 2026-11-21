@@ -3384,7 +3384,7 @@ function InfluenceRow({ nodeId }: { nodeId: string }) {
 /** #1706 — every param row, plus the pending proposal's `old → new` for it when one changes it.
  *  The row a StandingParamRow wraps is drawn again inside it (`standingApplied`), so the mark is
  *  added on the outer call only. */
-function ParamRow(props: Parameters<typeof ParamRowBody>[0]) {
+export function ParamRow(props: Parameters<typeof ParamRowBody>[0]) {
   return (
     <>
       <ParamRowBody {...props} />
@@ -5179,29 +5179,6 @@ function PanelTab({
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
-  // #376 follow-up — the OFFER side of Apply, asked through the ONE shared predicate so the
-  // control appears exactly when the dispatcher would accept it (never for an Empty Object).
-  // Selected down to a boolean so unrelated DAG changes don't re-render the panel.
-  const canApply = useDagStore((s) =>
-    selectedId ? canApplyTransform(s.state, selectedId, uiEvaluatorCache) : false,
-  );
-  // #415 — THE OBJECT'S `data` INPUT IS NO LONGER THE DATA NODE once a modifier is on it.
-  // The stack splices into that very edge (`BoxData → Array → Object`), so `inputs.data`
-  // names the TOP OF THE STACK. Reading it directly showed the ArrayModifier's sections in
-  // place of the cube's: the geometry and material rows vanished the moment a modifier was
-  // added, and a second modifier stack appeared beside the real one (the operator declares
-  // 'modifier', so it rendered its own). Resolve THROUGH the chain to the base — the same
-  // walk the stack panel does — so the linked half is the data node whatever sits above it.
-  // Selected down to an id string so unrelated DAG changes don't re-render the panel.
-  const linkedDataId = useDagStore((s) => {
-    if (!selectedId) return null;
-    const base = resolveStackBase(s.state, selectedId);
-    // `resolveStackBase` is identity for a node with no data lane (an Empty, or any
-    // non-poser) — that is not a linked data node, it is the selection itself.
-    return base === selectedId ? null : base;
-  });
-  const renaming = useRenameStore((s) => s.renaming);
-  const beginRename = useRenameStore((s) => s.begin);
   // #225 — when >1 node is selected the inspector renders the shared-edit
   // multi-state instead of the single primary node.
   const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
@@ -5218,107 +5195,13 @@ export function NPanel() {
   // #1705 — the right panel reports itself as where the director is working (the chat's Where chip).
   const paneFocus = usePaneFocus(panelTab === 'lights' ? 'lights' : 'inspector');
 
-  // Resolve the node's declared inspectorSections through the ONE read seam
-  // (which resolves via the registry — the source of truth, V14 alignment).
-  // Empty array → raw fallback.
-  const declared = useDagStore((s) => sectionsOf(s.state, selectedId));
-
-  // The general node-ref params (SampleGeometry terrain/query, a Solver's controller):
-  // rendered as one NodeRefField block below the header (regardless of section mode), and
-  // filtered out of the raw/sectioned param rows so a set ref doesn't ALSO show as a raw
-  // "(complex)" object row.
-  const refParamMeta = node ? getNodeType(node.type)?.refParams : undefined;
-  const refKeys = refParamMeta ? new Set(Object.keys(refParamMeta)) : null;
-
-  // #394 P2 — ONE projection per render, and the rows are generated FROM the chain rather
-  // than found by starting at the selection and resolving outward.
-  //
-  // ⚠️ NOT a `useDagStore` selector, and that is load-bearing. `exposeParams` returns a
-  // fresh array every call, zustand compares selector results with `Object.is`, so a
-  // selector would re-render the inspector on EVERY store change — the same hazard
-  // `sectionsOf` caches a stable reference to avoid, and the shape behind the measured
-  // ~458ms edit lag. Subscribe to `state` (stable under structural sharing unless the DAG
-  // actually changed) and memoize on it.
-  //
-  // `canApply` is threaded in because the predicate EVALUATES; the panel already computed
-  // it, and letting the projection recompute would add a third evaluate per render.
-  const dagState = useDagStore((s) => s.state);
-  const projection = useMemo(
-    () => exposeParams(dagState, selectedId, { canApply, cache: uiEvaluatorCache }),
-    [dagState, selectedId, canApply],
-  );
-  // #394 P3 (#518) — the linked-data block draws the base's rows AND the rows of every
-  // data-lane operator standing above it. Before this, a material operator's fields were
-  // in the projection and rendered nowhere, so the authority for a forced field could not
-  // be reached from the interface at all: the base row was editable, accepted the edit,
-  // and the viewport did not move because the operator supplied that field.
-  //
-  // Order comes from the walk (topmost operator first, base last), which is the declared
-  // precedence ladder read top-down. It is NOT re-sorted here — see the ORDER note in
-  // `exposeParams`.
-  //
-  // DECLARED LIMIT: an operator's rows that route to no section (`name`, `muted`, and the
-  // authored-bit set `overridden`) are dropped rather than shown raw. The unrouted bucket
-  // exists so a data node's VALUE param cannot silently vanish; these three are not value
-  // params but the operator's own control state, and `overridden` in particular has a
-  // purpose-built affordance (the per-field override dot) that a "(complex — Pro mode)"
-  // row would stand in front of. The operator's lifecycle controls have no home yet —
-  // that is the material section's data-block design, tracked with the lane work.
-  //
-  // #394 P7 — the `kind` test is the narrowing that lets the rest of this stay unchanged:
-  // the projection now also carries PROMOTED controls, which are interface elements
-  // rather than a node's params and have no place in a block that draws a node's params.
-  // They render in P7b; until then they are carried and not shown, exactly as the
-  // operator and linked rows were between P1 and P3.
-  const linkedRows = useMemo(
-    () =>
-      projection.filter(
-        (r): r is DerivedParam =>
-          r.kind === 'derived' &&
-          (r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null)),
-      ),
-    [projection],
-  );
-
-  // #394 P7 — the promoted controls this chain carries, PARTITIONED HERE and only here.
-  //
-  // A control renders in the card its `home` names, and two different blocks draw cards:
-  // this node's own sections, and the linked data node's. Partitioning in one place is
-  // what keeps a control from being drawn twice (both blocks claiming a section they both
-  // declare) or zero times (each assuming the other draws it) — the two failures a
-  // per-block filter cannot rule out on its own.
-  //
-  // The rule: the SELECTED node's declared sections win, the linked block takes the rest,
-  // and whatever neither block can place falls to a visible bucket below. That last arm is
-  // the [[V145]] degradation reaching the interface layer — an unplaceable control is
-  // shown unrouted, never dropped, because a control that vanishes takes the only handle
-  // on its drives with it.
-  const promoted = useMemo(
-    () => projection.filter((r): r is PromotedParam => r.kind === 'promoted'),
-    [projection],
-  );
-  const {
-    main: promotedMain,
-    linked: promotedLinked,
-    unplaced: promotedUnplaced,
-  } = useMemo(
-    () => partitionPromotedRows(promoted, declared, linkedDataId !== null),
-    [promoted, declared, linkedDataId],
-  );
-
-  // #130 (D-04) — the override-set descriptor for this node type (null for the
-  // ~38 node types that track no overrides). `makeOverrideInfo` returns the
-  // decorator contract for a covered field, else undefined → ParamRow renders
-  // byte-identical to pre-#130. Recomputed on every params change because NPanel
-  // subscribes to the node (the dot re-renders after edit/revert).
-  const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
-    overrideInfoFor(node, paramPath);
+  const nodes = useDagStore((s) => s.state.nodes);
 
   // Through the ONE resolver (#1010), like the header two hundred lines below. Spelling
   // `meta.name ?? id` here was a third answer to a question `nodeDisplayName` owns, and it
   // read an imported bone's content hash aloud to a screen reader while the outliner row
   // that reached it said `mixamorig_LeftArm`.
-  const inspectorLabel = `Inspector — ${node ? nodeDisplayName(dagState.nodes, node.id) : 'no selection'}`;
+  const inspectorLabel = `Inspector — ${node ? nodeDisplayName(nodes, node.id) : 'no selection'}`;
 
   if (collapsed) {
     // The rail: 28px wide, the inspector's icon as the one control (mirrors LeftSidebar's rail).
@@ -5418,207 +5301,338 @@ export function NPanel() {
         // previously-dead MULTI_SELECT_SECTIONS Transform section).
         <MultiSelectInspector />
       ) : (
-        <>
-          <div className="border-b border-border px-3 py-2 text-fg/60">
-            {/* #224 — the header name is the editable identity. Double-click
-                (or F2 in the outliner) opens the inline editor; the raw id +
-                type still show beneath for debugging. */}
-            {renaming?.scope === 'inspector' && renaming.nodeId === node.id ? (
-              <RenameInput
-                nodeId={node.id}
-                priorName={node.meta?.name}
-                placeholder={node.id}
-                testId="inspector-rename"
-                className="w-full rounded-sm border border-accent bg-bg-2 px-1 text-fg outline-none"
-              />
-            ) : (
-              <div
-                data-testid="inspector-node-name"
-                className="cursor-text truncate font-medium text-fg"
-                title="Double-click to rename"
-                onDoubleClick={() => beginRename(node.id, 'inspector')}
-              >
-                {nodeDisplayName(dagState.nodes, node.id)}
-              </div>
-            )}
-            <div className="font-mono text-[10px] text-fg/40">
-              {node.type} v{node.version} · {node.id}
-            </div>
-          </div>
-          {/* #1706 — what a pending proposal would change on this node, old → new. */}
-          <InspectorProposed nodeId={node.id} />
-          <SelectedBoneSection />
-          {refParamMeta && (
-            // The general node-ref picker block — one NodeRefField per declared ref param,
-            // shown regardless of section mode (and even when the ref is unset).
-            <div data-testid="inspector-refparams" className="flex flex-col py-1">
-              {Object.entries(refParamMeta).map(([key, meta]) => (
-                <NodeRefField
-                  key={key}
-                  nodeId={node.id}
-                  paramPath={key}
-                  label={meta.label ?? key}
-                  kind={meta.kind}
-                  shape={meta.shape ?? 'ref'}
-                  value={(node.params as Record<string, unknown> | undefined)?.[key]}
-                />
-              ))}
-            </div>
-          )}
-          {declared.length === 0 ? (
-            // D-08 B raw-fallback path: nodes that intentionally omit
-            // inspectorSections render their params in a flat list.
-            <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
-              {Object.entries((node.params ?? {}) as Record<string, unknown>)
-                .filter(([key]) => !refKeys?.has(key)) // ref params render in the block above
-                .map(([key, value]) => (
-                  <ParamRow
-                    key={key}
-                    nodeId={node.id}
-                    paramPath={key}
-                    value={value}
-                    overrideInfo={makeOverrideInfo(key)}
-                  />
-                ))}
-            </div>
-          ) : (
-            (() => {
-              // Group params by section. Params that don't route into
-              // any declared section land in a "raw" bucket rendered
-              // after the declared sections (typed under (complex —
-              // Pro mode) or string display — preserves zero param
-              // hiding while keeping unrouted params visible).
-              // #458 — this node is not the linked half of anything, so it plays
-              // both roles: it owns the params AND it is the posing object.
-              const sectionCtx = makeSectionCtx(node, node.id, canApply);
-              const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
-              const grouped: Map<SectionId, [string, unknown][]> = new Map();
-              const unrouted: [string, unknown][] = [];
-              for (const [key, value] of Object.entries(
-                (node.params ?? {}) as Record<string, unknown>,
-              )) {
-                if (isInputBinding(value)) continue; // socket binding, not param
-                if (refKeys?.has(key)) continue; // ref params render in the block above
-                // A param a custom control renders is never ALSO a row. Asked of
-                // the shared table rather than restated here, and asked before
-                // grouping because such a key need not route to any section at
-                // all — the per-submesh slot index does not, and would otherwise
-                // land in the unrouted bucket beside the selector that owns it.
-                if (ownedRowKeys.has(key)) continue;
-                const section = paramToSection(key, declared, node.type);
-                if (section === null) {
-                  unrouted.push([key, value]);
-                } else {
-                  if (!grouped.has(section)) grouped.set(section, []);
-                  grouped.get(section)!.push([key, value]);
-                }
-              }
-              return (
-                <>
-                  {declared.map((sectionId) => (
-                    <SectionCard
-                      key={sectionId}
-                      nodeType={node.type}
-                      sectionId={sectionId}
-                      declaredSections={declared}
-                    >
-                      <SectionBody
-                        sectionId={sectionId}
-                        ctx={sectionCtx}
-                        rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({
-                          key,
-                          value,
-                        }))}
-                        renderers={SECTION_CONTROL_RENDERERS}
-                        renderRow={({ key, value }) => (
-                          <ParamRow
-                            key={key}
-                            nodeId={node.id}
-                            paramPath={key}
-                            value={value}
-                            overrideInfo={makeOverrideInfo(key)}
-                          />
-                        )}
-                      />
-                      {/* #394 P7 — controls homed into THIS node's sections, drawn after
-                          the params they stand in front of. */}
-                      {promotedMain
-                        .filter((r) => r.home.section === sectionId)
-                        .map((r) => (
-                          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-                        ))}
-                    </SectionCard>
-                  ))}
-                  {unrouted.length > 0 ? (
-                    <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
-                      {unrouted.map(([key, value]) => (
-                        <ParamRow
-                          key={key}
-                          nodeId={node.id}
-                          paramPath={key}
-                          value={value}
-                          overrideInfo={makeOverrideInfo(key)}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                </>
-              );
-            })()
-          )}
-          {/* #365 Phase 5a (Slice 1c) — a split Object owns only the transform; its geometry +
-              material live on the BoxData it points at via `data`. Render that data node's
-              sections here so a selected cube's colour + size are editable (routed to the data
-              node). */}
-          {linkedDataId ? (
-            <LinkedDataSections
-              dataNodeId={linkedDataId}
-              objectNodeId={node.id}
-              canApply={canApply}
-              rows={linkedRows}
-              promoted={promotedLinked}
-            />
-          ) : null}
-          {/* #394 P7 — a control neither block could place: its home names no section this
-              chain draws, or names none at all. Shown rather than dropped ([[V145]]), and
-              shown HERE rather than inside a block so the rule has one site. */}
-          {promotedUnplaced.length > 0 ? (
-            <div data-testid="inspector-promoted-unrouted" className="flex flex-col py-1">
-              {promotedUnplaced.map((r) => (
-                <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-              ))}
-            </div>
-          ) : null}
-          {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
-              edit / remove controller knobs + promote them to the Controllers dock.
-              A footer control (not a per-node-type section) since spare params are
-              universal. */}
-          <SpareParamControls nodeId={node.id} />
-          {/* #297 (Epic 2) — a Lag node's input: which controller channel it trails +
-              the range. A footer control (like SpareParamControls); renders only for a
-              Lag. `factor`/`seedFrame` show as ordinary rows above. */}
-          <LagSourceControls nodeId={node.id} />
-          {/* Epic 2 — a Solver meta-op: pick the sub-network output it cooks each frame
-              (`body`) + the live controller channel it reads. Renders only for a Solver;
-              `seedFrame` shows as an ordinary row above. */}
-          <SolverControls nodeId={node.id} />
-          {/* #1715 — the workflow file this node runs, and the sockets it declares. */}
-          {node.type === 'ComfyUIWorkflow' ? <ComfyWorkflowSection nodeId={node.id} /> : null}
-          {node.type === 'ComfyUIWorkflow' ? (
-            <CostPreviewConnector workflowNodeId={node.id} />
-          ) : null}
-          {/* #935 — the cook affordance for the other expensive generative node.
-              Same gate, same place, for the same reason: the control that pins an
-              expensive result belongs on the node that produced it. */}
-          {node.type === 'MotionGenerate' ? (
-            <MotionGenerateCookConnector producerId={node.id} />
-          ) : null}
-          {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
-          <BakePoseConnector nodeId={node.id} />
-          {/* #1357 — an armature Object with IK layers on its wire moves them inside a Rig. */}
-          <WrapInRigConnector nodeId={node.id} />
-        </>
+        // #1953 — the selected node's params: the same block the Nodes tab's own panel (N) draws.
+        <NodeParams nodeId={node.id} />
       )}
     </aside>
+  );
+}
+
+/**
+ * The full params of one node — its name, its sections, the data it is linked to, its stacks and
+ * footer controls — as the inspector draws them for the selection. #1953: the Nodes tab's own
+ * right panel (N) draws this same block for the node selected there, so the two can never offer
+ * different controls for one setting. Renders nothing for an id the graph does not hold.
+ */
+export function NodeParams({ nodeId }: { nodeId: string }) {
+  const selectedId = nodeId;
+  const node = useDagStore((s) => s.state.nodes[nodeId] ?? null);
+  // #376 follow-up — the OFFER side of Apply, asked through the ONE shared predicate so the
+  // control appears exactly when the dispatcher would accept it (never for an Empty Object).
+  // Selected down to a boolean so unrelated DAG changes don't re-render the panel.
+  const canApply = useDagStore((s) =>
+    selectedId ? canApplyTransform(s.state, selectedId, uiEvaluatorCache) : false,
+  );
+  // #415 — THE OBJECT'S `data` INPUT IS NO LONGER THE DATA NODE once a modifier is on it.
+  // The stack splices into that very edge (`BoxData → Array → Object`), so `inputs.data`
+  // names the TOP OF THE STACK. Reading it directly showed the ArrayModifier's sections in
+  // place of the cube's: the geometry and material rows vanished the moment a modifier was
+  // added, and a second modifier stack appeared beside the real one (the operator declares
+  // 'modifier', so it rendered its own). Resolve THROUGH the chain to the base — the same
+  // walk the stack panel does — so the linked half is the data node whatever sits above it.
+  // Selected down to an id string so unrelated DAG changes don't re-render the panel.
+  const linkedDataId = useDagStore((s) => {
+    if (!selectedId) return null;
+    const base = resolveStackBase(s.state, selectedId);
+    // `resolveStackBase` is identity for a node with no data lane (an Empty, or any
+    // non-poser) — that is not a linked data node, it is the selection itself.
+    return base === selectedId ? null : base;
+  });
+  const renaming = useRenameStore((s) => s.renaming);
+  const beginRename = useRenameStore((s) => s.begin);
+  // Resolve the node's declared inspectorSections through the ONE read seam
+  // (which resolves via the registry — the source of truth, V14 alignment).
+  // Empty array → raw fallback.
+  const declared = useDagStore((s) => sectionsOf(s.state, selectedId));
+
+  // The general node-ref params (SampleGeometry terrain/query, a Solver's controller):
+  // rendered as one NodeRefField block below the header (regardless of section mode), and
+  // filtered out of the raw/sectioned param rows so a set ref doesn't ALSO show as a raw
+  // "(complex)" object row.
+  const refParamMeta = node ? getNodeType(node.type)?.refParams : undefined;
+  const refKeys = refParamMeta ? new Set(Object.keys(refParamMeta)) : null;
+
+  // #394 P2 — ONE projection per render, and the rows are generated FROM the chain rather
+  // than found by starting at the selection and resolving outward.
+  //
+  // ⚠️ NOT a `useDagStore` selector, and that is load-bearing. `exposeParams` returns a
+  // fresh array every call, zustand compares selector results with `Object.is`, so a
+  // selector would re-render the inspector on EVERY store change — the same hazard
+  // `sectionsOf` caches a stable reference to avoid, and the shape behind the measured
+  // ~458ms edit lag. Subscribe to `state` (stable under structural sharing unless the DAG
+  // actually changed) and memoize on it.
+  //
+  // `canApply` is threaded in because the predicate EVALUATES; the panel already computed
+  // it, and letting the projection recompute would add a third evaluate per render.
+  const dagState = useDagStore((s) => s.state);
+  const projection = useMemo(
+    () => exposeParams(dagState, selectedId, { canApply, cache: uiEvaluatorCache }),
+    [dagState, selectedId, canApply],
+  );
+  // #394 P3 (#518) — the linked-data block draws the base's rows AND the rows of every
+  // data-lane operator standing above it. Before this, a material operator's fields were
+  // in the projection and rendered nowhere, so the authority for a forced field could not
+  // be reached from the interface at all: the base row was editable, accepted the edit,
+  // and the viewport did not move because the operator supplied that field.
+  //
+  // Order comes from the walk (topmost operator first, base last), which is the declared
+  // precedence ladder read top-down. It is NOT re-sorted here — see the ORDER note in
+  // `exposeParams`.
+  //
+  // DECLARED LIMIT: an operator's rows that route to no section (`name`, `muted`, and the
+  // authored-bit set `overridden`) are dropped rather than shown raw. The unrouted bucket
+  // exists so a data node's VALUE param cannot silently vanish; these three are not value
+  // params but the operator's own control state, and `overridden` in particular has a
+  // purpose-built affordance (the per-field override dot) that a "(complex — Pro mode)"
+  // row would stand in front of. The operator's lifecycle controls have no home yet —
+  // that is the material section's data-block design, tracked with the lane work.
+  //
+  // #394 P7 — the `kind` test is the narrowing that lets the rest of this stay unchanged:
+  // the projection now also carries PROMOTED controls, which are interface elements
+  // rather than a node's params and have no place in a block that draws a node's params.
+  // They render in P7b; until then they are carried and not shown, exactly as the
+  // operator and linked rows were between P1 and P3.
+  const linkedRows = useMemo(
+    () =>
+      projection.filter(
+        (r): r is DerivedParam =>
+          r.kind === 'derived' &&
+          (r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null)),
+      ),
+    [projection],
+  );
+
+  // #394 P7 — the promoted controls this chain carries, PARTITIONED HERE and only here.
+  //
+  // A control renders in the card its `home` names, and two different blocks draw cards:
+  // this node's own sections, and the linked data node's. Partitioning in one place is
+  // what keeps a control from being drawn twice (both blocks claiming a section they both
+  // declare) or zero times (each assuming the other draws it) — the two failures a
+  // per-block filter cannot rule out on its own.
+  //
+  // The rule: the SELECTED node's declared sections win, the linked block takes the rest,
+  // and whatever neither block can place falls to a visible bucket below. That last arm is
+  // the [[V145]] degradation reaching the interface layer — an unplaceable control is
+  // shown unrouted, never dropped, because a control that vanishes takes the only handle
+  // on its drives with it.
+  const promoted = useMemo(
+    () => projection.filter((r): r is PromotedParam => r.kind === 'promoted'),
+    [projection],
+  );
+  const {
+    main: promotedMain,
+    linked: promotedLinked,
+    unplaced: promotedUnplaced,
+  } = useMemo(
+    () => partitionPromotedRows(promoted, declared, linkedDataId !== null),
+    [promoted, declared, linkedDataId],
+  );
+
+  // #130 (D-04) — the override-set descriptor for this node type (null for the
+  // ~38 node types that track no overrides). `makeOverrideInfo` returns the
+  // decorator contract for a covered field, else undefined → ParamRow renders
+  // byte-identical to pre-#130. Recomputed on every params change because NPanel
+  // subscribes to the node (the dot re-renders after edit/revert).
+  const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
+    overrideInfoFor(node, paramPath);
+
+  if (!node) return null;
+  return (
+    <>
+      <div className="border-b border-border px-3 py-2 text-fg/60">
+        {/* #224 — the header name is the editable identity. Double-click
+            (or F2 in the outliner) opens the inline editor; the raw id +
+            type still show beneath for debugging. */}
+        {renaming?.scope === 'inspector' && renaming.nodeId === node.id ? (
+          <RenameInput
+            nodeId={node.id}
+            priorName={node.meta?.name}
+            placeholder={node.id}
+            testId="inspector-rename"
+            className="w-full rounded-sm border border-accent bg-bg-2 px-1 text-fg outline-none"
+          />
+        ) : (
+          <div
+            data-testid="inspector-node-name"
+            className="cursor-text truncate font-medium text-fg"
+            title="Double-click to rename"
+            onDoubleClick={() => beginRename(node.id, 'inspector')}
+          >
+            {nodeDisplayName(dagState.nodes, node.id)}
+          </div>
+        )}
+        <div className="font-mono text-[10px] text-fg/40">
+          {node.type} v{node.version} · {node.id}
+        </div>
+      </div>
+      {/* #1706 — what a pending proposal would change on this node, old → new. */}
+      <InspectorProposed nodeId={node.id} />
+      <SelectedBoneSection />
+      {refParamMeta && (
+        // The general node-ref picker block — one NodeRefField per declared ref param,
+        // shown regardless of section mode (and even when the ref is unset).
+        <div data-testid="inspector-refparams" className="flex flex-col py-1">
+          {Object.entries(refParamMeta).map(([key, meta]) => (
+            <NodeRefField
+              key={key}
+              nodeId={node.id}
+              paramPath={key}
+              label={meta.label ?? key}
+              kind={meta.kind}
+              shape={meta.shape ?? 'ref'}
+              value={(node.params as Record<string, unknown> | undefined)?.[key]}
+            />
+          ))}
+        </div>
+      )}
+      {declared.length === 0 ? (
+        // D-08 B raw-fallback path: nodes that intentionally omit
+        // inspectorSections render their params in a flat list.
+        <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
+          {Object.entries((node.params ?? {}) as Record<string, unknown>)
+            .filter(([key]) => !refKeys?.has(key)) // ref params render in the block above
+            .map(([key, value]) => (
+              <ParamRow
+                key={key}
+                nodeId={node.id}
+                paramPath={key}
+                value={value}
+                overrideInfo={makeOverrideInfo(key)}
+              />
+            ))}
+        </div>
+      ) : (
+        (() => {
+          // Group params by section. Params that don't route into
+          // any declared section land in a "raw" bucket rendered
+          // after the declared sections (typed under (complex —
+          // Pro mode) or string display — preserves zero param
+          // hiding while keeping unrouted params visible).
+          // #458 — this node is not the linked half of anything, so it plays
+          // both roles: it owns the params AND it is the posing object.
+          const sectionCtx = makeSectionCtx(node, node.id, canApply);
+          const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
+          const grouped: Map<SectionId, [string, unknown][]> = new Map();
+          const unrouted: [string, unknown][] = [];
+          for (const [key, value] of Object.entries(
+            (node.params ?? {}) as Record<string, unknown>,
+          )) {
+            if (isInputBinding(value)) continue; // socket binding, not param
+            if (refKeys?.has(key)) continue; // ref params render in the block above
+            // A param a custom control renders is never ALSO a row. Asked of
+            // the shared table rather than restated here, and asked before
+            // grouping because such a key need not route to any section at
+            // all — the per-submesh slot index does not, and would otherwise
+            // land in the unrouted bucket beside the selector that owns it.
+            if (ownedRowKeys.has(key)) continue;
+            const section = paramToSection(key, declared, node.type);
+            if (section === null) {
+              unrouted.push([key, value]);
+            } else {
+              if (!grouped.has(section)) grouped.set(section, []);
+              grouped.get(section)!.push([key, value]);
+            }
+          }
+          return (
+            <>
+              {declared.map((sectionId) => (
+                <SectionCard
+                  key={sectionId}
+                  nodeType={node.type}
+                  sectionId={sectionId}
+                  declaredSections={declared}
+                >
+                  <SectionBody
+                    sectionId={sectionId}
+                    ctx={sectionCtx}
+                    rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({
+                      key,
+                      value,
+                    }))}
+                    renderers={SECTION_CONTROL_RENDERERS}
+                    renderRow={({ key, value }) => (
+                      <ParamRow
+                        key={key}
+                        nodeId={node.id}
+                        paramPath={key}
+                        value={value}
+                        overrideInfo={makeOverrideInfo(key)}
+                      />
+                    )}
+                  />
+                  {/* #394 P7 — controls homed into THIS node's sections, drawn after
+                      the params they stand in front of. */}
+                  {promotedMain
+                    .filter((r) => r.home.section === sectionId)
+                    .map((r) => (
+                      <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+                    ))}
+                </SectionCard>
+              ))}
+              {unrouted.length > 0 ? (
+                <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
+                  {unrouted.map(([key, value]) => (
+                    <ParamRow
+                      key={key}
+                      nodeId={node.id}
+                      paramPath={key}
+                      value={value}
+                      overrideInfo={makeOverrideInfo(key)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </>
+          );
+        })()
+      )}
+      {/* #365 Phase 5a (Slice 1c) — a split Object owns only the transform; its geometry +
+          material live on the BoxData it points at via `data`. Render that data node's
+          sections here so a selected cube's colour + size are editable (routed to the data
+          node). */}
+      {linkedDataId ? (
+        <LinkedDataSections
+          dataNodeId={linkedDataId}
+          objectNodeId={node.id}
+          canApply={canApply}
+          rows={linkedRows}
+          promoted={promotedLinked}
+        />
+      ) : null}
+      {/* #394 P7 — a control neither block could place: its home names no section this
+          chain draws, or names none at all. Shown rather than dropped ([[V145]]), and
+          shown HERE rather than inside a block so the rule has one site. */}
+      {promotedUnplaced.length > 0 ? (
+        <div data-testid="inspector-promoted-unrouted" className="flex flex-col py-1">
+          {promotedUnplaced.map((r) => (
+            <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+          ))}
+        </div>
+      ) : null}
+      {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
+          edit / remove controller knobs + promote them to the Controllers dock.
+          A footer control (not a per-node-type section) since spare params are
+          universal. */}
+      <SpareParamControls nodeId={node.id} />
+      {/* #297 (Epic 2) — a Lag node's input: which controller channel it trails +
+          the range. A footer control (like SpareParamControls); renders only for a
+          Lag. `factor`/`seedFrame` show as ordinary rows above. */}
+      <LagSourceControls nodeId={node.id} />
+      {/* Epic 2 — a Solver meta-op: pick the sub-network output it cooks each frame
+          (`body`) + the live controller channel it reads. Renders only for a Solver;
+          `seedFrame` shows as an ordinary row above. */}
+      <SolverControls nodeId={node.id} />
+      {/* #1715 — the workflow file this node runs, and the sockets it declares. */}
+      {node.type === 'ComfyUIWorkflow' ? <ComfyWorkflowSection nodeId={node.id} /> : null}
+      {node.type === 'ComfyUIWorkflow' ? <CostPreviewConnector workflowNodeId={node.id} /> : null}
+      {/* #935 — the cook affordance for the other expensive generative node.
+          Same gate, same place, for the same reason: the control that pins an
+          expensive result belongs on the node that produced it. */}
+      {node.type === 'MotionGenerate' ? <MotionGenerateCookConnector producerId={node.id} /> : null}
+      {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
+      <BakePoseConnector nodeId={node.id} />
+      {/* #1357 — an armature Object with IK layers on its wire moves them inside a Rig. */}
+      <WrapInRigConnector nodeId={node.id} />
+    </>
   );
 }
