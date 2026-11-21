@@ -73,6 +73,7 @@ import {
 import { commitNla, commitNlaPushDown, commitNlaSetParam } from './nlaCommit';
 import { NlaAddStripPopover } from './NlaAddStripPopover';
 import { NlaStripInspector } from './NlaStripInspector';
+import { NlaGeneratedRuns } from './NlaGeneratedRuns';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { bareChannelNodesForSubject } from '../app/nodeChannels';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
@@ -516,6 +517,9 @@ export function NlaLanePane() {
 
         {/* ── Track rows (top = highest order — the model list is pre-reversed). */}
         <div className="min-h-0 w-full flex-1 overflow-auto">
+          {/* #1721 — generated runs, one strip each, stale in amber with Re-cook on the strip.
+              Kept out of `lanes`: those rows mirror the fold, and a run is not an NLA strip. */}
+          <NlaGeneratedRuns />
           {lanes.rows.length === 0 ? (
             <EmptyState
               hasActions={hasActions}
