@@ -68,6 +68,16 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Once per workflow a Regenerate click runs.',
   },
+  'src/app/generated/generatedStill.ts · keepVariantPlan → workflowSourceHash': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Keep click on a still variant: one read of the state the keep will make.',
+  },
+  'src/app/generated/generatedStill.ts · runStillVariants → workflowSourceHash': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per variant of a Generate click; each variant is a state of its own (its seed).',
+  },
   'src/agent/mutators/builders/addModifier.ts · preconditions → canModifyGeometry': {
     count: 1,
     frequency: 'per-action',

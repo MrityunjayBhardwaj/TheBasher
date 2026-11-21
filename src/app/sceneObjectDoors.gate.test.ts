@@ -454,6 +454,8 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   // #1720 — the Model generate node; the model it keeps enters by the glTF import door.
   'src/app/asset/generateModel.ts': 'a ModelGenerate, which nothing reads as a value',
   'src/app/asset/importMediaClip.ts': 'a MediaClip, an Image',
+  // #1718 — the Generated tab feeds a shot's first-frame render to a still workflow as an image clip.
+  'src/app/generated/generatedStill.ts': 'a MediaClip, an Image',
   'src/app/CameraLookAtTarget.tsx': 'a Track-To on an existing camera',
   // #1715 — the Nodes view's "+ ComfyUI workflow": a workflow node, an Image producer.
   'src/app/GraphView.tsx': 'a ComfyUI workflow node; no scene node',
