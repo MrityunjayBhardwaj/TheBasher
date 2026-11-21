@@ -310,11 +310,22 @@ export interface CookedPlacement {
  * are skipped rather than placed at the origin — the distinction the generator
  * chain refuses to collapse, kept here for the same reason.
  */
-export function placeCookedMotionOps(state: DagState): CookedPlacement {
+export function placeCookedMotionOps(
+  state: DagState,
+  /**
+   * #1942 — place only this producer's run. Omit to place every ready run.
+   *
+   * A run that is stale but whose new take is cached reads `ready` here with the NEW start, so an
+   * unscoped placement after one generator's re-cook moved another generator's character to a
+   * path its playing clip was never generated for.
+   */
+  only?: string,
+): CookedPlacement {
   const ops: Op[] = [];
   const refusals: { clipId: string; reason: string }[] = [];
 
   for (const { clipId, producerId, status } of clipBakeStates(state)) {
+    if (only !== undefined && producerId !== only) continue;
     if (status !== 'ready') continue;
     const value = evaluate(state, producerId).value as AnimationClipValue;
     const offset = value.generation?.worldOffsetXZ;

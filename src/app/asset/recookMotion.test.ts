@@ -29,7 +29,11 @@ const capability: MotionGenerationCapability = {
       bvh: synthesiseBvh(request),
       model: request.model,
       unitScale: STUB_UNIT_SCALE,
-      worldOffsetXZ: [0, 0],
+      // Where the walk starts, as a server reports it: the path's first waypoint. So two paths
+      // place their characters at two different spots, which is what the placement row needs.
+      worldOffsetXZ: request.constraints?.waypoints?.length
+        ? [request.constraints.waypoints[0].x, request.constraints.waypoints[0].z]
+        : null,
       worldRotationRadians: null,
     };
   },
@@ -38,7 +42,7 @@ const capability: MotionGenerationCapability = {
 vi.mock('../boot', () => ({ getMotionCapability: async () => capability }));
 
 // Imported AFTER vi.mock so the cook picks up the mocked boot.
-import { cookMotionGenerations } from './cookMotionGenerations';
+import { cookMotionGenerations, placeCookedMotion } from './cookMotionGenerations';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
 import { recookMotion, recookWithNewSeed } from './recookMotion';
 import { generatedRuns } from '../../nodes/motionGenerateRuns';
@@ -125,6 +129,34 @@ describe('recookMotion (#1721)', () => {
     expect(runOf(a.clipId).stale).toBe(false);
     // B untouched.
     expect(clip(b.clipId).sourceHash).toBe(bHash);
+  });
+
+  it('Re-cook places only its own run: a stale neighbour whose take is cached keeps its spot', async () => {
+    const { a, b } = await twoRuns();
+    placeCookedMotion();
+    const standInB = b.objectId!;
+    const posB = () => (state().nodes[standInB].params as { position: number[] }).position;
+    const p0 = curvePointsOf(state(), 'pathB')![0];
+    // B's path moves and B is re-cooked there: B now stands at the moved start.
+    dispatch(buildSetCurvePointOps(state(), 'pathB', 0, [p0[0] + 3, p0[1], p0[2]])!);
+    await recookMotion(b.producerId);
+    const bPlaced = [...posB()];
+    const bHash = clip(b.clipId).sourceHash;
+    // ...then back where it was, NOT re-cooked: B is stale, and its old take is in the cache, so
+    // its producer answers `ready` with the ORIGINAL start.
+    dispatch(buildSetCurvePointOps(state(), 'pathB', 0, p0)!);
+    expect(runOf(b.clipId).stale).toBe(true);
+    expect(runOf(b.clipId).status).toBe('ready');
+    // A goes stale and is re-cooked.
+    dragWaypoint('pathA', 1);
+    requests.length = 0;
+    await recookMotion(a.producerId);
+
+    expect(requests.map((r) => r.prompt)).toEqual(['walk A']);
+    // B was not pressed: its character stays where its playing take put it, and its clip is the same.
+    expect(posB()).toEqual(bPlaced);
+    expect(clip(b.clipId).sourceHash).toBe(bHash);
+    expect(runOf(b.clipId).stale).toBe(true);
   });
 
   it('Re-cook with both runs stale still cooks only the one pressed', async () => {

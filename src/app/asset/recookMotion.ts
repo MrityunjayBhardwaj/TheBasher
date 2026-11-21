@@ -34,7 +34,8 @@ export async function recookMotion(producerId: string): Promise<CookOutcome> {
   const outcome = await cookMotionGenerations(producerId);
   // A re-cook is on a clip that is already bound, so the character it walks exists and placement
   // can find it. On a first generation this is a no-op: the minting road placed after its bind.
-  placeCookedMotion();
+  // Scoped like the cook (#1942): another stale run whose take is cached must not be moved.
+  placeCookedMotion(producerId);
   return outcome;
 }
 
