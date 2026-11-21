@@ -33,6 +33,7 @@ import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { GeometryLifetime } from './GeometryLifetime';
 import { EditorLights } from './EditorLights';
+import { GenerationPlaceholder } from './GenerationPlaceholder';
 import { EditorViewCamera } from './EditorViewCamera';
 import { LivePreviewPass } from './LivePreviewPass';
 import { BoxSelect } from './BoxSelectController';
@@ -333,6 +334,8 @@ export function Viewport() {
               <SceneFromDAG> deliberately: it must observe a committed scene, and its
               cost is not SceneFromDAG's reconciliation cost to answer for. */}
           <GeometryLifetime />
+          {/* #1720 — where a generating model will land; editor chrome, drawn from the run. */}
+          <GenerationPlaceholder />
           <GroundClick />
           {/* #1727 — the gizmo re-renders on every playhead tick while something is selected;
               its commits are their own per-frame stage, `react:gizmo`. */}

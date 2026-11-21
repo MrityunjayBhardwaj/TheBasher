@@ -21,7 +21,7 @@
 // REF: src/app/library/libraryEntries.ts; src/app/library/useLibraryEntries.ts;
 //      src/app/AssetDropZone.tsx; issue #1707.
 
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { DRAG_MIME } from '../asset/catalog';
 import {
   deleteImportedAsset,
@@ -32,6 +32,11 @@ import {
 import { openImportPicker } from '../asset/importPicker';
 import { getStorage } from '../boot';
 import { GeneratePanel } from '../GeneratePanel';
+import { readGenerationRecord, type GenerationRecord } from '../asset/generateModel';
+import { useDagStore } from '../../core/dag/store';
+import { MODEL_GENERATE_TYPE } from '../../nodes/ModelGenerate';
+import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { ModelVariants } from './ModelVariants';
 import {
   countBySource,
   filterEntries,
@@ -489,6 +494,7 @@ function Details({ entry, files }: { entry: LibraryEntry; files: string[] | null
           ? 'Drag onto the viewport to add it to the scene.'
           : 'Still being copied into the asset store.'}
       </p>
+      {entry.source === 'import' && <GeneratedFrom path={entry.path} />}
       {files && (
         <ul
           data-testid={`library-popover-files-${entry.name}`}
@@ -503,4 +509,83 @@ function Details({ entry, files }: { entry: LibraryEntry; files: string[] | null
       )}
     </div>
   );
+}
+
+/**
+ * #1720 — where a generated asset came from: the record its keep wrote beside it, and — when the
+ * Model generate node that made it is in this project — its variants and Regenerate.
+ *
+ * An ordinary import has no record and shows nothing here. The library is shared by every
+ * project, so the node may live in another one; the record still says what made the asset, and
+ * the details say the node is elsewhere rather than offering a Regenerate with nothing to run.
+ */
+function GeneratedFrom({ path }: { path: string }): ReactNode {
+  const record = useGenerationRecord(path);
+  const nodeHere = useDagStore((s) =>
+    record ? s.state.nodes[record.nodeId]?.type === MODEL_GENERATE_TYPE : false,
+  );
+  if (!record) return null;
+  const rows: [string, string, string][] = [
+    [
+      'Prompt',
+      record.prompt || (record.references.length > 0 ? '(the reference image)' : '—'),
+      'prompt',
+    ],
+    ['Seed', String(record.seed), 'seed'],
+    ['Provider', record.provider, 'provider'],
+    ['Node', record.nodeId, 'node'],
+  ];
+  if (record.references.length > 0)
+    rows.splice(1, 0, ['Reference', record.references.join(', '), 'reference']);
+  if (record.rig) rows.push(['Rigged', 'yes', 'rig']);
+  return (
+    <section
+      data-testid="library-details-generated"
+      aria-label="Generated from"
+      className="flex flex-col gap-1.5 rounded border border-border bg-bg-1/40 p-2"
+    >
+      <header className="text-[10px] uppercase tracking-wide text-fg-dim">Generated from</header>
+      <dl className="grid grid-cols-[72px_1fr] gap-x-2 gap-y-1 text-[11px]">
+        {rows.map(([k, v, id]) => (
+          <div key={k} className="contents">
+            <dt className="text-fg-dim">{k}</dt>
+            <dd
+              data-testid={`library-details-generated-${id}`}
+              className="truncate font-mono text-fg/90"
+              title={v}
+            >
+              {v}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {nodeHere ? (
+        <ModelVariants nodeId={record.nodeId} />
+      ) : (
+        <p data-testid="library-details-generated-elsewhere" className="text-[11px] text-fg-dim">
+          The Model generate node that made it is not in this project, so it cannot be regenerated
+          from here.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** The record beside `path`, re-read when the path changes or an import lands. */
+function useGenerationRecord(path: string): GenerationRecord | null {
+  const tick = useImportRefreshStore((s) => s.tick);
+  const [record, setRecord] = useState<{ path: string; record: GenerationRecord | null } | null>(
+    null,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void readGenerationRecord(path).then((r) => {
+      if (!cancelled) setRecord({ path, record: r });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, tick]);
+  // A record read for a different tile is not this tile's.
+  return record?.path === path ? record.record : null;
 }

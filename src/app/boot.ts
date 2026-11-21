@@ -540,6 +540,34 @@ export function boot(): Promise<void> {
       w.__basher_time = useTimeStore;
       // v0.6 #4 W4 — route store seam so e2e can observe/drive home↔editor.
       w.__basher_route = useRouteStore;
+      // #1720 — the Model generate run (the placeholder and progress read it), and a way to hold
+      // each stub generation open for `ms`, so a browser test can see the placeholder while a run
+      // is in flight. Only ever the offline stub: no test reaches a paid service through here.
+      void Promise.all([import('./stores/modelGenerationStore'), import('../core/modelgen')]).then(
+        ([store, modelgen]) => {
+          w.__basher_modelgen = {
+            store: store.useModelGenerationStore,
+            useSlowStub: (ms: number) => {
+              const stub = new modelgen.StubModelGenerationCapability();
+              const hold = () => new Promise((r) => setTimeout(r, ms));
+              __setModelCapabilityForTests({
+                id: stub.id,
+                kind: stub.kind,
+                isAvailable: () => stub.isAvailable(),
+                generate: async (req, onProgress) => {
+                  await hold();
+                  return stub.generate(req, onProgress);
+                },
+                generateTaskOnly: async (req, onProgress) => {
+                  await hold();
+                  return stub.generateTaskOnly(req, onProgress);
+                },
+                cancel: () => stub.cancel(),
+              });
+            },
+          };
+        },
+      );
       // #321 curve seam — sample a Curve by WORLD arc-length from a spec. Without this,
       // the seam's output is unobservable from the running app, and the one thing worth
       // pinning would go untested: that the point Follow-Path will fly to (composed by
