@@ -39,6 +39,10 @@ interface BasherWindow {
     };
   };
   __basher_dag: { getState: () => { state: { nodes: Record<string, Node> } } };
+  __basher_opfs?: {
+    read: (path: string) => Promise<Uint8Array>;
+    exists: (path: string) => Promise<boolean>;
+  };
   __basher_modelgen?: {
     useSlowStub: (ms: number) => void;
   };
@@ -181,6 +185,50 @@ test('generate → variants → keep → details → regenerate from the SAME no
   await expect(generated.getByTestId(`model-variant-${fresh.seed}`)).toBeVisible();
 
   // And nothing reached a paid service, and nothing failed.
+  // Save through the real file, reload, and the node comes back whole — and still regenerates
+  // with a seed it has not used.
+  const projectId = await page.evaluate(() => localStorage.getItem('basher.lastProjectId'));
+  expect(projectId, 'the editor has a current project to save into').not.toBeNull();
+  await page.keyboard.press('ControlOrMeta+s');
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          async ({ path, seed }) => {
+            const w = window as unknown as BasherWindow;
+            if (!(await w.__basher_opfs!.exists(path))) return false;
+            return new TextDecoder()
+              .decode(await w.__basher_opfs!.read(path))
+              .includes(`seed-${seed}.glb`);
+          },
+          { path: `projects/${projectId}/project.json`, seed: fresh.seed },
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  const saved = (await page.evaluate(modelGenerateNodes))[0].params;
+  await page.reload();
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as BasherWindow).__basher_modelgen));
+  const reloaded = await page.evaluate(modelGenerateNodes);
+  expect(reloaded.map((n) => n.id)).toEqual([node.id]);
+  expect(reloaded[0].params).toEqual(saved);
+
+  await page.getByTestId('top-toolbar-assets').click();
+  const mineAgain = page.getByTestId('library-pane').getByTestId('library-popover-my-imports');
+  await mineAgain.locator('[data-library-tile]').first().click();
+  const generatedAgain = page.getByTestId('library-pane').getByTestId('library-details-generated');
+  await expect(
+    page.getByTestId('library-pane').getByTestId('library-details-generated-node'),
+  ).toHaveText(node.id);
+  await generatedAgain.getByTestId('model-regenerate').click();
+  await expect(generatedAgain.locator('[data-testid^="model-variant-keep-"]')).toHaveCount(5, {
+    timeout: 30_000,
+  });
+  const afterReload = (await page.evaluate(modelGenerateNodes))[0].params.variants as Variant[];
+  expect(afterReload).toHaveLength(6);
+  expect(now.map((v) => v.seed)).not.toContain(afterReload[5].seed);
+
   expect(tripoCalls).toEqual([]);
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 });
