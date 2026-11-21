@@ -31,9 +31,9 @@ async function freshStore() {
 afterEach(() => mem.clear());
 
 describe('splitViewStore', () => {
-  it('defaults: UV opens split, Render does not; even share, expanded, 3D on the right', async () => {
+  it('defaults: UV opens split, Render and Generated do not; even share, expanded, 3D on the right', async () => {
     const s = (await freshStore()).getState();
-    expect(s.split).toEqual({ uv: true, render: false });
+    expect(s.split).toEqual({ uv: true, render: false, generated: false });
     expect(s.twoDShare).toBe(0.5);
     expect(s.collapsed).toBe(false);
     expect(s.swapped).toBe(false);
@@ -46,14 +46,14 @@ describe('splitViewStore', () => {
     store.getState().setCollapsed(true);
     store.getState().toggleSwapped();
     expect(JSON.parse(mem.get(KEY)!)).toEqual({
-      split: { uv: true, render: true },
+      split: { uv: true, render: true, generated: false },
       twoDShare: 0.33,
       collapsed: true,
       swapped: true,
       outlinerFoldedBySplit: false,
     });
     const again = (await freshStore()).getState();
-    expect(again.split).toEqual({ uv: true, render: true });
+    expect(again.split).toEqual({ uv: true, render: true, generated: false });
     expect(again.twoDShare).toBe(0.33);
     expect(again.collapsed).toBe(true);
     expect(again.swapped).toBe(true);
@@ -72,7 +72,7 @@ describe('splitViewStore', () => {
   it('coerces a malformed record field by field instead of dropping it whole', async () => {
     mem.set(KEY, JSON.stringify({ split: { uv: 'yes', render: true }, twoDShare: 9, swapped: 1 }));
     const s = (await freshStore()).getState();
-    expect(s.split).toEqual({ uv: true, render: true });
+    expect(s.split).toEqual({ uv: true, render: true, generated: false });
     expect(s.twoDShare).toBe(0.8);
     expect(s.collapsed).toBe(false);
     expect(s.swapped).toBe(false);
@@ -82,6 +82,10 @@ describe('splitViewStore', () => {
     mem.set(KEY, JSON.stringify({ outlinerFoldedBySplit: 'yes' }));
     expect((await freshStore()).getState().outlinerFoldedBySplit).toBe(false);
     mem.set(KEY, '{not json');
-    expect((await freshStore()).getState().split).toEqual({ uv: true, render: false });
+    expect((await freshStore()).getState().split).toEqual({
+      uv: true,
+      render: false,
+      generated: false,
+    });
   });
 });

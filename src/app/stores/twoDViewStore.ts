@@ -1,11 +1,13 @@
 // twoDViewStore — active-mode store for the unified 2D View (Blender's
-// Image Editor analog). The 2D space hosts two panes as tabs:
+// Image Editor analog). The 2D space hosts three panes as tabs:
 //
-//   { mode: 'uv' | 'render' }
+//   { mode: 'uv' | 'render' | 'generated' }
 //
-//   - 'uv'     → the UV layout + texture backdrop (UVEditor, #181/UX #10).
-//   - 'render' → the Render Result viewer (the still render, and later the
-//                fal AI edit — both land here as one image).
+//   - 'uv'        → the UV layout + texture backdrop (UVEditor, #181/UX #10).
+//   - 'render'    → the Render Result viewer (the still render, and later the
+//                   fal AI edit — both land here as one image).
+//   - 'generated' → a reference still made by a ComfyUI workflow from a shot's
+//                   first frame, its variants, and "use as first frame" (#1718).
 //
 // Both panes stay mounted; only one is visually active (display:none
 // discipline, same as the TimelineDrawer dock) so each pane's canvas/store
@@ -25,9 +27,9 @@ import { create } from 'zustand';
 
 const STORAGE_KEY = 'basher.twoDView.v1';
 
-export type TwoDViewMode = 'uv' | 'render';
+export type TwoDViewMode = 'uv' | 'render' | 'generated';
 
-const VALID_MODES: readonly TwoDViewMode[] = ['uv', 'render'];
+const VALID_MODES: readonly TwoDViewMode[] = ['uv', 'render', 'generated'];
 
 function isTwoDViewMode(value: unknown): value is TwoDViewMode {
   return typeof value === 'string' && (VALID_MODES as readonly string[]).includes(value);

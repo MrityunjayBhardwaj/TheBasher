@@ -53,7 +53,7 @@ export interface SplitViewStore extends SplitViewState {
 }
 
 export const DEFAULT_SPLIT_STATE: SplitViewState = {
-  split: { uv: true, render: false },
+  split: { uv: true, render: false, generated: false },
   twoDShare: DEFAULT_SPLIT_SHARE,
   collapsed: false,
   swapped: false,
@@ -87,6 +87,8 @@ export function coerceSplitState(value: unknown): SplitViewState {
     split: {
       uv: typeof s.uv === 'boolean' ? s.uv : DEFAULT_SPLIT_STATE.split.uv,
       render: typeof s.render === 'boolean' ? s.render : DEFAULT_SPLIT_STATE.split.render,
+      generated:
+        typeof s.generated === 'boolean' ? s.generated : DEFAULT_SPLIT_STATE.split.generated,
     },
     twoDShare:
       typeof v.twoDShare === 'number' && Number.isFinite(v.twoDShare)
@@ -129,7 +131,7 @@ export const useSplitViewStore = create<SplitViewStore>((set, get) => {
   return {
     ...readPersisted(),
     setSplit(mode, on) {
-      if (mode !== 'uv' && mode !== 'render') return;
+      if (mode !== 'uv' && mode !== 'render' && mode !== 'generated') return;
       update({ split: { ...get().split, [mode]: on } });
     },
     setTwoDShare(share) {

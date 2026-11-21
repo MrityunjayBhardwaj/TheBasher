@@ -869,9 +869,13 @@ export function boot(): Promise<void> {
       // setter swaps the boot cache; subsequent getComfyCapability() calls
       // resolve to the stub.
       void import('../core/comfy').then((m) => {
+        // #1718 — the installed stub, so a spec can read which workflows it was sent, in order.
+        let stub: InstanceType<typeof m.StubComfyUICapability> | null = null;
         w.__basher_useStubComfy = () => {
-          __setComfyCapabilityForTests(new m.StubComfyUICapability());
+          stub = new m.StubComfyUICapability();
+          __setComfyCapabilityForTests(stub);
         };
+        w.__basher_stubComfySubmissions = () => (stub ? stub.submissions.map((s) => [...s]) : null);
       });
       // P5 Wave C5 — minimal OPFS write seam so the CostPreview spec can
       // pre-populate fake raw-pass bytes (beauty/depth/normal) at the
