@@ -115,12 +115,25 @@ const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> =
  * declarer stands on. It `wraps: true` — the constraint-influence blend lives in small nodes
  * around the step (#1811, `stackTree.ts`), which is exactly what `wrap` names; it offers no modes
  * because influence is a scalar, not a choice of blend mode.
+ *
+ * #1927 P0 — the `PosedSkeleton` pose lane. NOT a chain-declarer lane: a `PoseLayer` declares
+ * `mainInput: 'pose'` (`PosedSkeleton` in, `PosedSkeleton` out), NOT a `ChainDeclaration` — the
+ * registry refuses a node that states both (`assertMainInput`). So this is the first lane a layer
+ * stands on by its MAIN INPUT rather than its chain spine, and `rowLaneOf` resolves it the parallel
+ * way. It is the OPPOSITE of the constraint lane on both axes, and that is not a coincidence: it
+ * `wraps: false` because a pose layer's weight is NOT built into small graph nodes around a step —
+ * it is the layer's OWN `weight` param overlaid by its in-node keyed `weight` channel, folded
+ * inside `PoseLayer.evaluate` (`poseLayerWeightOf`/`weightOf`), so `row.blend` is null and there is
+ * nothing to wrap. For the same reason it DOES offer `modes` (`override`/`additive`/`ik`, mirroring
+ * `POSE_LAYER_MODES`): an `own`-mix layer names its mode in its own params, which is exactly the
+ * kind of lane the comment above says offered modes. Pinned against `POSE_LAYER_MODES` by the gate.
  */
 export const LAYER_LANES: Readonly<Partial<Record<SocketTypeName, LayerLane>>> = {
   ObjectData: { modes: [], wraps: false },
   SceneObject: { modes: [], wraps: false },
   Image: { modes: [], wraps: false },
   Matrix4: { modes: [], wraps: true },
+  PosedSkeleton: { modes: ['override', 'additive', 'ik'], wraps: false },
 };
 
 function assertChainDeclaration(def: NodeDefinition): void {
