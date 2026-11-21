@@ -194,6 +194,11 @@ test('the UV mode opens split: 2D left, 3D right, one canvas sized to its side',
   const twoD = await box(page, 'uv-slot');
   const div = await box(page, 'split-divider');
   const threeD = await box(page, 'view3d-slot');
+  // Usable sides at the defaults (1440 px, chat and inspector open): the outliner folds to its rail
+  // while the split shows, so each side gets at least 340 px.
+  console.log(`p1709 widths 2D ${twoD.width} 3D ${threeD.width}`);
+  expect(twoD.width, '2D side width at 1440 defaults').toBeGreaterThanOrEqual(340);
+  expect(threeD.width, '3D side width at 1440 defaults').toBeGreaterThanOrEqual(340);
   expect(div.width).toBeCloseTo(6, 0);
   expect(twoD.x + twoD.width, '2D ends at the divider').toBeLessThanOrEqual(div.x + 1);
   expect(threeD.x, '3D starts after the divider').toBeGreaterThanOrEqual(div.x + div.width - 1);
@@ -299,6 +304,53 @@ test('Render result opens unsplit; going back to UV splits again', async ({ page
   await page.getByTestId('twodview-tab-render').click();
   await page.getByTestId('twodview-tab-uv').click();
   await expect(page.getByTestId('view3d-slot')).toBeHidden();
+});
+
+const outlinerFolded = (page: Page) =>
+  page.getByTestId('tree-slot').getAttribute('data-left-sidebar-collapsed');
+
+test('the outliner folds while the split shows and comes back when it goes', async ({ page }) => {
+  await boot(page);
+  expect(await outlinerFolded(page), 'open at the defaults').toBe('false');
+  await enterUV(page);
+  await expect.poll(() => outlinerFolded(page), 'folded while split').toBe('true');
+  await page.getByTestId('twodview-split-toggle').click();
+  await expect(page.getByTestId('view3d-slot')).toBeHidden();
+  await expect.poll(() => outlinerFolded(page), 'restored when the split goes').toBe('false');
+  // Every other way the split goes restores it too: collapsing the 3D side, Render, leaving 2D.
+  await page.getByTestId('twodview-split-toggle').click();
+  await expect.poll(() => outlinerFolded(page)).toBe('true');
+  await page.getByTestId('split-collapse').click();
+  await expect.poll(() => outlinerFolded(page), 'restored on collapse').toBe('false');
+  await page.getByTestId('split-expand').click();
+  await expect.poll(() => outlinerFolded(page)).toBe('true');
+  await page.getByTestId('twodview-tab-render').click();
+  await expect.poll(() => outlinerFolded(page), 'restored in Render').toBe('false');
+  await page.getByTestId('twodview-tab-uv').click();
+  await expect.poll(() => outlinerFolded(page)).toBe('true');
+  await page.getByTestId('space-switch-view3d').click();
+  await expect.poll(() => outlinerFolded(page), 'restored leaving the 2D space').toBe('false');
+});
+
+test('an outliner the director re-opens during the split stays open after it', async ({ page }) => {
+  await boot(page);
+  await enterUV(page);
+  await expect.poll(() => outlinerFolded(page)).toBe('true');
+  await page.getByTestId('left-sidebar-expand-toggle').click();
+  await expect.poll(() => outlinerFolded(page)).toBe('false');
+  await page.getByTestId('twodview-split-toggle').click();
+  await expect(page.getByTestId('view3d-slot')).toBeHidden();
+  expect(await outlinerFolded(page), 'their choice stands').toBe('false');
+  // And a re-fold they made themselves is left folded too. (Showing the split again folds it
+  // again: each showing is a new transition.)
+  await page.getByTestId('twodview-split-toggle').click();
+  await expect.poll(() => outlinerFolded(page)).toBe('true');
+  await page.getByTestId('left-sidebar-expand-toggle').click();
+  await page.getByTestId('left-sidebar-collapse-toggle').click();
+  await expect.poll(() => outlinerFolded(page)).toBe('true');
+  await page.getByTestId('twodview-split-toggle').click();
+  await expect(page.getByTestId('view3d-slot')).toBeHidden();
+  expect(await outlinerFolded(page)).toBe('true');
 });
 
 test('dragging the divider resizes the sides, and the split survives a reload', async ({

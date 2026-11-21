@@ -43,6 +43,7 @@ import { AssetErrorBanner } from './AssetErrorBanner';
 import { FloatingViewportToolbar } from './FloatingViewportToolbar';
 import { ChatColumn } from './ChatColumn';
 import { useChatInspectorFold } from './chatInspectorFold';
+import { useSplitOutlinerFold } from './splitOutlinerFold';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
@@ -126,6 +127,8 @@ export function Layout() {
   const isNarrow = useIsNarrowLayout();
   // #1704 — at ≤ 1440 px opening chat folds the inspector, and unfolding the inspector folds chat.
   useChatInspectorFold();
+  // #1709 — while the 2D View shows the 3D view beside it, the outliner folds to its rail.
+  useSplitOutlinerFold();
   const narrowLeftDrawerOpen = useChromeStore((s) => s.narrowLeftDrawerOpen);
   const narrowRightDrawerOpen = useChromeStore((s) => s.narrowRightDrawerOpen);
   const toggleSideDrawer = useChromeStore((s) => s.toggleNarrowDrawer);
