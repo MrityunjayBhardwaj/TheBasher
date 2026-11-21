@@ -52,7 +52,7 @@ import {
 } from './stores/viewportStore';
 import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
-import { useTimelineDockStore } from './stores/timelineDockStore';
+import { openDrawerTab } from './openDrawerTab';
 import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './asset/importPicker';
 import { createNewComposition } from './video/newComposition';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
@@ -946,8 +946,7 @@ export function MenuBar() {
 
 /** #1703 — View ▸ Nodes: open the bottom drawer on its Nodes tab (the node view's home). */
 function openNodesTab(): void {
-  useTimelineDockStore.getState().setActiveTab('nodes');
-  useViewportStore.getState().setTimelineDrawerOpen(true);
+  openDrawerTab('nodes');
 }
 
 const SPACE_SWITCHER_OPTIONS: { value: SpaceType; label: string }[] = [
