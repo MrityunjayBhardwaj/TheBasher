@@ -32,6 +32,9 @@ import {
   type CompositePath,
 } from './composite';
 import { collectCompositeInputs, decodeDraws } from './compositeDecode';
+import { fitContain } from './composite';
+import { renderSourceAt, type ViewerCompare } from './shotCompare';
+import { getStorage } from '../boot';
 import { globalFrameToCompFrame } from './videoTimelineGeometry';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
 
@@ -87,27 +90,46 @@ export function CompositeViewer({
     [inputs, fps, durationFrames, compFrame],
   );
 
+  // #1717 — Generated, the 3D render it came from, or a wipe between them.
+  const [compare, setCompare] = useState<ViewerCompare>('generated');
+  const [wipe, setWipe] = useState(0.5);
+  const renderSource = useMemo(
+    () => (compare === 'generated' ? null : renderSourceAt(dagState, compId, compFrame)),
+    [compare, dagState, compId, compFrame],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const map = await decodeDraws(draws);
+      const [map, render] = await Promise.all([
+        decodeDraws(draws),
+        renderSource ? loadRenderBitmap(renderSource.path, renderSource.version) : null,
+      ]);
       if (cancelled) return;
       const ctx = canvasRef.current?.getContext('2d');
       if (!ctx) return;
       setPath(drawComposite(ctx, { width: W, height: H, background }, draws, map));
+      if (compare !== 'generated') drawRenderSide(ctx, W, H, background, compare, wipe, render);
       setNonce((n) => n + 1);
     })();
     return () => {
       cancelled = true;
     };
-  }, [draws, W, H, background]);
+  }, [draws, W, H, background, compare, wipe, renderSource]);
 
   return (
     <div
       data-testid="video-mode-viewer"
-      className="flex flex-1 items-center justify-center overflow-hidden bg-bg-2 p-2"
+      className="relative flex flex-1 items-center justify-center overflow-hidden bg-bg-2 p-2"
       style={{ minHeight: 0 }}
     >
+      <ViewerCompareBar
+        compare={compare}
+        onCompare={setCompare}
+        wipe={wipe}
+        onWipe={setWipe}
+        hasRender={renderSource !== null}
+      />
       <canvas
         ref={canvasRef}
         width={W}
@@ -116,9 +138,128 @@ export function CompositeViewer({
         data-composite-draws={draws.filter(isLayerDraw).length}
         data-composite-path={path}
         data-composite-nonce={nonce}
+        data-viewer-compare={compare}
         className="max-h-full max-w-full rounded"
         style={{ aspectRatio: `${W} / ${H}` }}
       />
+    </div>
+  );
+}
+
+// #1717 — the 3D render a shot came from, decoded once per file version.
+const renderBitmaps = new Map<string, Promise<ImageBitmap | null>>();
+const MAX_RENDER_BITMAPS = 32;
+
+function loadRenderBitmap(path: string, version: string): Promise<ImageBitmap | null> {
+  const key = `${path}#${version}`;
+  const known = renderBitmaps.get(key);
+  if (known) return known;
+  const work = (async () => {
+    const storage = await getStorage();
+    if (!(await storage.exists(path))) return null;
+    const bytes = await storage.read(path);
+    return createImageBitmap(new Blob([bytes as BlobPart], { type: 'image/png' }));
+  })().catch(() => null);
+  renderBitmaps.set(key, work);
+  while (renderBitmaps.size > MAX_RENDER_BITMAPS) {
+    const oldest = renderBitmaps.keys().next().value as string;
+    void renderBitmaps.get(oldest)?.then((b) => b?.close());
+    renderBitmaps.delete(oldest);
+  }
+  return work;
+}
+
+/** Draw the 3D render over the composite: the whole frame ('render'), or left of the wipe line
+ *  ('wipe'). With no render for this frame, say so where it would be. */
+function drawRenderSide(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  background: string,
+  compare: ViewerCompare,
+  wipe: number,
+  render: ImageBitmap | null,
+): void {
+  const splitX = compare === 'render' ? W : Math.round(Math.min(1, Math.max(0, wipe)) * W);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, splitX, H);
+  ctx.clip();
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, splitX, H);
+  if (render) {
+    const { dw, dh } = fitContain(render.width, render.height, W, H);
+    ctx.drawImage(render, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = `${Math.max(14, Math.round(H / 24))}px sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('No 3D render for this frame yet', Math.round(W / 24), Math.round(H / 2));
+  }
+  ctx.restore();
+  if (compare === 'wipe') {
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(splitX - 1, 0, 2, H);
+  }
+}
+
+const compareButton = (on: boolean) =>
+  `px-2 py-0.5 text-[10px] ${on ? 'bg-accent/15 text-fg' : 'text-fg/70 hover:text-fg'} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`;
+
+/** Generated · 3D render · Wipe, over the viewer. */
+function ViewerCompareBar({
+  compare,
+  onCompare,
+  wipe,
+  onWipe,
+  hasRender,
+}: {
+  compare: ViewerCompare;
+  onCompare: (c: ViewerCompare) => void;
+  wipe: number;
+  onWipe: (w: number) => void;
+  hasRender: boolean;
+}) {
+  const modes: [ViewerCompare, string][] = [
+    ['generated', 'Generated'],
+    ['render', '3D render'],
+    ['wipe', 'Wipe'],
+  ];
+  return (
+    <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded border border-border bg-bg/80 px-1 py-0.5">
+      <div role="radiogroup" aria-label="Compare" className="flex overflow-hidden rounded">
+        {modes.map(([mode, label]) => (
+          <button
+            key={mode}
+            type="button"
+            role="radio"
+            aria-checked={compare === mode}
+            data-testid={`video-viewer-compare-${mode}`}
+            onClick={() => onCompare(mode)}
+            className={compareButton(compare === mode)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {compare === 'wipe' && (
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={wipe}
+          aria-label="Wipe position"
+          data-testid="video-viewer-wipe"
+          onChange={(e) => onWipe(Number(e.target.value))}
+          className="w-24"
+        />
+      )}
+      {compare !== 'generated' && !hasRender && (
+        <span className="text-[10px] text-fg-dim" data-testid="video-viewer-no-render">
+          no shot clip here
+        </span>
+      )}
     </div>
   );
 }
