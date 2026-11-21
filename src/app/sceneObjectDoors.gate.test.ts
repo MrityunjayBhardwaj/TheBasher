@@ -451,6 +451,8 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/app/animate/dispatchApplyTransform.ts': 'a BakedData an existing Object reads',
   'src/app/animate/dispatchMutator.ts': 'keyframe channels and a declared sidecar',
   'src/app/animate/wrapInRig.ts': 'a Rig sub-network on an existing pose',
+  // #1720 — the Model generate node; the model it keeps enters by the glTF import door.
+  'src/app/asset/generateModel.ts': 'a ModelGenerate, which nothing reads as a value',
   'src/app/asset/importMediaClip.ts': 'a MediaClip, an Image',
   'src/app/CameraLookAtTarget.tsx': 'a Track-To on an existing camera',
   'src/app/character/walkTo.ts': 'a clock and a WalkPath, not scene nodes',

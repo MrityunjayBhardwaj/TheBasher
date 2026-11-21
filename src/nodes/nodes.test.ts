@@ -135,6 +135,8 @@ const ALL_TYPES = [
   'Mix',
   // #902 — text-to-motion as a node, so a generated clip has a producer the
   // graph can re-cook instead of a call whose arguments were discarded.
+  // #1720 — text/image-to-3D as a node: the request and the variants it produced.
+  'ModelGenerate',
   'MotionGenerate',
   'MultiplyTransforms', // #1784
   'Navmesh',

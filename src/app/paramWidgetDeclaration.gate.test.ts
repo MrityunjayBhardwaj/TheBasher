@@ -381,6 +381,10 @@ describe('a param declares its control on its schema (#872)', () => {
       // `LightProfileSelect.selectedProfile` left this list in #1064 — the first CHOICE to get
       // its picker. The stale-entry direction below is what makes that removal mandatory.
       'MotionGenerate.model': CHOICE,
+      // #1720 — the provider that answered, recorded by the run (from the configured key), not
+      // chosen per node; and a text knob only the agent sets so far.
+      'ModelGenerate.provider': 'recorded by the run from the configured service, not chosen here',
+      'ModelGenerate.negativePrompt': 'set by the agent; the Generate form offers no field yet',
     };
 
     let examined = 0;
@@ -422,8 +426,9 @@ describe('a param declares its control on its schema (#872)', () => {
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
     // 15 since #1243 retired `PoseOverride` and its `bone` with it; + `Group.parentBone` (#1447)
-    // + `Scene.activeCollection` (#1451) = 17.
-    expect(readOnly.length).toBe(17);
+    // + `Scene.activeCollection` (#1451) = 17; + `ModelGenerate.provider` and
+    // `ModelGenerate.negativePrompt` (#1720) = 19.
+    expect(readOnly.length).toBe(19);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {

@@ -244,9 +244,17 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
   await page.getByTestId('generate-kind-character').click();
   await page.getByTestId('generate-prompt').fill('a stocky dwarf blacksmith');
 
+  // #1720 — the Character road is the Model generate road with a rig: it makes variants and
+  // places the one a director keeps. One variant is enough to see the rigged shape land.
+  await page.getByTestId('generate-variant-count').fill('1');
+
   const before = await page.evaluate(nodeTypes);
   await page.getByTestId('generate-submit').click();
   await expect(page.getByTestId('generate-submit')).toContainText('Generate', { timeout: 60_000 });
+  await page.locator('[data-testid^="model-variant-keep-"]').first().click();
+  await expect(page.locator('[data-testid^="model-variant-"][data-kept]')).toHaveCount(1, {
+    timeout: 30_000,
+  });
   await page.waitForFunction(
     (n) =>
       Object.keys((window as unknown as DagWindow).__basher_dag?.getState().state.nodes ?? {})
@@ -267,6 +275,8 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
   expect(added('Skeleton')).toBe(1);
   expect(added('ArmatureModifier')).toBeGreaterThan(0);
   expect(added('Object')).toBeGreaterThan(0);
+  // And the request is kept on its producer, asking for a rig.
+  expect(added('ModelGenerate')).toBe(1);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
 
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');

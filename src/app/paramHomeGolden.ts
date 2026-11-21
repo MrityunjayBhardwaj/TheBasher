@@ -246,6 +246,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // APPENDED at #902 — text-to-motion as a node. Unrouted like its neighbours
   // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
   // draws these yet, and a home would claim a section renders them when none does.
+  // #1720 — text/image-to-3D as a node. Unrouted like MotionGenerate's row and for its reason: no
+  // inspector card draws them; the Library's Generate form mints them and its details show them.
+  ModelGenerate:
+    '[] prompt=(unrouted) references=(unrouted) seed=(unrouted) provider=(unrouted) rig=(unrouted) count=(unrouted) negativePrompt=(unrouted) faceLimit=(unrouted) quad=(unrouted) texture=(unrouted) pbr=(unrouted) variants=(unrouted)',
   MotionGenerate:
     // #1124 — `name` retired: the clip owns a generated motion's name.
     '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) pathScale=(unrouted)',
@@ -493,4 +497,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1826 adds BodyInputRotation and BodyInputTransform, two cells each (`input`, `slot`),
 // unrouted like BodyInputVec's:
 //   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
-export const GOLDEN_TOTALS = { types: 103, routed: 147, unrouted: 271 } as const;
+// #1720 adds `ModelGenerate`, its twelve params unrouted (the Library's Generate form mints them):
+//   types 103 + 1 = 104 · routed 147 · unrouted 271 + 12 = 283
+export const GOLDEN_TOTALS = { types: 104, routed: 147, unrouted: 283 } as const;

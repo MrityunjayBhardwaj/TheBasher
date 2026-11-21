@@ -300,6 +300,12 @@ describe('#814 the import cycles, enumerated and held', () => {
         'src/app/animatableParams.ts',
         'src/app/animate/dispatchApplyTransform.ts',
         'src/app/asset/bakedTextureLoader.ts',
+        // #1720 — `model.generate` builds its ops with the Model generate road the director's Keep
+        // uses, and that road (with the rigged road it runs) reaches `boot` for the capability and
+        // the store — the edge `importCommon` already gave this tool. Call-time only: both modules
+        // read `boot` inside their functions, nothing at module load.
+        'src/app/asset/generateModel.ts',
+        'src/app/asset/generateRiggedCharacter.ts',
         'src/app/asset/gltfEntryChoice.ts',
         'src/app/asset/importBvhFbx.ts',
         'src/app/asset/importCommon.ts',

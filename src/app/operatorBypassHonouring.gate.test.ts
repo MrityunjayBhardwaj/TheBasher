@@ -351,7 +351,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 90 -> 98 at #1784 (the eight Transform nodes), NOT operators, so the operator count does not move.
     // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), likewise.
     // 100 -> 101 -> 102 at #1811 (PolarSplit, OwnWorld). 102 -> 103 at #1811 (Value).
-    expect(listNodeTypes()).toHaveLength(103);
+    // 103 -> 104 at #1720 (ModelGenerate, no operator).
+    expect(listNodeTypes()).toHaveLength(104);
     expect(operators()).toHaveLength(13);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);

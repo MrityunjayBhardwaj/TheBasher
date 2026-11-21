@@ -8,6 +8,12 @@
 // producer too, so both surfaces build the same graph and the parity claim is
 // written against the road a director actually takes.
 //
+// 🔴 THE MODEL ROAD IS THE NODE ROAD TOO (#1720). Model and Character both call
+// `startModelGeneration`, which mints a `ModelGenerate` holding the prompt, the reference, the
+// seed and the provider, and runs its variants (four by default); a director keeps one and it
+// is imported by the file road. Character is the same road with `rig` set. The cost is shown
+// before the run, as an estimate from Tripo's own price table (`tripoPricing.ts`).
+//
 // Before any of this, the generate roads were written, tested, wired to settings
 // and to the licence gate, and reachable only from their own test files. The agent could generate (`motion.generate`,
 // `model.generate`); a person could not. The claim "a generated asset is
@@ -42,8 +48,8 @@
 // V8: app-layer, no `src/viewport/` imports. No DAG mutation here — the callees
 // dispatch (K6: one atomic batch each).
 //
-// REF: src/app/asset/generateMotionAsNode.ts, src/app/asset/generateModel.ts,
-//      src/app/asset/generateRiggedCharacter.ts (the three surfaces);
+// REF: src/app/asset/generateMotionAsNode.ts, src/app/asset/generateModel.ts (the two
+//      surfaces; the rigged road runs inside the second);
 //      src/app/library/LibraryPane.tsx (the Library tab that mounts it);
 //      ref/architecture/ai-track.md phases A1 and A4.
 
@@ -54,9 +60,17 @@ import {
   type PendingGeneratedMotion,
 } from './stores/generatedMotionStore';
 import { generateMotionAsNode } from './asset/generateMotionAsNode';
-import { generateModelIntoScene } from './asset/generateModel';
-import { generateRiggedCharacter } from './asset/generateRiggedCharacter';
-import type { SourceImage } from '../core/modelgen';
+import { startModelGeneration, storeReferenceImage } from './asset/generateModel';
+import {
+  estimateModelGenerationCost,
+  MODEL_COST_ESTIMATE_SOURCE,
+  type SourceImage,
+} from '../core/modelgen';
+import { DEFAULT_MODEL_VARIANTS, MAX_MODEL_VARIANTS } from '../nodes/ModelGenerate';
+import { useSettingsStore } from './stores/settingsStore';
+import { useModelGenerationStore } from './stores/modelGenerationStore';
+import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
+import { ModelVariants } from './library/ModelVariants';
 
 /** What a director can ask for. One member per app-layer surface that exists —
  *  nothing is offered that has no road, because an option with no road is the
@@ -118,14 +132,6 @@ export function canSubmit(
   return prompt.trim().length > 0;
 }
 
-/** Human phase names, so the bar says which of the two tasks is running. */
-const PHASE_LABEL: Record<string, string> = {
-  generating: 'Generating mesh',
-  checking: 'Checking it can be rigged',
-  rigging: 'Building skeleton',
-  importing: 'Importing',
-};
-
 /**
  * Route a request to the surface for its kind.
  *
@@ -136,7 +142,7 @@ export async function runGeneration(
   kind: GenerationKind,
   prompt: string,
   image?: SourceImage,
-  onProgress?: (p: GenerationProgressView) => void,
+  options: { readonly count?: number } = {},
 ): Promise<GenerationOutcome> {
   const text = prompt.trim();
 
@@ -150,47 +156,57 @@ export async function runGeneration(
     return result.ok ? { ok: true } : { ok: false, reason: result.reason };
   }
 
-  // The union the two mesh roads share. An image replaces the prompt outright;
-  // it is not a hint alongside it, and the request type says so.
-  const request = image
-    ? ({ source: 'image', image } as const)
-    : ({ source: 'text', prompt: text } as const);
-
-  if (kind === 'character') {
-    const result = await generateRiggedCharacter(request, {
-      name: text || undefined,
-      onProgress: (p) =>
-        onProgress?.({ label: PHASE_LABEL[p.phase] ?? p.phase, percent: p.percent }),
-    });
-    // Three outcomes, named one at a time (#835). The union dropped `ok` on
-    // purpose so this site could not quietly pick a side for the middle one.
-    switch (result.outcome) {
-      case 'rigged':
-        return { ok: true };
-      case 'unrigged':
-        // 🔑 `ok: true` because something IS in the scene. A refused rig still
-        // generated — and billed for — a real mesh, and it has just been
-        // imported; reporting a failure here would tell the director nothing
-        // happened while they look at the thing that did.
-        //
-        // What is missing is a skeleton, and that is said on the banner by
-        // `generateRiggedCharacter` rather than repeated here. This surface has
-        // exactly ONE register for "something you should know", so a degraded
-        // success and an outright failure would look identical if it were said
-        // twice. Whether that register should be split is the open question on
-        // #835; until it is answered, saying it once in the persistent place
-        // beats saying it twice in two voices.
-        return { ok: true };
-      case 'failed':
-        return { ok: false, reason: result.reason };
+  // #1720 — the MODEL road is the node road now, for both mesh kinds. It mints a `ModelGenerate`
+  // holding the request and runs its variants; a director keeps one. Character is the same road
+  // with `rig` set: the two kinds differ in one argument, not in where the request goes.
+  //
+  // An image replaces the prompt outright — it is not a hint alongside it (#837) — so with an
+  // image attached the node's prompt is left empty rather than carrying text the service never
+  // sees. The image is stored in the project first, so the node names it by key and a
+  // Regenerate can read it again.
+  let references: string[] = [];
+  if (image) {
+    try {
+      references = [await storeReferenceImage(image)];
+    } catch (err) {
+      // The surfaces never throw, so neither does this step before them: the banner carries it.
+      const reason = formatAssetError(err);
+      useAssetErrorStore.getState().report('image-to-3D', `generation failed: ${reason}`);
+      return { ok: false, reason };
     }
   }
-
-  const result = await generateModelIntoScene(request, {
-    name: text || undefined,
-    onProgress: (p) => onProgress?.({ label: p.status, percent: p.progress }),
+  const result = await startModelGeneration({
+    prompt: image ? '' : text,
+    references,
+    rig: kind === 'character',
+    count: options.count ?? DEFAULT_MODEL_VARIANTS,
   });
   return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+}
+
+/**
+ * The cost line shown under the Generate button BEFORE a model run (#1720).
+ *
+ * 🔴 An estimate, from Tripo's Blender add-on price table (`tripoPricing.ts`) — the API gives no
+ * price before a run. With no Tripo key the offline stub answers and charges nothing, and the
+ * line says so first: a number with no "free" beside it would read as a bill that never comes.
+ * Rigging has no row in the table, so a rigged run says the rig is not priced.
+ */
+export function modelCostLine(args: {
+  readonly hasKey: boolean;
+  readonly modelVersion: string;
+  readonly withImage: boolean;
+  readonly count: number;
+  readonly rig: boolean;
+}): string {
+  const est = estimateModelGenerationCost(
+    { source: args.withImage ? 'image' : 'text', modelVersion: args.modelVersion },
+    args.count,
+    args.rig,
+  );
+  const rig = est.rigPriced ? '' : ' + rigging (not priced)';
+  const sum = `≈ ${est.total} Tripo credits (estimate: ${est.runs} × ${est.perRun})${rig}`;
+  return args.hasKey ? sum : `Free — no Tripo key, the offline stub generates. With Tripo: ${sum}`;
 }
 
 /**
@@ -237,8 +253,14 @@ export function GeneratePanel(): ReactNode {
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [image, setImage] = useState<{ file: SourceImage; name: string } | null>(null);
-  const [progress, setProgress] = useState<GenerationProgressView | null>(null);
+  const [count, setCount] = useState(DEFAULT_MODEL_VARIANTS);
   const [saving, setSaving] = useState(false);
+  const run = useModelGenerationStore((s) => s.run);
+  const activeModelNode = useModelGenerationStore((s) => s.activeNodeId);
+  const hasKey = useSettingsStore((s) => s.tripoApiKey.trim().length > 0);
+  const modelVersion = useSettingsStore((s) => s.modelGenVersion);
+  const progress = modelRunProgress(run);
+  const meshKind = kind === 'model' || kind === 'character';
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingMotion = useGeneratedMotionStore((s) => s.pending);
   const savedPath = useGeneratedMotionStore((s) => s.savedPath);
@@ -257,22 +279,18 @@ export function GeneratePanel(): ReactNode {
   function submit(): void {
     if (!canSubmit(prompt, busy, kind, activeImage !== null)) return;
     setBusy(true);
-    setProgress(null);
     // The promise never rejects — every surface catches and reports to the
     // banner — so `finally` is the whole recovery: return to idle either way.
     // The prompt survives a failure on purpose, so a refused request can be
     // edited rather than retyped.
-    void runGeneration(kind, prompt, activeImage?.file, setProgress)
+    void runGeneration(kind, prompt, activeImage?.file, { count })
       .then((outcome) => {
         if (outcome.ok) {
           setPrompt('');
           setImage(null);
         }
       })
-      .finally(() => {
-        setBusy(false);
-        setProgress(null);
-      });
+      .finally(() => setBusy(false));
   }
 
   return (
@@ -360,6 +378,41 @@ export function GeneratePanel(): ReactNode {
         </div>
       )}
 
+      {meshKind && (
+        <div className="flex flex-col gap-1">
+          <label className="flex items-center justify-between gap-2 text-[11px] text-fg-dim">
+            <span>Variants</span>
+            <input
+              type="number"
+              min={1}
+              max={MAX_MODEL_VARIANTS}
+              value={count}
+              disabled={busy}
+              data-testid="generate-variant-count"
+              aria-label="How many variants to generate"
+              onChange={(e) => {
+                const n = Math.round(Number(e.target.value));
+                if (Number.isFinite(n)) setCount(Math.min(MAX_MODEL_VARIANTS, Math.max(1, n)));
+              }}
+              className="h-6 w-14 rounded border border-border bg-bg px-1.5 text-right text-[12px] text-fg disabled:opacity-60"
+            />
+          </label>
+          <p
+            data-testid="generate-cost"
+            title={`Estimated from ${MODEL_COST_ESTIMATE_SOURCE}; the service gives no price before a run.`}
+            className="text-[11px] leading-snug text-fg-dim"
+          >
+            {modelCostLine({
+              hasKey,
+              modelVersion,
+              withImage: activeImage !== null,
+              count,
+              rig: kind === 'character',
+            })}
+          </p>
+        </div>
+      )}
+
       <button
         type="button"
         data-testid="generate-submit"
@@ -431,6 +484,18 @@ export function GeneratePanel(): ReactNode {
           </div>
         </div>
       )}
+
+      {meshKind && activeModelNode && <ModelVariants nodeId={activeModelNode} />}
     </section>
   );
+}
+
+/** The bar's label and fill for a model run: which variant of how many, and the provider's own
+ *  word for what it is doing. Null when no run is in flight. */
+export function modelRunProgress(
+  run: { total: number; done: number; label: string; percent: number } | null,
+): GenerationProgressView | null {
+  if (!run) return null;
+  const at = Math.min(run.done + 1, run.total);
+  return { label: `Variant ${at} of ${run.total} · ${run.label}`, percent: run.percent };
 }

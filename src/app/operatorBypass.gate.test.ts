@@ -165,7 +165,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 90 -> 98 at #1784 (the eight Transform nodes), NOT operators.
     // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), NOT operators.
     // 100 -> 101 -> 102 at #1811 (PolarSplit, OwnWorld). 102 -> 103 at #1811 (Value).
-    expect(listNodeTypes()).toHaveLength(103);
+    // 103 -> 104 at #1720 (ModelGenerate, no operator).
+    expect(listNodeTypes()).toHaveLength(104);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {
