@@ -194,6 +194,76 @@ export interface HSpan {
   width: string;
 }
 
+/** #1709 — a length that is linear in <main>'s width W: `px + of * W`. Every split edge is one of
+ *  these, so the same numbers give both the CSS (calc against 100%, which follows a resize without
+ *  a re-render) and a px value at a known W (for a surface that must decide in px — the live
+ *  preview inside the 3D side). */
+export interface Lin {
+  px: number;
+  of: number;
+}
+interface LinSpan {
+  left: Lin;
+  width: Lin;
+}
+
+const lin = (px: number, of = 0): Lin => ({ px, of });
+const linCss = (l: Lin): string => (l.of === 0 ? `${l.px}px` : `calc(${l.px}px + ${l.of} * 100%)`);
+const spanCss = (s: LinSpan): HSpan => ({ left: linCss(s.left), width: linCss(s.width) });
+/** A Lin's value at a <main> width of `mainWidth` px. */
+export const linPx = (l: Lin, mainWidth: number): number => l.px + l.of * mainWidth;
+
+interface SplitOpts {
+  insets: { left: number; right: number };
+  twoDShare: number;
+  collapsed: boolean;
+  swapped: boolean;
+}
+
+/** #1709 — the split's spans as linear lengths: THE one place the split geometry is decided. */
+export function splitPaneSpans(opts: SplitOpts): {
+  twoD: LinSpan;
+  view3d: LinSpan | null;
+  divider: LinSpan | null;
+  strip: LinSpan | null;
+} {
+  const L = opts.insets.left;
+  const R = opts.insets.right;
+  if (opts.collapsed) {
+    // band − strip = W − (L + R + strip)
+    const twoDWidth = lin(-(L + R + SPLIT_COLLAPSED_STRIP), 1);
+    const stripW = lin(SPLIT_COLLAPSED_STRIP);
+    return opts.swapped
+      ? {
+          twoD: { left: lin(L + SPLIT_COLLAPSED_STRIP), width: twoDWidth },
+          view3d: null,
+          divider: null,
+          strip: { left: lin(L), width: stripW },
+        }
+      : {
+          twoD: { left: lin(L), width: twoDWidth },
+          view3d: null,
+          divider: null,
+          strip: { left: lin(-(R + SPLIT_COLLAPSED_STRIP), 1), width: stripW },
+        };
+  }
+  // room = band − divider = W − (L + R + divider); a side of share s is s · room.
+  const roomPx = -(L + R + SPLIT_DIVIDER_WIDTH);
+  const f = opts.swapped ? 1 - opts.twoDShare : opts.twoDShare;
+  const first: LinSpan = { left: lin(L), width: lin(roomPx * f, f) };
+  const divider: LinSpan = {
+    left: lin(L + roomPx * f, f),
+    width: lin(SPLIT_DIVIDER_WIDTH),
+  };
+  const second: LinSpan = {
+    left: lin(L + SPLIT_DIVIDER_WIDTH + roomPx * f, f),
+    width: lin(roomPx * (1 - f), 1 - f),
+  };
+  return opts.swapped
+    ? { twoD: second, view3d: first, divider, strip: null }
+    : { twoD: first, view3d: second, divider, strip: null };
+}
+
 /** #1709 — where each part of the fixed 2D | 3D split sits across the clear band (the same band
  *  a lone 2D View fills, `centerBandInsets` 'top', so the split never runs under a side island).
  *
@@ -202,47 +272,52 @@ export interface HSpan {
  *  side's edge, and there is no divider. `swapped` puts the 3D side on the left.
  *
  *  Spelled as calc() against <main>'s width so it follows a window or chat-column resize without
- *  a re-render. */
-export function splitPaneBoxes(opts: {
-  insets: { left: number; right: number };
-  twoDShare: number;
-  collapsed: boolean;
-  swapped: boolean;
-}): { twoD: HSpan; view3d: HSpan | null; divider: HSpan | null; strip: HSpan | null } {
-  const L = opts.insets.left;
-  const R = opts.insets.right;
-  const band = `(100% - ${L + R}px)`;
-  if (opts.collapsed) {
-    const twoDWidth = `calc(${band} - ${SPLIT_COLLAPSED_STRIP}px)`;
-    const stripW = `${SPLIT_COLLAPSED_STRIP}px`;
-    return opts.swapped
-      ? {
-          twoD: { left: `${L + SPLIT_COLLAPSED_STRIP}px`, width: twoDWidth },
-          view3d: null,
-          divider: null,
-          strip: { left: `${L}px`, width: stripW },
-        }
-      : {
-          twoD: { left: `${L}px`, width: twoDWidth },
-          view3d: null,
-          divider: null,
-          strip: { left: `calc(100% - ${R + SPLIT_COLLAPSED_STRIP}px)`, width: stripW },
-        };
+ *  a re-render. The CSS form of splitPaneSpans. */
+export function splitPaneBoxes(opts: SplitOpts): {
+  twoD: HSpan;
+  view3d: HSpan | null;
+  divider: HSpan | null;
+  strip: HSpan | null;
+} {
+  const s = splitPaneSpans(opts);
+  return {
+    twoD: spanCss(s.twoD),
+    view3d: s.view3d && spanCss(s.view3d),
+    divider: s.divider && spanCss(s.divider),
+    strip: s.strip && spanCss(s.strip),
+  };
+}
+
+/** #1708/#1709 — the live shot preview's natural width (16:9, so 162 px tall). */
+export const LIVE_PREVIEW_WIDTH = 288;
+/** #1709 — narrower than this (picture 160 × 90) the preview reads as a smudge: it hides. */
+export const LIVE_PREVIEW_MIN_WIDTH = 160;
+
+/** #1708/#1709 — the live preview's box, in px from the bottom-right of the surface it sits in,
+ *  or null when it should not show.
+ *
+ *  Alone, the 3D view is full-bleed: the preview sits at the bottom-right of the clear band (beside
+ *  the inspector island, `bandRight`), above the floating playback bar, or down to the island gap
+ *  when the drawer holds the playback. Split, the 3D side is its own box: the preview sits at that
+ *  box's bottom-right, above the orbit gizmo and the Persp/Ortho pill (GIZMO_BAND), scaled down to
+ *  the side's width when it must be, and hidden when even LIVE_PREVIEW_MIN_WIDTH does not fit. The
+ *  side's width comes from splitPaneSpans — the same numbers that place the 3D slot. */
+export function livePreviewBox(opts: {
+  drawerOpen: boolean;
+  bandRight: number;
+  /** The 3D side's width in px when the split shows, else null. */
+  splitSideWidth: number | null;
+}): { right: number; bottom: number; width: number } | null {
+  if (opts.splitSideWidth === null) {
+    return {
+      right: opts.bandRight,
+      bottom: opts.drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
+      width: LIVE_PREVIEW_WIDTH,
+    };
   }
-  const room = `(${band} - ${SPLIT_DIVIDER_WIDTH}px)`;
-  const firstShare = opts.swapped ? 1 - opts.twoDShare : opts.twoDShare;
-  const first: HSpan = { left: `${L}px`, width: `calc(${room} * ${firstShare})` };
-  const divider: HSpan = {
-    left: `calc(${L}px + ${room} * ${firstShare})`,
-    width: `${SPLIT_DIVIDER_WIDTH}px`,
-  };
-  const second: HSpan = {
-    left: `calc(${L + SPLIT_DIVIDER_WIDTH}px + ${room} * ${firstShare})`,
-    width: `calc(${room} * ${1 - firstShare})`,
-  };
-  return opts.swapped
-    ? { twoD: second, view3d: first, divider, strip: null }
-    : { twoD: first, view3d: second, divider, strip: null };
+  const room = opts.splitSideWidth - 2 * ISLAND_GAP;
+  if (room < LIVE_PREVIEW_MIN_WIDTH) return null;
+  return { right: ISLAND_GAP, bottom: GIZMO_BAND, width: Math.min(LIVE_PREVIEW_WIDTH, room) };
 }
 
 /** #1709 — the 2D side's share for a divider dragged to `pointerX`, from the band's left edge

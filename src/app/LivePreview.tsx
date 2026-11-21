@@ -8,15 +8,26 @@
 // Hidden while looking through (the viewport already is that picture) and in present mode, and
 // when the film has no camera. V8: writes only its own projection store.
 
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { DagState } from '../core/dag/state';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
-import { centerBandInsets, ISLAND_GAP, PLAYBACK_BAND } from './layoutIslands';
+import {
+  centerBandInsets,
+  chatColumnWidth,
+  linPx,
+  livePreviewBox,
+  splitPaneSpans,
+} from './layoutIslands';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { sceneEndSeconds } from './sceneRange';
 import { liveShotIn, shotCameraColors } from './shotColors';
 import { shotsOf } from './shots';
+import { splitShowing } from './splitOutlinerFold';
+import { useChatColumnStore } from './stores/chatColumnStore';
+import { useEditorStore } from './stores/editorStore';
+import { useSplitViewStore } from './stores/splitViewStore';
+import { useTwoDViewStore } from './stores/twoDViewStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useLivePreviewStore } from './stores/livePreviewStore';
 import { useTimeStore } from './stores/timeStore';
@@ -47,12 +58,36 @@ export function LivePreview(): ReactNode {
   useTimeStore((t) => captionAt(useDagStore.getState().state, t.filmSeconds));
   useDagStore((d) => captionAt(d.state, useTimeStore.getState().filmSeconds));
   const caption = captionAt(useDagStore.getState().state, useTimeStore.getState().filmSeconds);
-  const shown = !lookThrough && !present && caption !== null;
+  const captionShown = !lookThrough && !present && caption !== null;
 
-  // The bottom-right of the clear band: beside the inspector island (whatever its width now), above
-  // the floating playback bar, or down to the island gap when the drawer holds the playback.
-  const { right } = centerBandInsets({ isNarrow, leftCollapsed, inspectorCollapsed, band: 'top' });
-  const bottom = drawerOpen ? ISLAND_GAP : PLAYBACK_BAND;
+  // #1709 — when the 2D View shows the 3D view beside it, this frame lives in the 3D side: its box
+  // comes from the side's width, which comes from the same split spans that place the 3D slot, at
+  // <main>'s width (the window less the chat column, the grid's own two numbers).
+  const space = useEditorStore((s) => s.space);
+  const twoDMode = useTwoDViewStore((s) => s.mode);
+  const split = useSplitViewStore();
+  const chatOpen = useChatColumnStore((s) => s.open);
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const insets = centerBandInsets({ isNarrow, leftCollapsed, inspectorCollapsed, band: 'top' });
+  const view3d = splitShowing(space, twoDMode, split)
+    ? splitPaneSpans({ insets, ...split }).view3d
+    : null;
+  const mainWidth = windowWidth - chatColumnWidth({ isNarrow, isPresent: present, open: chatOpen });
+  // The bottom-right of the clear band (alone) or of the 3D side (split); null = no room to show.
+  const frame = livePreviewBox({
+    drawerOpen,
+    bandRight: insets.right,
+    splitSideWidth: view3d ? linPx(view3d.width, mainWidth) : null,
+  });
+  const right = frame?.right ?? 0;
+  const bottom = frame?.bottom ?? 0;
+  const width = frame?.width ?? 0;
+  const shown = captionShown && frame !== null;
 
   const imageRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -79,16 +114,16 @@ export function LivePreview(): ReactNode {
       setRect(null);
     };
     // The box moves without resizing when an island folds or the drawer opens: re-publish then too.
-  }, [shown, collapsed, right, bottom]);
+  }, [shown, collapsed, right, bottom, width]);
 
-  if (!shown) return null;
+  if (!shown || caption === null) return null;
   const [index, name, time, color] = caption.split('\u0000');
   return (
     <div
       data-testid="live-preview"
       data-collapsed={collapsed || undefined}
-      style={{ right, bottom }}
-      className="absolute z-20 w-[288px] overflow-hidden rounded-md border border-border shadow-lg"
+      style={{ right, bottom, width }}
+      className="absolute z-20 overflow-hidden rounded-md border border-border shadow-lg"
     >
       {collapsed ? null : (
         <div
@@ -96,7 +131,8 @@ export function LivePreview(): ReactNode {
           data-testid="live-preview-image"
           aria-hidden
           // Transparent: the canvas draws the picture through it. The outline is the shot colour.
-          className="pointer-events-none h-[162px] w-full"
+          // 16:9 at whatever width the frame has (288 × 162 at full size).
+          className="pointer-events-none aspect-video w-full"
           style={{ boxShadow: `inset 0 0 0 1px ${color || 'transparent'}` }}
         />
       )}

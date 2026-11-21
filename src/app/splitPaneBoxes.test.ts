@@ -7,6 +7,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  GIZMO_BAND,
+  ISLAND_GAP,
+  linPx,
+  LIVE_PREVIEW_MIN_WIDTH,
+  LIVE_PREVIEW_WIDTH,
+  livePreviewBox,
+  PLAYBACK_BAND,
+  splitPaneSpans,
   SPLIT_COLLAPSED_STRIP,
   SPLIT_DIVIDER_WIDTH,
   splitPaneBoxes,
@@ -88,5 +96,42 @@ describe('twoDShareAt', () => {
 
   it('answers the middle for a band too narrow to hold the divider', () => {
     expect(twoDShareAt({ pointerX: 5, bandLeft: 0, bandWidth: 4, swapped: false })).toBe(0.5);
+  });
+});
+
+describe('livePreviewBox', () => {
+  it('alone: beside the inspector, above the playback bar (or the gap with the drawer open)', () => {
+    expect(livePreviewBox({ drawerOpen: false, bandRight: 324, splitSideWidth: null })).toEqual({
+      right: 324,
+      bottom: PLAYBACK_BAND,
+      width: LIVE_PREVIEW_WIDTH,
+    });
+    expect(livePreviewBox({ drawerOpen: true, bandRight: 324, splitSideWidth: null })?.bottom).toBe(
+      ISLAND_GAP,
+    );
+  });
+
+  it('split: the 3D side’s bottom-right above the gizmo, scaled to fit, hidden below the minimum', () => {
+    expect(livePreviewBox({ drawerOpen: false, bandRight: 324, splitSideWidth: 349 })).toEqual({
+      right: ISLAND_GAP,
+      bottom: GIZMO_BAND,
+      width: LIVE_PREVIEW_WIDTH,
+    });
+    expect(livePreviewBox({ drawerOpen: false, bandRight: 0, splitSideWidth: 250 })?.width).toBe(
+      250 - 2 * ISLAND_GAP,
+    );
+    const edge = LIVE_PREVIEW_MIN_WIDTH + 2 * ISLAND_GAP;
+    expect(livePreviewBox({ drawerOpen: false, bandRight: 0, splitSideWidth: edge })?.width).toBe(
+      LIVE_PREVIEW_MIN_WIDTH,
+    );
+    expect(
+      livePreviewBox({ drawerOpen: false, bandRight: 0, splitSideWidth: edge - 1 }),
+    ).toBeNull();
+  });
+
+  it('takes the side width from the same spans that place the 3D slot', () => {
+    const s = splitPaneSpans({ insets, twoDShare: 0.3, collapsed: false, swapped: false });
+    const b = splitPaneBoxes({ insets, twoDShare: 0.3, collapsed: false, swapped: false });
+    expect(linPx(s.view3d!.width, W)).toBeCloseTo(px(b.view3d!.width, W), 9);
   });
 });

@@ -287,6 +287,51 @@ test('collapse → expand and swap keep the free camera and the 2D zoom; drawer 
   await expectCanvasFillsSide(page);
 });
 
+test('the live shot preview sits inside the 3D side, and hides when the side is too narrow', async ({
+  page,
+}) => {
+  await boot(page);
+  await enterUV(page);
+  const preview = page.getByTestId('live-preview');
+  await expect(preview).toBeVisible();
+  const inside = async () => {
+    const p = await box(page, 'live-preview');
+    const side = await box(page, 'view3d-slot');
+    return (
+      p.x >= side.x - 0.5 &&
+      p.y >= side.y - 0.5 &&
+      p.x + p.width <= side.x + side.width + 0.5 &&
+      p.y + p.height <= side.y + side.height + 0.5
+    );
+  };
+  await expect.poll(inside, 'the preview lies inside the 3D side').toBe(true);
+  const p = await box(page, 'live-preview');
+  const side = await box(page, 'view3d-slot');
+  console.log(`p1709 preview ${JSON.stringify(p)} side ${JSON.stringify(side)}`);
+  // Bottom-right of the side, above the gizmo and the Persp/Ortho pill.
+  // (The gizmo's top is ≈125 px above the side's bottom edge, measured at 1440×900.)
+  const pill = await box(page, 'projection-toggle');
+  expect(p.y + p.height, 'above the Persp/Ortho pill').toBeLessThanOrEqual(pill.y);
+  expect(side.y + side.height - (p.y + p.height), 'above the axis gizmo').toBeGreaterThanOrEqual(
+    125,
+  );
+  expect(side.x + side.width - (p.x + p.width), 'hugs the right edge').toBeLessThan(20);
+  // The picture the canvas draws is where the frame is: the published rect is inside the side too.
+  const img = await box(page, 'live-preview-image');
+  expect(img.x + img.width).toBeLessThanOrEqual(side.x + side.width + 0.5);
+
+  // Dragged down to its narrowest, the 3D side has no room for the preview: it hides.
+  const div = await box(page, 'split-divider');
+  await page.mouse.move(div.x + 3, div.y + div.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(div.x + 600, div.y + div.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect(preview).toBeHidden();
+  // Collapsed, it goes with the 3D side.
+  await page.getByTestId('split-collapse').click();
+  await expect(preview).toBeHidden();
+});
+
 test('Render result opens unsplit; going back to UV splits again', async ({ page }) => {
   await boot(page);
   await enterUV(page);
