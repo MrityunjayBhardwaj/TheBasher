@@ -298,7 +298,8 @@ export const LIVE_PREVIEW_MIN_WIDTH = 160;
  *
  *  Alone, the 3D view is full-bleed: the preview sits at the bottom-right of the clear band (beside
  *  the inspector island, `bandRight`), above the floating playback bar, or down to the island gap
- *  when the drawer holds the playback. Split, the 3D side is its own box: the preview sits at that
+ *  when the drawer holds the playback — and never nearer the edge than the gizmo corner, which a
+ *  folded inspector's rail would otherwise put it over (#1954). Split, the 3D side is its own box: the preview sits at that
  *  box's bottom-right, above the orbit gizmo and the Persp/Ortho pill (GIZMO_BAND), scaled down to
  *  the side's width when it must be, and hidden when even LIVE_PREVIEW_MIN_WIDTH does not fit. The
  *  side's width comes from splitPaneSpans — the same numbers that place the 3D slot. */
@@ -309,8 +310,12 @@ export function livePreviewBox(opts: {
   splitSideWidth: number | null;
 }): { right: number; bottom: number; width: number } | null {
   if (opts.splitSideWidth === null) {
+    // #1954 — the folded inspector's rail leaves the band's right edge inside the gizmo and
+    // Persp/Ortho corner (BOTTOM_RIGHT_WIDGETS): the preview steps left of that corner instead of
+    // covering the gizmo. Left, not up: with the drawer open the viewport can be short enough that
+    // lifting it past the gizmo band would put it over the toolbar.
     return {
-      right: opts.bandRight,
+      right: Math.max(opts.bandRight, BOTTOM_RIGHT_WIDGETS),
       bottom: opts.drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
       width: LIVE_PREVIEW_WIDTH,
     };

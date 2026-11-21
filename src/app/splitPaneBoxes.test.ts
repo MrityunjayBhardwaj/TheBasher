@@ -13,6 +13,7 @@ import {
   LIVE_PREVIEW_MIN_WIDTH,
   LIVE_PREVIEW_WIDTH,
   livePreviewBox,
+  BOTTOM_RIGHT_WIDGETS,
   PLAYBACK_BAND,
   splitPaneSpans,
   SPLIT_COLLAPSED_STRIP,
@@ -108,6 +109,23 @@ describe('livePreviewBox', () => {
     });
     expect(livePreviewBox({ drawerOpen: true, bandRight: 324, splitSideWidth: null })?.bottom).toBe(
       ISLAND_GAP,
+    );
+  });
+
+  it('#1954 — alone with the inspector folded: left of the gizmo corner, never over it', () => {
+    // The folded inspector's rail leaves bandRight at 2 gaps + 28 = 52 px, inside the gizmo and
+    // Persp/Ortho corner (BOTTOM_RIGHT_WIDGETS from the edge): the preview steps left of it and
+    // keeps its height (lifting it could reach the toolbar in a viewport the drawer has shortened).
+    const railRight = 2 * ISLAND_GAP + 28;
+    expect(
+      livePreviewBox({ drawerOpen: false, bandRight: railRight, splitSideWidth: null }),
+    ).toEqual({ right: BOTTOM_RIGHT_WIDGETS, bottom: PLAYBACK_BAND, width: LIVE_PREVIEW_WIDTH });
+    expect(
+      livePreviewBox({ drawerOpen: true, bandRight: railRight, splitSideWidth: null })?.bottom,
+    ).toBe(ISLAND_GAP);
+    // Beside an open inspector it already clears the corner and stays where it was.
+    expect(livePreviewBox({ drawerOpen: false, bandRight: 324, splitSideWidth: null })?.right).toBe(
+      324,
     );
   });
 
