@@ -31,6 +31,7 @@ import { VideoTransport } from './VideoTransport';
 import { compDurationSeconds } from './videoTimelineGeometry';
 import { exportCompositionWithFeedback } from './exportCompositionAction';
 import { useRenderAnimationStore } from '../stores/renderAnimationStore';
+import { CommercialUseToggle } from '../licence/CommercialUseToggle';
 
 interface ActiveComposition {
   id: NodeId;
@@ -288,6 +289,7 @@ function ExportMenu() {
           >
             PNG Sequence (.zip)
           </button>
+          <CommercialUseToggle testId="video-mode-export-commercial" />
         </div>
       ) : null}
     </div>

@@ -58,6 +58,7 @@ import { createNewComposition } from './video/newComposition';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 import { useFlyoutSide } from './menu/useFlyoutSide';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
+import { CommercialUseToggle } from './licence/CommercialUseToggle';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -578,6 +579,7 @@ export function MenuBar() {
             onSelect={() => void renderAnimationWithFeedback('png-sequence')}
             testId="menu-file-render-animation-png"
           />
+          <CommercialUseToggle testId="menu-file-render-animation-commercial" />
         </Submenu>
         <Item
           label="Export Scene as glTF…"

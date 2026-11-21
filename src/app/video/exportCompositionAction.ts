@@ -36,6 +36,7 @@ import { globalFrameToCompFrame } from './videoTimelineGeometry';
 import { downloadBlob } from '../downloadBlob';
 import { type NotifyInput, useNotificationStore } from '../stores/notificationStore';
 import { useRenderAnimationStore } from '../stores/renderAnimationStore';
+import { confirmLicencesForExport } from '../licence/exportLicenceGate';
 
 export interface ExportCompositionResult {
   ok: boolean;
@@ -212,6 +213,12 @@ export function exportCompositionResultToToast(result: ExportCompositionResult):
 export async function exportCompositionWithFeedback(
   format: RenderAnimationFormat,
 ): Promise<ExportCompositionResult> {
+  // #1722 — a film marked for commercial use lists its uncleared parts before a frame renders.
+  if (!(await confirmLicencesForExport())) {
+    const declined: ExportCompositionResult = { ok: false, cancelled: true };
+    useNotificationStore.getState().notify(exportCompositionResultToToast(declined));
+    return declined;
+  }
   const result = await exportCompositionToFile(format);
   useNotificationStore.getState().notify(exportCompositionResultToToast(result));
   return result;
