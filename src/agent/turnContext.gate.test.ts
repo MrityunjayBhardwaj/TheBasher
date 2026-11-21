@@ -94,6 +94,20 @@ describe('#1705 — buildContextBlock carries each chip as one line', () => {
     );
   });
 
+  it('refs added with @ ride as one Also line, after Where and When, and only when there are some', () => {
+    const block = buildContextBlock(state(), new Set(), {
+      pane: 'Curves',
+      playhead: '1.00 s',
+      also: ['n_camera', 'Shot 2 (4.00–7.50 s)'],
+    });
+    expect(block).toMatch(/^Also: n_camera; Shot 2 \(4\.00–7\.50 s\)/m);
+    expect(block.indexOf('Also:')).toBeGreaterThan(block.indexOf('When:'));
+    expect(buildContextBlock(state(), new Set(), { also: [] })).not.toMatch(/Also/);
+    expect(buildContextBlock(state(), new Set(), { also: [] })).toBe(
+      buildContextBlock(state(), new Set()),
+    );
+  });
+
   it('with no chips the block is byte-for-byte what it was before chips existed', () => {
     const s = state();
     const anchors = Object.entries(s.outputs).map(([name, ref]) => {
@@ -121,6 +135,7 @@ describe('#1705 — the chips reach the model in the user message, not the syste
     expect(userOf(msgs)).toMatch(/^Where: Nodes › Hull/m);
     expect(userOf(msgs)).toMatch(/^When: Shot 1 · 0\.50 s/m);
     expect(userOf(msgs)).toContain('User request: make it rougher');
+    expect(userOf(msgs)).not.toMatch(/^Also:/m);
     expect(systemOf(msgs)).not.toContain('Nodes › Hull');
   });
 

@@ -25,7 +25,7 @@ import { useSettingsStore } from './stores/settingsStore';
 import { ProposalCard } from './ProposalCard';
 import { ContextChips } from './agent/ContextChips';
 import { currentTurnContext } from './agent/turnContext';
-import { useAgentContextStore } from './stores/agentContextStore';
+import { useAgentContextStore, type ContextRef } from './stores/agentContextStore';
 import { CHAT_SHORTCUT_LABEL } from './stores/chatColumnStore';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
@@ -55,12 +55,42 @@ export function AgentChat() {
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // #1705 — the @ picker: opened by "@ add" or by typing @ at the start of a word. `typedAt` is
+  // where a typed @ sits, so picking takes it back out of the message (Escape leaves the text).
+  const [pickerOpen, setPickerOpenState] = useState(false);
+  const typedAt = useRef<number | null>(null);
+  const setPickerOpen = useCallback((open: boolean) => {
+    typedAt.current = null;
+    setPickerOpenState(open);
+  }, []);
+  const pick = useCallback((ref: ContextRef) => {
+    useAgentContextStore.getState().addExtra(ref);
+    const at = typedAt.current;
+    if (at !== null) setInput((v) => (v[at] === '@' ? v.slice(0, at) + v.slice(at + 1) : v));
+    typedAt.current = null;
+    setPickerOpenState(false);
+  }, []);
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const caret = e.target.selectionStart ?? value.length;
+    // One character typed, an @, at the start of a word.
+    if (
+      value.length === input.length + 1 &&
+      value[caret - 1] === '@' &&
+      (caret === 1 || /\s/.test(value[caret - 2]))
+    ) {
+      setPickerOpen(true);
+      typedAt.current = caret - 1;
+    }
+    setInput(value);
+  };
 
   const handleSend = useCallback(async () => {
     const msg = input.trim();
     if (!msg || running) return;
     setInput('');
     setRunning(true);
+    setPickerOpen(false);
 
     // #1705 — the chips as they stand when the message is sent; a dismissal is for this message only.
     const { selectedNodeIds, context } = currentTurnContext();
@@ -77,7 +107,7 @@ export function AgentChat() {
     }
 
     // The message is going: every chip comes back for the next one.
-    useAgentContextStore.getState().resetDismissed();
+    useAgentContextStore.getState().resetAfterSend();
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -114,13 +144,18 @@ export function AgentChat() {
       setRunning(false);
       abortRef.current = null;
     }
-  }, [input, running, session.mode]);
+  }, [input, running, session.mode, setPickerOpen]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (pickerOpen && e.key === 'Escape') {
+      e.preventDefault();
+      setPickerOpen(false);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -213,11 +248,11 @@ export function AgentChat() {
       {/* Input area — pinned to the column's bottom (mt-auto) whether or not there is a thread. */}
       <div className="mt-auto border-t border-border p-2">
         {/* #1705 — What / Where / When: what this message will tell the agent besides the words. */}
-        <ContextChips />
+        <ContextChips pickerOpen={pickerOpen} setPickerOpen={setPickerOpen} onPick={pick} />
         <div className="flex items-stretch gap-1.5">
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
             placeholder={
               running ? 'waiting for response…' : `Ask or tell Basher… (${CHAT_SHORTCUT_LABEL})`

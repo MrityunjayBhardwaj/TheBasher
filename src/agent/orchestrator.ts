@@ -283,6 +283,8 @@ export interface TurnContext {
   playhead?: string;
   /** What was dismissed: the Selected nodes line is left out. */
   omitSelection?: boolean;
+  /** Also: objects, panes or shots the director added with @, e.g. "Shot 2 (4.00–7.50 s)". */
+  also?: readonly string[];
 }
 
 /**
@@ -1095,6 +1097,7 @@ export function buildContextBlock(
   if (context.pane)
     chipLines.push(`Where: ${context.pane} (the editor pane the user last worked in)`);
   if (context.playhead) chipLines.push(`When: ${context.playhead} (the playhead, film time)`);
+  if (context.also && context.also.length > 0) chipLines.push(`Also: ${context.also.join('; ')}`);
   if (chipLines.length > 0) lines.push('', ...chipLines);
   return lines.join('\n');
 }

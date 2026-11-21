@@ -9,6 +9,9 @@
 // network the node view is inside — so Where can read "Curves · Box position" rather than just
 // "Curves". Subjects are kept per pane and read live, so the chip follows the pane's content.
 //
+// Extras are what the director adds with @ (an object, a pane, a shot); like a dismissal they last
+// one message.
+//
 // REF: src/app/agent/ContextChips.tsx (the chips); src/app/agent/turnContext.ts (what a turn sends).
 
 import { useMemo } from 'react';
@@ -48,6 +51,17 @@ export const PANE_LABELS: Record<PaneKind, string> = {
 
 export type ChipKind = 'what' | 'where' | 'when';
 
+/** #1705 — an object, pane or shot the director added with @, beyond the three automatic chips. */
+export interface ContextRef {
+  readonly kind: 'object' | 'pane' | 'shot';
+  /** The node id, pane kind or shot index — with `kind`, what makes two refs the same. */
+  readonly id: string;
+  /** What the chip shows, e.g. "n_camera", "Nodes", "Shot 2". */
+  readonly label: string;
+  /** What the model is told, e.g. "Shot 2 (4.00–7.50 s)". */
+  readonly sent: string;
+}
+
 const NONE_DISMISSED: Record<ChipKind, boolean> = { what: false, where: false, when: false };
 
 export interface AgentContextStore {
@@ -57,17 +71,23 @@ export interface AgentContextStore {
   subjects: Partial<Record<PaneKind, string>>;
   /** Chips the director removed for the next message. */
   dismissed: Record<ChipKind, boolean>;
+  /** Refs added with @ for the next message. */
+  extras: readonly ContextRef[];
   markPane(kind: PaneKind): void;
   setSubject(kind: PaneKind, subject: string | undefined): void;
   dismiss(chip: ChipKind): void;
-  /** After a message is sent every chip is back: a dismissal is for one message. */
-  resetDismissed(): void;
+  addExtra(ref: ContextRef): void;
+  removeExtra(ref: ContextRef): void;
+  /** After a message is sent every chip is back and the added refs are gone: both are for one
+   *  message. */
+  resetAfterSend(): void;
 }
 
 export const useAgentContextStore = create<AgentContextStore>((set, get) => ({
   lastPane: null,
   subjects: {},
   dismissed: NONE_DISMISSED,
+  extras: [],
   markPane(kind) {
     // Every key press in a pane lands here; only a change of pane is a change of state.
     if (get().lastPane !== kind) set({ lastPane: kind });
@@ -79,8 +99,15 @@ export const useAgentContextStore = create<AgentContextStore>((set, get) => ({
   dismiss(chip) {
     set((s) => ({ dismissed: { ...s.dismissed, [chip]: true } }));
   },
-  resetDismissed() {
-    set({ dismissed: NONE_DISMISSED });
+  addExtra(ref) {
+    if (get().extras.some((r) => r.kind === ref.kind && r.id === ref.id)) return;
+    set((s) => ({ extras: [...s.extras, ref] }));
+  },
+  removeExtra(ref) {
+    set((s) => ({ extras: s.extras.filter((r) => !(r.kind === ref.kind && r.id === ref.id)) }));
+  },
+  resetAfterSend() {
+    set({ dismissed: NONE_DISMISSED, extras: [] });
   },
 }));
 

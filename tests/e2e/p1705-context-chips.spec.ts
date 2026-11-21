@@ -148,3 +148,58 @@ test('#1705 — the chips show What, Where and When; ✕ on When leaves it out o
   await page.evaluate(() => (window as unknown as Win).__basher_time.getState().setTime(3.4));
   await expect(page.getByTestId('context-chip-when')).toContainText('3.40 s');
 });
+
+test('#1705 — @ adds an object and a shot as chips; both reach the model and are gone after the message', async ({
+  page,
+}) => {
+  const bodies = await boot(page);
+
+  await page.getByTestId('context-add').click();
+  const picker = page.getByTestId('context-picker');
+  await expect(picker).toBeVisible();
+  await picker.getByTestId('context-pick-object-n_camera').click();
+  await expect(picker).toHaveCount(0);
+  await page.getByTestId('context-add').click();
+  await picker.getByTestId('context-pick-shot-0').click();
+
+  const extras = page.getByTestId('context-chip-extra');
+  await expect(extras).toHaveCount(2);
+  await expect(extras.nth(0)).toContainText('n_camera');
+  await expect(extras.nth(1)).toContainText('Shot 1');
+
+  const sent = await send(page, bodies, 'frame it from here');
+  expect(sent).toMatch(/^Also: .*n_camera.*; Shot 1 \(0\.00–\d+\.\d\d s\)/m);
+
+  // Like the other chips, an added ref is for one message.
+  await expect(extras).toHaveCount(0);
+  const next = await send(page, bodies, 'frame it from here');
+  expect(next).not.toMatch(/^Also:/m);
+});
+
+test('#1705 — typing @ at the start of a word opens the picker; Escape closes it and adds nothing', async ({
+  page,
+}) => {
+  await boot(page);
+  const input = page.getByTestId('agent-input');
+  await input.click();
+  await input.type('look at ');
+  await expect(page.getByTestId('context-picker')).toHaveCount(0);
+  await input.type('@');
+  await expect(page.getByTestId('context-picker')).toBeVisible();
+  await input.press('Escape');
+  await expect(page.getByTestId('context-picker')).toHaveCount(0);
+  await expect(page.getByTestId('context-chip-extra')).toHaveCount(0);
+  await expect(input).toHaveValue('look at @');
+
+  // Mid-word "@" (an address) is just text.
+  await input.fill('');
+  await input.type('me@');
+  await expect(page.getByTestId('context-picker')).toHaveCount(0);
+
+  // Picking from a typed @ takes the @ out of the message and adds the chip.
+  await input.fill('');
+  await input.type('look at @');
+  await page.getByTestId('context-pick-pane-nodes').click();
+  await expect(page.getByTestId('context-chip-extra')).toContainText('Nodes');
+  await expect(input).toHaveValue('look at ');
+});

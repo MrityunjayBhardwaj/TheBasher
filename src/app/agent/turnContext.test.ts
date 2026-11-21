@@ -9,7 +9,7 @@ import { buildDefaultDagState } from '../../core/project/default';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTimeStore } from '../stores/timeStore';
 import { paneLabel, useAgentContextStore } from '../stores/agentContextStore';
-import { currentTurnContext, filmShots, whatLabel, whenLabel } from './turnContext';
+import { currentTurnContext, filmShots, pickerOptions, whatLabel, whenLabel } from './turnContext';
 
 __resetRegistryForTests();
 registerAllNodes();
@@ -18,8 +18,8 @@ beforeEach(() => {
   useDagStore.getState().hydrate(buildDefaultDagState());
   useSelectionStore.getState().select(null);
   useTimeStore.getState().setTime(0);
-  useAgentContextStore.setState({ lastPane: null, subjects: {} });
-  useAgentContextStore.getState().resetDismissed();
+  useAgentContextStore.setState({ lastPane: null, subjects: {}, extras: [] });
+  useAgentContextStore.getState().resetAfterSend();
 });
 
 const state = () => useDagStore.getState().state;
@@ -72,11 +72,25 @@ describe('#1705 — what the next turn sends', () => {
     const { selectedNodeIds, context } = currentTurnContext();
     expect(context).toEqual({ omitSelection: true });
     expect(selectedNodeIds.size).toBe(0);
-    useAgentContextStore.getState().resetDismissed();
+    useAgentContextStore.getState().resetAfterSend();
     expect(currentTurnContext().context.pane).toBe('Nodes');
   });
 
   it('no pane yet means no Where', () => {
     expect(currentTurnContext().context.pane).toBeUndefined();
+  });
+
+  it('refs added with @ are sent once each, as written for the model, and cleared after sending', () => {
+    const { objects, shots } = pickerOptions(state(), filmShots(state()));
+    const cam = objects.find((o) => o.id === 'n_camera');
+    expect(cam).toBeDefined();
+    expect(shots[0].sent).toMatch(/^Shot 1 \(0\.00–\d+\.\d\d s\)$/);
+    const ctx = useAgentContextStore.getState();
+    ctx.addExtra(cam!);
+    ctx.addExtra(cam!);
+    ctx.addExtra(shots[0]);
+    expect(currentTurnContext().context.also).toEqual([cam!.sent, shots[0].sent]);
+    useAgentContextStore.getState().resetAfterSend();
+    expect(currentTurnContext().context.also).toBeUndefined();
   });
 });
