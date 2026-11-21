@@ -33,6 +33,7 @@ import { compositionLayerIds } from './videoLayers';
 import { exportCompositionWithFeedback } from './exportCompositionAction';
 import { useRenderAnimationStore } from '../stores/renderAnimationStore';
 import { CommercialUseToggle } from '../licence/CommercialUseToggle';
+import { ShotClipBar } from './ShotClipControls';
 
 interface ActiveComposition {
   id: NodeId;
@@ -144,6 +145,7 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
               {layerCount} {layerCount === 1 ? 'layer' : 'layers'}
             </span>
             <div className="flex-1" />
+            <ShotClipBar compId={comp.id} />
             <AddLayerMenu compId={comp.id} />
             <ExportMenu />
           </div>

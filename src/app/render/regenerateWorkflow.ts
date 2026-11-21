@@ -37,10 +37,16 @@ function setRenderParam(nodeId: NodeId, paramPath: string, value: unknown, label
   useDagStore.getState().dispatch({ type: 'setParam', nodeId, paramPath, value }, 'render', label);
 }
 
+export interface RegenerateDeps extends RunWorkflowDeps {
+  /** #1717 — called before each workflow in the order runs, after its resume sentinel is reset
+   *  (the Video space renders the shot's passes to disk here). A throw fails that workflow. */
+  readonly prepare?: (id: NodeId) => Promise<void>;
+}
+
 /** Run `id` and every stale workflow it depends on, dependencies first. */
 export async function regenerateWorkflow(
   id: NodeId,
-  deps: RunWorkflowDeps,
+  deps: RegenerateDeps,
 ): Promise<RegenerateResult> {
   // A fresh cache per state read: the state moves between runs, and one read evaluates every
   // upstream workflow (shared inputs once).
@@ -52,6 +58,14 @@ export async function regenerateWorkflow(
       | undefined;
     if ((params?.lastGoodFrame ?? -1) !== -1) {
       setRenderParam(nodeId, 'lastGoodFrame', -1, 'regenerate: start over');
+    }
+    if (deps.prepare) {
+      try {
+        await deps.prepare(nodeId);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        return { status: 'failed', ran, at: nodeId, error };
+      }
     }
     // Read in the same tick `runWorkflow` reads the state it runs.
     const madeFrom = workflowMadeFrom(useDagStore.getState().state, nodeId, createEvaluatorCache());

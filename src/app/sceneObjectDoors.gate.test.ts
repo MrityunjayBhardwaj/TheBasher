@@ -474,6 +474,8 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/app/springBody.ts': 'a Solver and its body, numbers and vectors',
   'src/app/video/addLayer.ts': 'a Composition layer',
   'src/app/video/newComposition.ts': 'a Composition',
+  // #1717 — Make shot clips: per shot, a ComfyUI workflow, the render passes it reads, a layer.
+  'src/app/video/shotClips.ts': 'ComfyUI workflows, render passes (Images) and Composition layers',
   // `ops.ts` builds an `addNode` as the inverse of a `removeNode`: undo puts back a node that was.
   'src/core/dag/ops.ts': 'the inverse of removeNode, restoring what was there',
 };

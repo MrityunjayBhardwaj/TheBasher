@@ -68,6 +68,18 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Once per workflow a Regenerate click runs.',
   },
+  // #1717 — Generate stale shots reads the graph once to list the shots, then once per shot (the
+  // runs before it move the graph, so a shot made current upstream is skipped).
+  'src/app/video/shotClipActions.ts · generateStaleShots → shotsToGenerate': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Generate stale shots click.',
+  },
+  'src/app/video/shotClipActions.ts · generateShotWorkflows → madeStateOf': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per shot a Generate click works through.',
+  },
   'src/app/generated/generatedStill.ts · keepVariantPlan → workflowMadeFrom': {
     count: 1,
     frequency: 'per-action',
@@ -363,6 +375,9 @@ const TAKERS: string[] = [
   'passReader@src/app/render/workflowMadeFrom.ts',
   'regenerateOrderOf@src/app/render/workflowMadeFrom.ts',
   'workflowMadeFrom@src/app/render/workflowMadeFrom.ts',
+  // #1717 — the shot clips' states; the Video space hands them the shared UI cache.
+  'shotClipState@src/app/video/shotClips.ts',
+  'shotsToGenerate@src/app/video/shotClips.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   // #1556 — the Spreadsheet's read of the selected mesh; the view hands it the shared UI cache.
   'attributeSheetOf@src/app/attributeSheet.ts',

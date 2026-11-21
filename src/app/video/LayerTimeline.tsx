@@ -37,6 +37,7 @@ import {
 import { dispatchRetimeKeyframe, dispatchMutatorFromUI } from '../animate/dispatchMutator';
 import { buildRemoveEffectOps, buildToggleEffectMuteOp } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
+import { LayerClipBadge } from './ShotClipControls';
 import {
   BAR_DRAG_THRESHOLD_PX as DRAG_THRESHOLD_PX,
   BAR_TRIM_HANDLE_PX,
@@ -716,6 +717,8 @@ function OutlineRow({
       <span className="flex-1 truncate text-fg" title={row.name}>
         {row.name}
       </span>
+      {/* #1717 — a shot clip's generated / stale / generating state. */}
+      <LayerClipBadge layerId={row.id} />
       <ToggleButton
         testId={`layer-vis-${row.id}`}
         label="Toggle visibility"

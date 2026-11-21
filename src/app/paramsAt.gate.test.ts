@@ -237,6 +237,10 @@ const CONSUMERS: Record<string, Decision> = {
   // at each of those frames, with the camera on screen and the scene's channels read through the
   // resolvers the render uses. Fixed-ctx: the frames are the workflow's, not the playhead.
   'src/app/render/workflowMadeFrom.ts': authored('fixed-ctx-by-design'),
+  // #1717 — the Video space's shot clips read each shot's made state through it, and Generate
+  // re-reads it before each shot. Fixed-ctx for the same reason.
+  'src/app/video/shotClips.ts': authored('fixed-ctx-by-design'),
+  'src/app/video/shotClipActions.ts': authored('fixed-ctx-by-design'),
   // #935 — the node road's placement half reads the landed generation's world
   // offset off the producer. AUTHORED and fixed-ctx for the third time in this
   // chain and for the third instance of one reason: where a character stands at
@@ -432,7 +436,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // (both declared above as fixed-ctx).
     // 74 → 75 at #1717, a new road: what a workflow is made from over all its frames (declared
     // above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(75); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 75 → 77 at #1717: the shot clips and their Generate read that made state (declared above as
+    // fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(77); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
