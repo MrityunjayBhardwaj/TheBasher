@@ -18,12 +18,15 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useAgentSessionStore } from '../agent/session/store';
-import { useSelectionStore } from './stores/selectionStore';
 import { runAgentTurn } from '../agent/orchestrator';
 import type { LLMConfig } from '../agent/transport/types';
 import { getComfyCapability, getMotionCapability, getModelCapability, getStorage } from './boot';
 import { useSettingsStore } from './stores/settingsStore';
 import { ProposalCard } from './ProposalCard';
+import { ContextChips } from './agent/ContextChips';
+import { currentTurnContext } from './agent/turnContext';
+import { useAgentContextStore } from './stores/agentContextStore';
+import { CHAT_SHORTCUT_LABEL } from './stores/chatColumnStore';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
 const DEFAULT_MODEL = 'google/gemma-4-31B-it';
@@ -59,7 +62,8 @@ export function AgentChat() {
     setInput('');
     setRunning(true);
 
-    const selectedNodeIds = useSelectionStore.getState().selectedNodeIds;
+    // #1705 — the chips as they stand when the message is sent; a dismissal is for this message only.
+    const { selectedNodeIds, context } = currentTurnContext();
     const config = getLLMConfig();
 
     if (!config.apiKey) {
@@ -71,6 +75,9 @@ export function AgentChat() {
       setRunning(false);
       return;
     }
+
+    // The message is going: every chip comes back for the next one.
+    useAgentContextStore.getState().resetDismissed();
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -101,6 +108,7 @@ export function AgentChat() {
         motionModel: motionGenModel,
         modelCapability,
         modelVersion: modelGenVersion,
+        context,
       });
     } finally {
       setRunning(false);
@@ -204,12 +212,16 @@ export function AgentChat() {
 
       {/* Input area — pinned to the column's bottom (mt-auto) whether or not there is a thread. */}
       <div className="mt-auto border-t border-border p-2">
+        {/* #1705 — What / Where / When: what this message will tell the agent besides the words. */}
+        <ContextChips />
         <div className="flex items-stretch gap-1.5">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={running ? 'waiting for response…' : 'just say the word…'}
+            placeholder={
+              running ? 'waiting for response…' : `Ask or tell Basher… (${CHAT_SHORTCUT_LABEL})`
+            }
             disabled={running}
             rows={2}
             data-testid="agent-input"

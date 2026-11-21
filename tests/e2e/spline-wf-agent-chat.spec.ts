@@ -26,11 +26,15 @@ test('WF#1 the mode selector is gone from the chat', async ({ page }) => {
   await expect(page.getByTestId('agent-mode-sandbox')).toHaveCount(0);
 });
 
-test('WF#2 the single text bar prompts "just say the word…"', async ({ page }) => {
+// #1705 — the prompt moved to the design board's words ("Ask or tell Basher… (⌘L)", board 10), which
+// also name the chat's shortcut; "just say the word…" was retired on purpose.
+test('WF#2 the single text bar prompts "Ask or tell Basher…" with its shortcut', async ({
+  page,
+}) => {
   const input = page.getByTestId('agent-input');
   await expect(input).toBeVisible();
-  // Revert the placeholder → 'ask the agent…' → this fails.
-  await expect(input).toHaveAttribute('placeholder', 'just say the word…');
+  // Revert the placeholder → 'just say the word…' → this fails.
+  await expect(input).toHaveAttribute('placeholder', /^Ask or tell Basher… \((⌘L|Ctrl\+L)\)$/);
 });
 
 test('WF#3 the dock is bare — no "AGENT" header, no empty-state copy', async ({ page }) => {

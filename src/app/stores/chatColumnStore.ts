@@ -16,6 +16,11 @@ import { create } from 'zustand';
 
 import type { Message } from '../../agent/session/store';
 
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+/** #1704 — the chat's fold/unfold shortcut as the platform writes it. Kept here, not in ChatColumn,
+ *  so the composer inside the column can name it without importing the column back (#1705). */
+export const CHAT_SHORTCUT_LABEL = isMac ? '⌘L' : 'Ctrl+L';
+
 const STORAGE_KEY = 'basher.chatColumn.v1';
 
 export interface ChatColumnState {

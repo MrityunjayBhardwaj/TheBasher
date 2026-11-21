@@ -19,12 +19,14 @@ import { useAgentSessionStore } from '../agent/session/store';
 import { useDiffStore } from '../agent/diff';
 import { usePendingProposal } from '../agent/diff/useProposal';
 import { PROPOSAL_AMBER } from './proposalStyle';
-import { agentReplyKey, chatVisible, useChatColumnStore } from './stores/chatColumnStore';
+import {
+  agentReplyKey,
+  CHAT_SHORTCUT_LABEL,
+  chatVisible,
+  useChatColumnStore,
+} from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { CHAT_COLUMN_WIDTH } from './layoutIslands';
-
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
-export const CHAT_SHORTCUT_LABEL = isMac ? '⌘L' : 'Ctrl+L';
 
 function ChatIcon({ size = 16 }: { size?: number }) {
   return (

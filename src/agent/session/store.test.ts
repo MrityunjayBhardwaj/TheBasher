@@ -1,6 +1,6 @@
 // Agent session store — default mode contract.
 //
-// The chat is a single text bar ("just say the word…") with no mode selector,
+// The chat is a single text bar ("Ask or tell Basher…") with no mode selector,
 // so the agent must default to an ACTING mode, not read-only. copilot routes
 // every mutation through the Diff approval (orchestrator), so "say the word →
 // it proposes → you approve". The read-only / sandbox levels still exist for
