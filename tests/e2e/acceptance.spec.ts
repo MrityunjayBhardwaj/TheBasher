@@ -250,6 +250,11 @@ test('#6b beacon endpoint absent in prod build (dist/ has no middleware code)', 
 });
 
 test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page }) => {
+  // #1708 — the live preview is editor chrome over the viewport. Collapsed to its caption (and
+  // masked below, as the other chrome is), so the beauty diff sees the DAG render, not the preview.
+  await page.addInitScript(() =>
+    localStorage.setItem('basher.livePreview.v1', JSON.stringify({ collapsed: true })),
+  );
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible();
   // #1704 — the chat column takes its width from the window, beside the viewport. The baseline is
@@ -295,6 +300,7 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
       page.getByTestId('fps-meter'),
       page.getByTestId('viewport-empty-hint'),
       page.getByTestId('floating-viewport-toolbar'),
+      page.getByTestId('live-preview'),
     ],
   });
 });

@@ -133,6 +133,19 @@ test('double-click looks through; Esc and an orbit drag come back to the free vi
 
   await page.getByTestId('shot-select-2').dblclick();
   await expect.poll(() => lookThrough(page)).toBe(true);
+  // The camera looked through draws no frame around the view: it is the live one at the playhead,
+  // not only the camera the switch rests on.
+  expect(
+    await page.evaluate(
+      (id) =>
+        Boolean(
+          (window as unknown as { __basher_frustum_style?: Record<string, unknown> })
+            .__basher_frustum_style?.[id],
+        ),
+      CAM2,
+    ),
+    'no frame drawn for the camera looked through',
+  ).toBe(false);
   const box = (await page.getByTestId('viewport-canvas').boundingBox())!;
   const x = box.x + box.width * 0.3;
   const y = box.y + box.height * 0.3;

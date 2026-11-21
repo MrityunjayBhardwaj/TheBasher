@@ -136,6 +136,8 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   // #1708 — the colour of the shots it films; a camera that films none keeps the old scheme.
   const shotColor = useDagStore((d) => (pickId ? shotColorOfCamera(d.state, pickId) : null));
   const live = useIsLiveCamera(pickId);
+  const lookThrough = useViewportStore((v) => v.lookThroughCamera);
+  const hidden = live && lookThrough;
   // Selection shows on the body (bright) and keeps the frame in its shot colour, so a selected
   // camera still says which shots it films.
   const color = shotColor ?? (selected ? COLOR_SELECTED : active ? COLOR_ACTIVE : COLOR_INACTIVE);
@@ -216,8 +218,13 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
     return () => {
       if (w.__basher_frustum_style?.[pickId] === entry) delete w.__basher_frustum_style[pickId];
     };
-  }, [pickId, color, opacity]);
+    // `hidden` re-runs it when the frame unmounts in camera view, so the entry goes with it.
+  }, [pickId, color, opacity, hidden]);
 
+  // #1708 — looking through, the camera on screen draws no frame: the view is inside it. That is
+  // the camera live at the playhead, which after a cut is not the one the switch rests on (the
+  // caller hides only that one).
+  if (hidden) return null;
   return (
     <group
       position={pose.position as [number, number, number]}
