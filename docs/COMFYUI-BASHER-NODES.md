@@ -34,6 +34,37 @@ into the target input. One controller ↔ one Basher channel; fan-out (one contr
 several inputs) is allowed. Media inputs are the **same node** with `kind=image|video` —
 the input concept is unified (see "Why one input node").
 
+### The markers are the node's sockets (#1715)
+
+Basher has one **ComfyUI workflow** node. Pick a workflow file and its markers become the
+node's sockets, derived in one place (`socketsOfWorkflow`, `src/core/comfy/workflowSockets.ts`):
+
+| Marker                                 | Socket                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `basher_controller` kind float / int   | a **number** input, keyable (`controller:<nodeId>`)                                        |
+| `basher_controller` kind string        | a **text** input, keyable the same way                                                     |
+| `basher_controller` kind image / video | a **still image** / **frames** input                                                       |
+| `basher_controller` kind bool          | no socket: a switch set on the node                                                        |
+| `basher_export` kind image (default)   | a **still image** output                                                                   |
+| `basher_export` kind video             | a **frames** output                                                                        |
+| `basher_controller` with `feedback_of` | no socket: fed by Basher with the named export's picture from the frame before (see below) |
+
+`kind` on `basher_export` is optional; a workflow saved before it existed reads as `image`.
+Exports are images only, because the node's input is an `IMAGE` and Basher collects what it
+saves. Nothing else in the file becomes a socket: a LoadImage or a CLIPTextEncode is the
+workflow's own business.
+
+**Feedback.** A `basher_controller` of kind image whose `feedback_of` names one of the
+workflow's own exports is fed, at each frame, with that export's picture from the frame before.
+On the first frame Basher feeds the controller's own `image` file when one is set, and a black
+picture when it is not. The node shows it as "previous frame of <export>", not as a socket. This
+is how the old stylized-realism preset keeps one frame close to the last, without Basher knowing
+anything about that workflow.
+
+Change the file and the sockets change. A wire into a socket the new file no longer has is kept
+and shown as broken, and is read as unconnected; going back to a file with that socket brings
+it back into use.
+
 **Inputs and outputs stay separate nodes.** Folding all _inputs_ into one node is right —
 they share the span "a Basher-driven input, declared by wiring." An export is the opposite
 flow (a sink Basher reads _from_); collapsing in+out into one node would conflate two

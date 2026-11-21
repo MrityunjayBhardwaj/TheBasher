@@ -16,11 +16,22 @@ import type { ComfyApiJson } from './comfyGraph';
 /** The ComfyUI class_type Basher scans for — the one declared output sink. */
 export const BASHER_EXPORT_TYPE = 'basher_export';
 
+/** #1715 — what an export declares it makes: one still (`image`) or a run of frames (`video`).
+ *  The node's optional `kind`; missing or unknown reads as `image`, which is what an export
+ *  saved before the field existed always meant (the compositor shows it as one picture). */
+export type BasherExportKind = 'image' | 'video';
+
 /** One declared export, read from a `basher_export` node's own inputs. `nodeId` is
- *  the /history key Basher collects frames from; `name` labels the resulting clip. */
+ *  the /history key Basher collects frames from; `name` labels the resulting clip;
+ *  `kind` is what the result is (#1715). */
 export interface BasherExportDecl {
   readonly nodeId: string;
   readonly name: string;
+  readonly kind: BasherExportKind;
+}
+
+function exportKind(v: unknown): BasherExportKind {
+  return v === 'video' ? 'video' : 'image';
 }
 
 function str(v: unknown, fallback: string): string {
@@ -45,7 +56,7 @@ export function scanBasherExports(apiJson: ComfyApiJson): BasherExportDecl[] {
   for (const nodeId of Object.keys(apiJson)) {
     const node = apiJson[nodeId];
     if (!node || node.class_type !== BASHER_EXPORT_TYPE) continue;
-    out.push({ nodeId, name: str(node.inputs?.name, nodeId) });
+    out.push({ nodeId, name: str(node.inputs?.name, nodeId), kind: exportKind(node.inputs?.kind) });
   }
   out.sort((a, b) => a.nodeId.localeCompare(b.nodeId, undefined, { numeric: true }));
   return out;

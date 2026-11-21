@@ -1,0 +1,37 @@
+{
+  "1": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "model.safetensors" } },
+  "2": {
+    "class_type": "basher_controller",
+    "inputs": {
+      "name": "picture",
+      "kind": "image",
+      "values_json": "[]",
+      "frame_count": 0,
+      "image": ""
+    }
+  },
+  "3": {
+    "class_type": "basher_controller",
+    "inputs": {
+      "name": "prompt",
+      "kind": "string",
+      "values_json": "[\"a red door\"]",
+      "frame_count": 1
+    }
+  },
+  "4": {
+    "class_type": "basher_controller",
+    "inputs": { "name": "strength", "kind": "float", "values_json": "[0.6]", "frame_count": 1 }
+  },
+  "5": { "class_type": "LoadImage", "inputs": { "image": "input.png" } },
+  "6": { "class_type": "CLIPTextEncode", "inputs": { "text": ["3", 0], "clip": ["1", 1] } },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["9", 0], "vae": ["1", 2] } },
+  "8": {
+    "class_type": "basher_export",
+    "inputs": { "name": "result", "kind": "image", "images": ["7", 0] }
+  },
+  "9": {
+    "class_type": "KSampler",
+    "inputs": { "denoise": ["4", 0], "model": ["1", 0], "positive": ["6", 0] }
+  }
+}

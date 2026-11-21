@@ -1,0 +1,23 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "input.png" },
+    "_meta": { "title": "Basher input" }
+  },
+  "2": { "class_type": "CLIPTextEncode", "inputs": { "text": "prompt", "clip": ["5", 1] } },
+  "3": {
+    "class_type": "PrimitiveNode",
+    "inputs": { "name": "strength", "kind": "float", "value": 0.5 }
+  },
+  "4": {
+    "class_type": "SaveImage",
+    "inputs": { "filename_prefix": "basher_export", "images": ["6", 0] }
+  },
+  "5": { "class_type": "CheckpointLoaderSimple", "inputs": { "ckpt_name": "model.safetensors" } },
+  "6": { "class_type": "basher_controllers", "inputs": { "name": "picture", "kind": "image" } },
+  "7": { "class_type": "LoadVideo", "inputs": { "video": "input.mp4", "name": "footage" } },
+  "8": {
+    "class_type": "PreviewImage",
+    "inputs": { "images": ["6", 0], "name": "result", "kind": "video" }
+  }
+}

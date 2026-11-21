@@ -1,0 +1,40 @@
+{
+  "10": {
+    "class_type": "basher_controller",
+    "inputs": {
+      "name": "footage",
+      "kind": "video",
+      "values_json": "[]",
+      "frame_count": 0,
+      "video": ""
+    }
+  },
+  "11": {
+    "class_type": "basher_controller",
+    "inputs": { "name": "seed", "kind": "int", "values_json": "[7]", "frame_count": 1 }
+  },
+  "12": {
+    "class_type": "basher_controller",
+    "inputs": { "name": "style", "kind": "string", "values_json": "[\"ink\"]", "frame_count": 1 }
+  },
+  "13": {
+    "class_type": "basher_controller",
+    "inputs": {
+      "name": "previous",
+      "kind": "image",
+      "values_json": "[]",
+      "frame_count": 0,
+      "image": "",
+      "feedback_of": "clip"
+    }
+  },
+  "14": {
+    "class_type": "WanImageToVideo",
+    "inputs": { "start_image": ["10", 0], "seed": ["11", 0] }
+  },
+  "15": {
+    "class_type": "basher_export",
+    "inputs": { "name": "clip", "kind": "video", "images": ["14", 0] }
+  },
+  "16": { "class_type": "basher_export", "inputs": { "name": "poster", "images": ["14", 0] } }
+}
