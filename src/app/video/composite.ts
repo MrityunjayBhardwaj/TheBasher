@@ -58,6 +58,11 @@ export interface CompositeSource {
    *  Shape mirrors `ComfyImageUpload` (kept inline so composite.ts stays free of
    *  the comfy data model). Empty/absent when no image input is bound. */
   readonly comfyImageUploads?: readonly { readonly path: string; readonly filename: string }[];
+  /** #1717 — where a comfy generator's runner stores its pictures: source frame `i` is the file
+   *  `framePath(prefix, firstFrame + i)` (`srcFrames` of them; one, held, for a still). When the
+   *  file is not there yet the decoder draws the placeholder. Absent for a workflow with no
+   *  output path, which nothing ever stores for. */
+  readonly stored?: { readonly prefix: string; readonly firstFrame: number };
 }
 
 /** A resolved video effect to apply to a layer's decoded frame, in apply order

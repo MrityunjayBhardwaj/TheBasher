@@ -29,6 +29,8 @@ import {
   type ComfyGraphMeta,
   type ComfyInputValue,
 } from '../../core/comfy/comfyGraph';
+import { framePath, outputPathOf } from '../../core/comfy/workflowPaths';
+import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../../nodes/ComfyUIWorkflow';
 import { getComfyCapability } from '../boot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useNotificationStore } from '../stores/notificationStore';
@@ -63,6 +65,12 @@ function vec2(v: unknown, fallback: readonly [number, number]): readonly [number
   return Array.isArray(v) && v.length >= 2
     ? [num(v[0], fallback[0]), num(v[1], fallback[1])]
     : fallback;
+}
+
+/** The output socket a layer's source binding reads. */
+function firstSourceSocket(binding: unknown): string | undefined {
+  const ref = (Array.isArray(binding) ? binding[0] : binding) as { socket?: unknown } | undefined;
+  return typeof ref?.socket === 'string' ? ref.socket : undefined;
 }
 
 function firstSourceId(binding: unknown): NodeId | undefined {
@@ -202,26 +210,48 @@ export function collectCompositeInputs(
           };
         }
       } else if (base && base.type === 'ComfyUIWorkflow') {
-        // A ComfyUIWorkflow generator layer. Decoded as a deterministic STUB frame
-        // (CI-safe, no server), or a SINGLE live render when comfyLiveGenerate is on.
-        // STATIC: the comfy layer no longer recompiles per frame — keyframed scalar
-        // params are observed via 🎬 Render coherent clip (the auto-injected-controller
-        // batch), not a per-frame scrub (the inference preview compiler is retired). The
-        // cache key folds the graph json + bound media → an edited workflow or a changed
-        // binding re-renders, but a scrub does not. The stub draws the workflow name.
-        const cp = base.params as Record<string, unknown>;
+        // A ComfyUIWorkflow generator layer.
+        //
+        // #1717 — it shows what the runner made: the picture the runner stored for each frame
+        // of the workflow's range (`framePath(outputPathOf(…), frame)`), one per frame for a
+        // frames output and the one still, held, for a still output (#1716). A frame not stored
+        // yet draws the placeholder. The cache key folds what the pictures were made from and
+        // how far the run got, so a run that lands new pictures is decoded afresh.
+        //
+        // A workflow with no output path (nothing ever stores for it) keeps the older static
+        // preview: a deterministic STUB frame (CI-safe, no server), or a SINGLE live render
+        // when comfyLiveGenerate is on. Its cache key folds the graph json + bound media, so
+        // an edited workflow or a changed binding re-renders but a scrub does not.
+        const cp = base.params as Partial<ComfyUIWorkflowParams> & Record<string, unknown>;
         const resolved = resolveComfySource(cp.graph, cp.imageBindings);
+        const sockets = workflowSocketsOf(cp);
+        const socket = srcId === baseId ? firstSourceSocket(layer.inputs?.source) : undefined;
+        const output = sockets.outputs.find((o) => o.socket === socket) ?? sockets.outputs[0];
+        const outputPath = typeof cp.outputPath === 'string' ? cp.outputPath : '';
+        const frameStart = num(cp.frameStart, 0);
+        const frames = output?.type === 'frames';
+        const stored =
+          output && outputPath
+            ? { prefix: outputPathOf(outputPath, sockets, output.socket), firstFrame: frameStart }
+            : undefined;
         source = {
           kind: 'comfy',
-          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, imgs: resolved.imageUploads })}`,
+          path: `comfy:${baseId}#${hashValue({
+            json: resolved.graphJson,
+            imgs: resolved.imageUploads,
+            stored: stored ?? null,
+            madeFrom: stored ? (cp.madeFrom ?? null) : null,
+            landed: stored ? (cp.lastGoodFrame ?? -1) : null,
+          })}`,
           label: resolved.name ?? 'ComfyUI',
           comfyWorkflow: resolved.compiledJson,
           comfyImageUploads: resolved.imageUploads,
-          mediaKind: 'image',
+          mediaKind: frames && stored ? 'video' : 'image',
           width: num(cp.width, 512),
           height: num(cp.height, 512),
           srcFps: 30,
-          srcFrames: 1,
+          srcFrames: frames && stored ? Math.max(1, num(cp.frameEnd, 60) - frameStart + 1) : 1,
+          ...(stored ? { stored } : {}),
         };
       }
       for (const entry of enumerateEffectStack(state, baseId)) {
@@ -327,6 +357,39 @@ async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | n
   return await createImageBitmap(canvas, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
 }
 
+/** Decode one stored PNG (a runner's picture) through the same decoder a media still uses. */
+async function decodeStoredPicture(
+  source: CompositeSource,
+  path: string,
+  bytes: Uint8Array,
+): Promise<ImageBitmap | null> {
+  try {
+    const frame = await decoder.decodeFrame(
+      bytes,
+      {
+        mediaKind: 'image',
+        width: source.width,
+        height: source.height,
+        srcFps: 30,
+        srcFrames: 1,
+        durationSeconds: 0,
+      },
+      0,
+    );
+    if (frame.bitmap) return frame.bitmap;
+    if (!frame.rgba) return null;
+    const data = new ImageData(new Uint8ClampedArray(frame.rgba), frame.width, frame.height);
+    return await createImageBitmap(data, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
+  } catch (err) {
+    console.warn(`composite: failed to decode ${path}`, err);
+    useNotificationStore.getState().notify({
+      severity: 'error',
+      message: `Video layer failed to decode: ${source.label ?? path}`,
+    });
+    return null;
+  }
+}
+
 /** Submit a comfy layer's per-frame compiled workflow to a REAL ComfyUI server and
  *  decode the returned PNG (inc 3 real submit). Only when `comfyLiveGenerate` is on
  *  AND the capability resolved to a reachable HTTP server; otherwise (CI / offline /
@@ -390,15 +453,43 @@ async function ensureBitmap(
   return work;
 }
 
+/**
+ * #1717 — what a comfy generator layer shows at source frame `frameIndex`: the picture its runner
+ * stored for that frame (`stored`: its path), or nothing stored yet (`stored: null`, the
+ * placeholder). A still is one picture, held. The ONE place the composite decides this.
+ */
+export async function comfyLayerFrame(
+  source: CompositeSource,
+  frameIndex: number,
+  storage: Pick<StorageCapability, 'exists'>,
+): Promise<{ readonly stored: string | null }> {
+  if (source.kind !== 'comfy' || !source.stored) return { stored: null };
+  const i = Math.min(Math.max(0, Math.round(frameIndex)), Math.max(1, source.srcFrames) - 1);
+  const path = framePath(source.stored.prefix, source.stored.firstFrame + i);
+  return { stored: (await storage.exists(path)) ? path : null };
+}
+
 async function decodeBitmap(
   source: CompositeSource,
   frameIndex: number,
   key: string,
 ): Promise<ImageBitmap | null> {
-  // A ComfyUIWorkflow generator. Real submit (opt-in `comfyLiveGenerate` + a
-  // reachable server) → the per-frame compiled workflow is sent to ComfyUI and a
-  // REAL frame composited; otherwise the deterministic GPU-free stub (CI/offline).
   if (source.kind === 'comfy') {
+    // #1717 — a workflow whose runner stores its pictures shows them; a frame not stored yet is
+    // the placeholder (never a submit from the viewer: generating is the Generate action's).
+    if (source.stored) {
+      storagePromise ??= pickStorage();
+      const storage = await storagePromise;
+      const { stored } = await comfyLayerFrame(source, frameIndex, storage);
+      const bmp = stored
+        ? await decodeStoredPicture(source, stored, await storage.read(stored))
+        : await decodeComfyStub(source);
+      if (bmp) bitmapCache.set(key, bmp);
+      return bmp;
+    }
+    // No output path: real submit (opt-in `comfyLiveGenerate` + a reachable server) → the
+    // compiled workflow is sent to ComfyUI and a REAL frame composited; otherwise the
+    // deterministic GPU-free stub (CI/offline).
     const bmp = await decodeComfy(source);
     if (bmp) bitmapCache.set(key, bmp);
     return bmp;

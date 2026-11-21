@@ -6,8 +6,10 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
-import { BitmapLRU, collectCompositeInputs } from './compositeDecode';
-import { isLayerInput } from './composite';
+import { BitmapLRU, collectCompositeInputs, comfyLayerFrame } from './compositeDecode';
+import { isLayerDraw, isLayerInput, planComposite } from './composite';
+import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { framePath } from '../../core/comfy/workflowPaths';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx } from '../../core/dag/types';
 import type { ComfyApiJson } from '../../core/comfy/comfyGraph';
@@ -156,5 +158,126 @@ describe('BitmapLRU', () => {
     expect(a.closed).toBe(true);
     expect(b.closed).toBe(true);
     expect(lru.get('a')).toBeUndefined();
+  });
+});
+
+// #1717 — a ComfyUI workflow layer shows what the runner made: its stored picture for each frame
+// of its range, a still held, and a placeholder where nothing is stored yet.
+describe('collectCompositeInputs — a workflow layer reads the runner’s stored frames', () => {
+  const FRAMES_FILE: ComfyApiJson = {
+    '1': { class_type: 'basher_controller', inputs: { name: 'beauty', kind: 'video', video: '' } },
+    '2': {
+      class_type: 'basher_export',
+      inputs: { name: 'stylized', kind: 'video', images: ['1', 0] },
+    },
+  };
+  const STILL_FILE: ComfyApiJson = {
+    '1': { class_type: 'basher_controller', inputs: { name: 'render', kind: 'image', image: '' } },
+    '2': {
+      class_type: 'basher_export',
+      inputs: { name: 'still', kind: 'image', images: ['1', 0] },
+    },
+  };
+  const META = { name: 'Shot 2', importedAt: '', fps: 30, frames: 1 };
+
+  function shotLayer(apiJson: ComfyApiJson, socket: string, extra: Record<string, unknown> = {}) {
+    return {
+      nodes: {
+        comp: {
+          id: 'comp',
+          type: 'Composition',
+          version: 1,
+          params: { fps: 30, durationFrames: 90, width: 64, height: 36 },
+          inputs: { in: { node: 'layer', socket: 'out' } },
+        },
+        layer: {
+          id: 'layer',
+          type: 'Layer',
+          version: 1,
+          params: { name: 'Shot 2', startFrame: 30, inPoint: 0, outPoint: 30 },
+          inputs: { source: [{ node: 'wf', socket }] },
+        },
+        wf: {
+          id: 'wf',
+          type: 'ComfyUIWorkflow',
+          version: 1,
+          params: {
+            graph: { apiJson, meta: META },
+            frameStart: 30,
+            frameEnd: 59,
+            outputPath: 'renders/shots/shot2',
+            width: 64,
+            height: 36,
+            ...extra,
+          },
+          inputs: {},
+        },
+      },
+      outputs: {},
+    } as unknown as DagState;
+  }
+
+  const at = (state: DagState, compFrame: number) => {
+    const inputs = collectCompositeInputs(state, 'comp', CTX);
+    return planComposite({ fps: 30, durationFrames: 90 }, inputs, compFrame).filter(isLayerDraw);
+  };
+
+  it('a frames workflow covers its range, and comp frame N reads the frame the runner stored for N', async () => {
+    const state = shotLayer(FRAMES_FILE, 'stylized');
+    const source = collectCompositeInputs(state, 'comp', CTX).filter(isLayerInput)[0].source!;
+    expect(source.srcFrames).toBe(30);
+    const storage = new MemoryStorage();
+    await storage.write(framePath('renders/shots/shot2', 45), Uint8Array.of(1));
+    const [draw] = at(state, 45);
+    expect(await comfyLayerFrame(draw.source, draw.sourceFrameIndex, storage)).toEqual({
+      stored: 'renders/shots/shot2_0045.png',
+    });
+    // Outside the range nothing draws (the layer is the shot's clip).
+    expect(at(state, 29)).toEqual([]);
+    expect(at(state, 60)).toEqual([]);
+  });
+
+  it('a frame the runner has not stored yet is a placeholder', async () => {
+    const state = shotLayer(FRAMES_FILE, 'stylized');
+    const storage = new MemoryStorage();
+    await storage.write(framePath('renders/shots/shot2', 45), Uint8Array.of(1));
+    const [draw] = at(state, 46);
+    expect(await comfyLayerFrame(draw.source, draw.sourceFrameIndex, storage)).toEqual({
+      stored: null,
+    });
+  });
+
+  it('a still workflow is held: every frame of the layer reads its one stored picture', async () => {
+    const state = shotLayer(STILL_FILE, 'still');
+    const source = collectCompositeInputs(state, 'comp', CTX).filter(isLayerInput)[0].source!;
+    expect(source.srcFrames).toBe(1);
+    const storage = new MemoryStorage();
+    await storage.write(framePath('renders/shots/shot2', 30), Uint8Array.of(1));
+    for (const f of [30, 44, 59]) {
+      const [draw] = at(state, f);
+      expect(await comfyLayerFrame(draw.source, draw.sourceFrameIndex, storage)).toEqual({
+        stored: 'renders/shots/shot2_0030.png',
+      });
+    }
+  });
+
+  it('a workflow with no output path keeps the old placeholder (nothing is ever stored for it)', async () => {
+    const state = shotLayer(FRAMES_FILE, 'stylized', { outputPath: '' });
+    const [draw] = at(state, 45);
+    expect(await comfyLayerFrame(draw.source, draw.sourceFrameIndex, new MemoryStorage())).toEqual({
+      stored: null,
+    });
+  });
+
+  it('a run that lands new pictures changes what the layer decodes (no stale bitmap is kept)', () => {
+    const before = collectCompositeInputs(shotLayer(FRAMES_FILE, 'stylized'), 'comp', CTX).filter(
+      isLayerInput,
+    )[0].source!;
+    const after = collectCompositeInputs(
+      shotLayer(FRAMES_FILE, 'stylized', { madeFrom: 'h2', lastGoodFrame: 59 }),
+      'comp',
+      CTX,
+    ).filter(isLayerInput)[0].source!;
+    expect(after.path).not.toBe(before.path);
   });
 });
