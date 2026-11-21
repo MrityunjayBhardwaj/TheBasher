@@ -180,6 +180,7 @@ import {
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useRightPanelStore, type RightPanelTab } from './stores/rightPanelStore';
+import { usePaneFocus } from './stores/agentContextStore';
 import { LightStudioPanel } from '../timeline/LightStudioPanel';
 import { useSelectionStore } from './stores/selectionStore';
 import { transformControllerOf, type TransformController } from './nodeConstraints';
@@ -5213,6 +5214,8 @@ export function NPanel() {
   const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
   const panelTab = useRightPanelStore((s) => s.tab);
   const setPanelTab = useRightPanelStore((s) => s.setTab);
+  // #1705 — the right panel reports itself as where the director is working (the chat's Where chip).
+  const paneFocus = usePaneFocus(panelTab === 'lights' ? 'lights' : 'inspector');
 
   // Resolve the node's declared inspectorSections through the ONE read seam
   // (which resolves via the registry — the source of truth, V14 alignment).
@@ -5348,6 +5351,7 @@ export function NPanel() {
       data-collapsed="false"
       role="region"
       aria-label={inspectorLabel}
+      {...paneFocus}
       className="no-scrollbar flex h-full flex-col overflow-y-auto bg-transparent text-xs"
     >
       {/* Spline Wave C header styling, reconciled with #174's collapse toggle:

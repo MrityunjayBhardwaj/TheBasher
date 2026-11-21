@@ -64,6 +64,18 @@ import { GraphView } from '../app/GraphView';
 import { SimplifyPopover } from './SimplifyPopover';
 import { rowFlag, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { parseLayerRowId } from './layerChannelRows';
+import { useAgentContextStore, usePaneFocus, type PaneKind } from '../app/stores/agentContextStore';
+
+/** #1705 — the drawer tab each pane kind is shown under (the curve editor's tab keeps the id 'curve'). */
+const PANE_OF_TAB: Record<TimelineTab, PaneKind> = {
+  shots: 'shots',
+  dopesheet: 'dopesheet',
+  nla: 'nla',
+  curve: 'curves',
+  nodes: 'nodes',
+  library: 'library',
+  controllers: 'controllers',
+};
 
 // #1703 — the drawer's height is per tab (timelineDockStore), set by the handle on its top edge.
 // The window bound: the project tabs, menu bar and playback bar (~120 px together) plus a viewport
@@ -103,6 +115,21 @@ export function TimelineDrawer() {
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
   const storedHeight = useTimelineDockStore((s) => drawerHeightFor(s.heights, s.activeTab));
   const setTabHeight = useTimelineDockStore((s) => s.setTabHeight);
+  // #1705 — each pane reports itself as where the director is working (the chat's Where chip), and
+  // so does picking its tab: a tab chosen and then a request typed means that pane.
+  const focus = {
+    shots: usePaneFocus('shots'),
+    dopesheet: usePaneFocus('dopesheet'),
+    nla: usePaneFocus('nla'),
+    curves: usePaneFocus('curves'),
+    nodes: usePaneFocus('nodes'),
+    library: usePaneFocus('library'),
+    controllers: usePaneFocus('controllers'),
+  };
+  const selectTab = (tab: TimelineTab) => {
+    setActiveTab(tab);
+    useAgentContextStore.getState().markPane(PANE_OF_TAB[tab]);
+  };
   const windowHeight = useWindowHeight();
   // While a drag is live the height is local; it is written to the store once, on release.
   const [dragHeight, setDragHeight] = useState<number | null>(null);
@@ -147,13 +174,14 @@ export function TimelineDrawer() {
           />
           <DockHeader
             activeTab={activeTab}
-            onSelectTab={setActiveTab}
+            onSelectTab={selectTab}
             frame={frame}
             totalFrames={totalFrames}
           />
           <div className="relative flex-1" style={{ minHeight: 0 }}>
             <div
               data-testid="shots-pane"
+              {...focus.shots}
               data-active={activeTab === 'shots'}
               className="absolute inset-0 overflow-hidden"
               style={{ display: activeTab === 'shots' ? 'flex' : 'none' }}
@@ -162,6 +190,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="timeline-canvas-pane"
+              {...focus.dopesheet}
               data-active={activeTab === 'dopesheet'}
               className="absolute inset-0"
               style={{ display: activeTab === 'dopesheet' ? 'flex' : 'none' }}
@@ -170,6 +199,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="curve-editor-pane"
+              {...focus.curves}
               data-active={activeTab === 'curve'}
               className="absolute inset-0"
               style={{ display: activeTab === 'curve' ? 'flex' : 'none' }}
@@ -178,6 +208,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="nla-pane"
+              {...focus.nla}
               data-active={activeTab === 'nla'}
               className="absolute inset-0"
               style={{ display: activeTab === 'nla' ? 'flex' : 'none' }}
@@ -186,6 +217,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="nodes-pane"
+              {...focus.nodes}
               data-active={activeTab === 'nodes'}
               className="absolute inset-0"
               style={{ display: activeTab === 'nodes' ? 'flex' : 'none' }}
@@ -197,6 +229,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="library-pane"
+              {...focus.library}
               data-active={activeTab === 'library'}
               className="absolute inset-0 items-center justify-center p-6 text-center text-xs text-fg-dim"
               style={{ display: activeTab === 'library' ? 'flex' : 'none' }}
@@ -208,6 +241,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="controllers-pane"
+              {...focus.controllers}
               data-active={activeTab === 'controllers'}
               className="absolute inset-0"
               style={{ display: activeTab === 'controllers' ? 'flex' : 'none' }}

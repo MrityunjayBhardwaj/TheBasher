@@ -56,6 +56,7 @@ import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { usePaneFocus } from './stores/agentContextStore';
 import { useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
@@ -75,6 +76,11 @@ import {
 
 export function Layout() {
   const space = useEditorStore((s) => s.space);
+  // #1705 — each space's root reports itself as where the director is working (the Where chip).
+  const viewportFocus = usePaneFocus('viewport');
+  const uvFocus = usePaneFocus('uv');
+  const sheetFocus = usePaneFocus('sheet');
+  const videoFocus = usePaneFocus('video');
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const presentMode = useChromeStore((s) => s.presentMode);
   const isPresent = presentMode;
@@ -294,6 +300,7 @@ export function Layout() {
             inset: 0,
           }}
           data-testid="view3d-slot"
+          {...viewportFocus}
         >
           {/* #1706 — a pending proposal is accepted from the chat column (ProposalCard), which every
               space shows; the 3D slot only marks it, with an amber edge. */}
@@ -309,6 +316,7 @@ export function Layout() {
         <div
           style={twoDViewStyle}
           data-testid="uv-slot"
+          {...uvFocus}
           className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
           onContextMenu={(e) => e.stopPropagation()}
         >
@@ -317,6 +325,7 @@ export function Layout() {
         <div
           style={sheetViewStyle}
           data-testid="sheet-slot"
+          {...sheetFocus}
           className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
           onContextMenu={(e) => e.stopPropagation()}
         >
@@ -337,6 +346,7 @@ export function Layout() {
             zIndex: 45,
           }}
           data-testid="video-slot"
+          {...videoFocus}
           className="bg-bg"
           onContextMenu={(e) => e.stopPropagation()}
         >

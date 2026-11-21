@@ -11,10 +11,12 @@
 
 import { useProposedNodeIds } from '../agent/diff/useProposal';
 import { PROPOSAL_AMBER } from '../app/proposalStyle';
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, useEffect, useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { useAgentContextStore } from '../app/stores/agentContextStore';
+import { nodeDisplayName } from '../app/sceneTreeWalk';
 import { useTimelineSelection } from './timelineSelection';
 import { isKeyframeChannelNode } from '../app/animate/paramAnimationState';
 import { BAKE_POSE_LABEL } from '../app/animate/bakePose';
@@ -61,6 +63,22 @@ export function CurveEditor({ duration }: { duration: number }) {
     }
     return firstAny; // else the first channel in the project
   }, [activeChannelId, nodes, selectedId]);
+
+  // #1705 — the curve shown is what the chat's Where chip names ("Curves · Box position").
+  const subject = useMemo(() => {
+    if (channelId == null || isComputedRowId(channelId)) return undefined;
+    // A pose layer's row names its bone; a channel node's row its target and param.
+    const layer = parseLayerRowId(channelId);
+    if (layer) return `${layer.bone} ${layer.component}`;
+    const p = resolveRowChannelForWrite(dagState, channelId)?.params as
+      | { paramPath?: string; target?: string }
+      | undefined;
+    if (!p?.target || !nodes[p.target]) return undefined;
+    return `${nodeDisplayName(nodes, p.target)} ${p.paramPath ?? ''}`.trim();
+  }, [channelId, dagState, nodes]);
+  useEffect(() => {
+    useAgentContextStore.getState().setSubject('curves', subject);
+  }, [subject]);
 
   // #1706 — the channels a pending proposal changes. The curve shown is still the applied one; a
   // proposed change to it frames the editor in amber and says so.

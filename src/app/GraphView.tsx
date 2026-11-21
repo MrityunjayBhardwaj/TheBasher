@@ -17,6 +17,7 @@ import type { NodeId } from '../core/dag/types';
 import { type GraphNode, sceneGraphOf } from './sceneGraph';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { useSelectionStore } from './stores/selectionStore';
+import { useAgentContextStore } from './stores/agentContextStore';
 import { usePendingProposal, useProposedNodeIds } from '../agent/diff/useProposal';
 import { PROPOSAL_AMBER } from './proposalStyle';
 
@@ -108,6 +109,13 @@ export function GraphView(): ReactNode {
     [graph, refLines, primary],
   );
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
+  // #1705 — the network this view is inside is what the chat's Where chip names ("Nodes › Hull").
+  const pathNames = graph.path.map((id) => nodeDisplayName(state.nodes, id)).join(' › ');
+  useEffect(() => {
+    const ctx = useAgentContextStore.getState();
+    ctx.setSubject('nodes', pathNames || undefined);
+    return () => useAgentContextStore.getState().setSubject('nodes', undefined);
+  }, [pathNames]);
   // Positions are the graph's, for every node at every level; this level's box is what the
   // shown nodes cover, so a hidden node leaves its place empty rather than moving the rest.
   const layout = useMemo(() => {
