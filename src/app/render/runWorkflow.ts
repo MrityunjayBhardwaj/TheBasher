@@ -23,6 +23,7 @@ import type { StorageCapability } from '../../core/storage';
 import type { CompileWorkflowFn } from '../../render/dryRun';
 import { runComfyUIWorkflow, type RunComfyUIWorkflowReport } from '../../render/runComfyUIWorkflow';
 import { useRenderJobsStore } from '../stores/renderJobsStore';
+import { controllerValueReader } from './controllerValue';
 
 export interface RunWorkflowDeps {
   readonly capability: ComfyUICapability;
@@ -71,6 +72,7 @@ export async function runWorkflow(
       capability: deps.capability,
       storage: deps.storage,
       compileWorkflow: deps.compileWorkflow,
+      controllerValue: controllerValueReader(state, workflowNodeId),
       onFrameComplete: (frame) => {
         // V1 + V8: writeback happens through the standard Op pipeline.
         useDagStore.getState().dispatch(

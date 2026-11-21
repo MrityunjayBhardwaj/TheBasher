@@ -22,10 +22,10 @@ import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
-import type { ComfyUIWorkflowParams } from '../nodes/ComfyUIWorkflow';
+import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../nodes/ComfyUIWorkflow';
 import type { ImageValue, VideoCodec } from '../nodes/types';
 import type { VideoStitchParams } from '../nodes/VideoStitch';
-import { framePath } from './dryRun';
+import { framePath, outputPathOf } from './dryRun';
 
 /**
  * Encodes a frame sequence into a single video buffer. Production wires
@@ -125,7 +125,8 @@ export async function runVideoStitch(
     }
     upstreams.push({
       nodeId: ref.node,
-      outputPath: upOutputPath,
+      // #1715 — the frames of the output this wire reads (a file may have several).
+      outputPath: outputPathOf(upOutputPath, workflowSocketsOf(upParams), ref.socket),
       frameStart: upParams.frameStart ?? 0,
       frameEnd: upParams.frameEnd ?? 60,
     });

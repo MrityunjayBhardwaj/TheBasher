@@ -38,7 +38,6 @@ import {
   type Licence,
 } from '../../core/licensing/licence';
 import { comfyModelNames } from '../../core/comfy/comfyModels';
-import { getPreset } from '../../agent/strategy/presets/stylizedRealism';
 import { ASSET_CATALOG } from '../asset/catalog';
 import { USER_IMPORTS_ROOT } from '../asset/importCommon';
 import { nodeDisplayName } from '../sceneTreeWalk';
@@ -167,10 +166,9 @@ function partsOfNode(
     }
     case 'ComfyUIWorkflow': {
       const graph = params.graph as { apiJson?: unknown; meta?: { name?: unknown } } | null;
-      const presetId = typeof params.presetId === 'string' ? params.presetId : '';
-      const models = graph?.apiJson
-        ? comfyModelNames(graph.apiJson)
-        : [...(getPreset(presetId)?.models ?? [])];
+      // #1715 — every workflow node holds its file (the presets migrated to theirs at v31), so
+      // the models are always read off the file.
+      const models = graph?.apiJson ? comfyModelNames(graph.apiJson) : [];
       const named = typeof graph?.meta?.name === 'string' ? graph.meta.name : '';
       const asset = named.trim() || nodeDisplayName(state.nodes, node.id);
       return models.map((model) => ({

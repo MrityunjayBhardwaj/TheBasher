@@ -1,10 +1,12 @@
 // runComfyUIWorkflow — the impure side of P5's AI render bridge.
 //
-// Walks the frame range described by a ComfyUIWorkflow node, submits each
-// frame through the configured ComfyUICapability (passes the prev frame's
-// stylized output as ControlNet conditioning when available), writes
-// bytes through StorageCapability at the canonical D-04 path, and
-// reports outputs.
+// Walks the frame range described by a ComfyUIWorkflow node, compiles each
+// frame of its workflow FILE from the file's Basher markers (#1715 —
+// `compileWorkflowFrame`), submits it through the configured
+// ComfyUICapability, writes each output's picture through StorageCapability
+// at the canonical D-04 path, and reports outputs. A marker fed from one of
+// the file's own outputs (`feedback_of`) gets that output's picture from the
+// frame before; on the first frame it gets its own file, or black.
 //
 // Compose ≠ Execute split (krama K10 — extends K4): the DAG describes
 // the plan via the Mutator chain (Wave C); this function realizes it.
@@ -27,13 +29,18 @@
 // isolation, here under live D-01 stylized output reuse).
 
 import type { ComfyUICapability } from '../core/comfy';
-import { createEvaluatorCache, evaluate, evaluateInputRef } from '../core/dag/evaluator';
+import { createEvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
-import type { ComfyUIWorkflowParams } from '../nodes/ComfyUIWorkflow';
-import type { ImageValue, PromptValue } from '../nodes/types';
-import { framePath, type CompileWorkflowFn } from './dryRun';
+import {
+  framePath,
+  outputPathOf,
+  workflowInputsAt,
+  workflowNodeOf,
+  type CompileWorkflowFn,
+  type ControllerValueAt,
+} from './dryRun';
 
 export interface RunComfyUIWorkflowDeps {
   readonly capability: ComfyUICapability;
@@ -48,6 +55,8 @@ export interface RunComfyUIWorkflowDeps {
    * caller (src/app/render/runWorkflow.ts) wraps this in dispatchAtomic.
    */
   readonly onFrameComplete: (frame: number) => void;
+  /** #1715 — keyed values of unwired number / text inputs (see {@link ControllerValueAt}). */
+  readonly controllerValue?: ControllerValueAt;
 }
 
 export interface RunComfyUIWorkflowReport {
@@ -57,14 +66,6 @@ export interface RunComfyUIWorkflowReport {
   readonly outputs: readonly string[];
   /** Last frame whose bytes landed successfully. -1 if no frame completed. */
   readonly lastGoodFrame: number;
-}
-
-/** Sanitize presetId / outputPath for OPFS — THREE-reserved-chars rules
- *  applied here as defense-in-depth even though THREE isn't in the path
- *  (memory: feedback_three_reserved_chars). The Mutator already pre-
- *  sanitizes; this is the second guard. */
-function sanitizePathSegment(s: string): string {
-  return s.replace(/[[\].:/]/g, '_');
 }
 
 /**
@@ -79,19 +80,10 @@ export async function runComfyUIWorkflow(
   state: DagState,
   deps: RunComfyUIWorkflowDeps,
 ): Promise<RunComfyUIWorkflowReport> {
-  const node = state.nodes[workflowNodeId];
-  if (!node) throw new Error(`runComfyUIWorkflow: unknown workflowNodeId "${workflowNodeId}"`);
-  if (node.type !== 'ComfyUIWorkflow') {
-    throw new Error(
-      `runComfyUIWorkflow: node "${workflowNodeId}" is not a ComfyUIWorkflow (got ${node.type})`,
-    );
-  }
-
   // V10: defensive defaults at every destructured field. Legacy projects
   // may have hydrated without `lastGoodFrame` / `frameEnd` if they were
   // saved before P5 schema landed.
-  const params = node.params as Partial<ComfyUIWorkflowParams>;
-  const presetId = sanitizePathSegment(params.presetId ?? 'stylizedRealism');
+  const { params, sockets, apiJson } = workflowNodeOf(state, workflowNodeId, 'runComfyUIWorkflow');
   const frameStart = params.frameStart ?? 0;
   const frameEnd = params.frameEnd ?? 60;
   const lastGoodFrame = params.lastGoodFrame ?? -1;
@@ -113,16 +105,11 @@ export async function runComfyUIWorkflow(
     };
   }
 
-  const promptBinding = node.inputs.prompt;
-  if (!promptBinding || Array.isArray(promptBinding)) {
+  if (sockets.outputs.length === 0) {
     throw new Error(
-      `runComfyUIWorkflow: workflow "${workflowNodeId}" missing single Prompt input.`,
+      `runComfyUIWorkflow: workflow "${workflowNodeId}"'s file has no Basher output to read.`,
     );
   }
-
-  const passBinding = node.inputs['pass-input'];
-  const passRefs =
-    passBinding === undefined ? [] : Array.isArray(passBinding) ? passBinding : [passBinding];
 
   // #1318 — ONE evaluator cache for the whole run: `state` doesn't change during it, so a
   // pure node (a character's whole-clip retarget above all) is evaluated once, not once per
@@ -131,39 +118,38 @@ export async function runComfyUIWorkflow(
   const cache = createEvaluatorCache();
   const outputs: string[] = [];
   let lastCompletedFrame = lastGoodFrame;
+  const pathOf = (socket: string) => outputPathOf(outputPath, sockets, socket);
 
   for (let frame = start; frame <= frameEnd; frame++) {
     const ctx = ctxForFrame(frame);
-    const prompt = evaluate(state, promptBinding.node, {
+    const inputs = workflowInputsAt(
+      state,
+      workflowNodeId,
+      sockets,
       ctx,
-      socket: promptBinding.socket,
       cache,
-    }).value as PromptValue;
-    const passes = passRefs.map(
-      // #1716 — through the input, not straight off the producer: a still workflow wired
-      // to a run of frames is handed the picked frame, as the evaluator would hand it.
-      (ref) =>
-        evaluateInputRef(state, workflowNodeId, 'pass-input', ref, { ctx, cache })
-          .value as ImageValue,
+      deps.controllerValue,
+    );
+    // Feedback: a fed marker reads its output's picture from the frame before. The first frame
+    // of the range has none (null); a resumed run still finds the frame before on disk.
+    const fed = Object.fromEntries(
+      sockets.fed.map((f) => [
+        f.nodeId,
+        frame > frameStart ? framePath(pathOf(f.from), frame - 1) : null,
+      ]),
     );
 
-    // Prev-frame plumbing: frame N consumes frame N-1's stylized output
-    // for ControlNet temporal coherence. First frame in the run (frame
-    // === start) → null; the compiler substitutes a zero/black image.
-    const prevFrameStylizedPath = frame > start ? framePath(outputPath, frame - 1) : null;
-
-    const { workflowJson, inputs } = await deps.compileWorkflow({
-      presetId,
-      prompt,
-      passes,
+    const { workflowJson, inputs: compiled } = await deps.compileWorkflow({
+      apiJson,
       frame,
-      prevFrameStylizedPath,
+      inputs,
+      fed,
       workflowOutputPath: outputPath,
     });
 
     let result;
     try {
-      result = await deps.capability.submit(workflowJson, inputs);
+      result = await deps.capability.submitBatch(workflowJson, compiled);
     } catch (err) {
       const wrapped =
         err instanceof Error
@@ -182,9 +168,20 @@ export async function runComfyUIWorkflow(
       throw wrapped;
     }
 
-    const path = framePath(outputPath, frame);
-    await deps.storage.write(path, result.frame);
-    outputs.push(path);
+    // Each output's picture for this frame, at its own path. The first output's path is the
+    // one reported (what the stitch reads).
+    for (const [i, out] of sockets.outputs.entries()) {
+      const bytes =
+        result.framesByNode?.[out.nodeId]?.[0] ?? (i === 0 ? result.frames[0] : undefined);
+      if (!bytes) {
+        throw new Error(
+          `runComfyUIWorkflow: ComfyUI returned no picture for "${out.socket}" at frame ${frame}.`,
+        );
+      }
+      const path = framePath(pathOf(out.socket), frame);
+      await deps.storage.write(path, bytes);
+      if (i === 0) outputs.push(path);
+    }
     lastCompletedFrame = frame;
     deps.onFrameComplete(frame);
   }

@@ -457,6 +457,7 @@ export function GraphView(): ReactNode {
                     return (
                       <g
                         key={`${r.ref ? 'r' : 'w'}:${r.socket}`}
+                        data-graph-row={r.ref ? undefined : r.socket}
                         data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
                         data-graph-pick={r.picks ? `${r.socket}:${r.picks.join(',')}` : undefined}
                       >

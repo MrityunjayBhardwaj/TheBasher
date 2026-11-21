@@ -34,10 +34,27 @@ const at = (frame: number, fps = 30): EvalCtx => ({
 const clipFrame = (src: string, i: number) =>
   hashValue({ mediaClip: src, mediaKind: 'video', frameIndex: i });
 
+/** #1715 — a still workflow file: a still image input `picture`, a still output `result` (an
+ *  export saved before `kind` existed reads as a still). */
 const GRAPH = {
-  apiJson: { '1': { class_type: 'SaveImage', inputs: { filename_prefix: 'x' } } },
+  apiJson: {
+    '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind: 'image' } },
+    '2': { class_type: 'basher_controller', inputs: { name: 'prompt', kind: 'string' } },
+    '3': { class_type: 'basher_export', inputs: { name: 'result', images: ['9', 0] } },
+  },
   meta: { name: 'flux_still', importedAt: 'test', fps: 30, frames: 1 },
 };
+/** A video workflow file: a frames input `frames`, a frames output `clip`. */
+const VIDEO_GRAPH = {
+  apiJson: {
+    '1': { class_type: 'basher_controller', inputs: { name: 'frames', kind: 'video' } },
+    '2': { class_type: 'basher_controller', inputs: { name: 'prompt', kind: 'string' } },
+    '3': { class_type: 'basher_export', inputs: { name: 'clip', kind: 'video', images: ['9', 0] } },
+  },
+  meta: { name: 'wan_video', importedAt: 'test', fps: 30, frames: 1 },
+};
+/** The output socket of each workflow node id these tests make. */
+const OUT_OF: Record<string, string> = { still: 'result', preset: 'clip', video: 'clip' };
 
 function registerProbes() {
   // Two consumers that hand back exactly what arrived on their Image input: the value the
@@ -69,9 +86,10 @@ function add(s: DagState, nodeId: string, nodeType: string, params: object = {})
   return applyOp(s, { type: 'addNode', nodeId, nodeType, params }).next;
 }
 function wire(s: DagState, from: string, to: string, socket: string): DagState {
+  const fromSocket = s.nodes[from]?.type === 'ComfyUIWorkflow' ? OUT_OF[from] : 'out';
   return applyOp(s, {
     type: 'connect',
-    from: { node: from, socket: 'out' },
+    from: { node: from, socket: fromSocket },
     to: { node: to, socket },
   }).next;
 }
@@ -103,7 +121,11 @@ function withBeauty(s: DagState): DagState {
 }
 
 const image = (s: DagState, id: string, ctx: EvalCtx, cache?: EvaluatorCache) =>
-  evaluate(s, id, { ctx, cache }).value as ImageValue;
+  evaluate(s, id, {
+    ctx,
+    cache,
+    ...(s.nodes[id]?.type === 'ComfyUIWorkflow' ? { socket: OUT_OF[id] } : {}),
+  }).value as ImageValue;
 
 // Late first: a cache that kept the first frame it saw would hand frame 47 back at 0 and 12.
 const TIMES = [47, 0, 12] as const;
@@ -115,7 +137,7 @@ describe('#1716 — every producer says whether it makes a still or frames', () 
     s = withPicture(s);
     s = withStillWorkflow(s);
     s = withBeauty(s);
-    s = add(s, 'preset', 'ComfyUIWorkflow', { frameStart: 10, frameEnd: 40 });
+    s = add(s, 'preset', 'ComfyUIWorkflow', { graph: VIDEO_GRAPH, frameStart: 10, frameEnd: 40 });
     s = add(s, 'grade', 'ColorCorrect', { brightness: 1.2 });
     s = wire(s, 'video', 'grade', 'target');
 
@@ -164,13 +186,14 @@ describe('#1716 — a still into a frames input plays it held', () => {
     let s = withStillWorkflow(emptyDagState());
     s = add(s, 'p', 'Prompt', { text: 'a cube', negative: '', tags: [] });
     s = add(s, 'video', 'ComfyUIWorkflow', {
+      graph: VIDEO_GRAPH,
       frameStart: 0,
       frameEnd: 4,
       outputPath: 'renders/job/stylized',
     });
     s = wire(s, 'p', 'video', 'prompt');
-    s = wire(s, 'still', 'video', 'pass-input');
-    const seen = await runRecording(s, 'video');
+    s = wire(s, 'still', 'video', 'frames');
+    const seen = await runRecording(s, 'video', 'frames');
     expect(seen.map((x) => x.frame)).toEqual([0, 1, 2, 3, 4]);
     const hashes = seen.map((x) => x.passes[0].sourceHash);
     expect(hashes).toEqual(hashes.map(() => hashes[0]));
@@ -217,7 +240,7 @@ describe('#1716 — frames into a still input pick the stated frame (the first)'
 
     it(`a preset workflow's frames 10..40 pick frame 10, its first (${label})`, () => {
       let s = add(emptyDagState(), 'time', 'TimeSource');
-      s = add(s, 'preset', 'ComfyUIWorkflow', { frameStart: 10, frameEnd: 40 });
+      s = add(s, 'preset', 'ComfyUIWorkflow', { graph: VIDEO_GRAPH, frameStart: 10, frameEnd: 40 });
       s = wire(s, 'time', 'preset', 'time');
       s = add(s, 'consumer', 'ProbeStillIn');
       s = wire(s, 'preset', 'consumer', 'img');
@@ -242,8 +265,8 @@ describe('#1716 — frames into a still input pick the stated frame (the first)'
       outputPath: 'renders/job/still',
     });
     s = wire(s, 'p', 'still', 'prompt');
-    s = wire(s, 'video', 'still', 'pass-input');
-    const seen = await runRecording(s, 'still');
+    s = wire(s, 'video', 'still', 'picture');
+    const seen = await runRecording(s, 'still', 'picture');
     expect(seen.map((x) => x.frame)).toEqual([0, 1, 2, 3]);
     for (const x of seen) {
       expect(x.passes[0].sourceHash, `at frame ${x.frame}`).toBe(clipFrame('clips/run.mp4', 0));
@@ -252,13 +275,17 @@ describe('#1716 — frames into a still input pick the stated frame (the first)'
   });
 });
 
-/** Run the ComfyUI runner with a compiler that records the passes it is handed per frame. */
-async function runRecording(s: DagState, workflowId: string) {
+/** Run the ComfyUI runner with a compiler that records the picture its image input `socket`
+ *  is handed per frame. */
+async function runRecording(s: DagState, workflowId: string, socket: string) {
   const seen: { frame: number; passes: readonly ImageValue[] }[] = [];
-  const compile: CompileWorkflowFn = async ({ prompt, passes, frame }) => {
-    seen.push({ frame, passes });
-    const inputs: ComfyInputs = { images: {}, scalars: { prompt: prompt.text, frame } };
-    return { workflowJson: { frame }, inputs };
+  const compile: CompileWorkflowFn = async ({ apiJson, inputs, frame }) => {
+    seen.push({ frame, passes: [inputs[socket] as ImageValue] });
+    const compiled: ComfyInputs = { images: {}, scalars: { frame } };
+    return {
+      workflowJson: { ...apiJson, _frame: { class_type: 'x', inputs: { frame } } },
+      inputs: compiled,
+    };
   };
   await runComfyUIWorkflow(workflowId, s, {
     capability: new StubComfyUICapability(),

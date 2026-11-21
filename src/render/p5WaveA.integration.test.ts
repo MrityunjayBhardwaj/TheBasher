@@ -22,11 +22,13 @@
 // redundancy preserved); hetvabhasa H22 (per-edge-kind BFS isolation).
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../core/comfy/builtinWorkflows';
 import { StubComfyUICapability } from '../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../core/dag';
 import { MemoryStorage } from '../core/storage';
 import { registerAllNodes } from '../nodes/registerAll';
 import { expandClosure } from '../agent/closure/expand';
+import type { EdgeKind } from '../agent/closure/types';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import type { DagState } from '../core/dag';
@@ -122,7 +124,7 @@ function buildWaveAState(): DagState {
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: 0,
       frameEnd: 30,
       lastGoodFrame: -1,
@@ -134,11 +136,16 @@ function buildWaveAState(): DagState {
     from: { node: 'prompt', socket: 'out' },
     to: { node: 'cw', socket: 'prompt' },
   }).next;
-  for (const id of ['beauty1', 'depth1', 'normal1'] as const) {
+  // #1715 — each pass on the file's input of its kind.
+  for (const [id, socket] of [
+    ['beauty1', 'beauty'],
+    ['depth1', 'depth'],
+    ['normal1', 'normal'],
+  ] as const) {
     s = applyOp(s, {
       type: 'connect',
       from: { node: id, socket: 'out' },
-      to: { node: 'cw', socket: 'pass-input' },
+      to: { node: 'cw', socket },
     }).next;
   }
   s = applyOp(s, {
@@ -202,7 +209,7 @@ describe('P5 Wave A — integration', () => {
     const normal = evaluate(state, 'normal1').value as ImageValue;
     expect(normal.passKind).toBe('normal');
 
-    const cw = evaluate(state, 'cw').value as ImageValue;
+    const cw = evaluate(state, 'cw', { socket: 'stylized' }).value as ImageValue;
     expect(cw.kind).toBe('Image');
     expect(cw.passKind).toBe('stylized');
     expect(cw.descriptor.format).toBe('rgba8');
@@ -217,7 +224,7 @@ describe('P5 Wave A — integration', () => {
     const beauty = evaluate(state, 'beauty1').value as ImageValue;
     const depth = evaluate(state, 'depth1').value as ImageValue;
     const normal = evaluate(state, 'normal1').value as ImageValue;
-    const cw = evaluate(state, 'cw').value as ImageValue;
+    const cw = evaluate(state, 'cw', { socket: 'stylized' }).value as ImageValue;
     const all = new Set([beauty.sourceHash, depth.sourceHash, normal.sourceHash, cw.sourceHash]);
     expect(all.size).toBe(4);
   });
@@ -237,14 +244,22 @@ describe('P5 Wave A — integration', () => {
     expect(closure.nodes.has('beauty2')).toBe(false);
   });
 
-  it('closure rooted at cw with pass-input reaches cw + raw passes — D-01 (stylized output reuses pass-input)', () => {
+  it('closure rooted at cw along its pass inputs reaches cw + raw passes (#1715: one input per pass)', () => {
     const state = buildWaveAState();
-    const closure = expandClosure({ rootSelectors: ['cw'], followedEdges: ['pass-input'] }, state);
+    const closure = expandClosure(
+      {
+        rootSelectors: ['cw'],
+        // #1715 — a workflow node's inputs are named by its file, so they are not in the closed
+        // EdgeKind set; the closure walk follows them by socket name all the same.
+        followedEdges: ['beauty', 'depth', 'normal'] as unknown as EdgeKind[],
+      },
+      state,
+    );
     expect(closure.nodes.has('cw')).toBe(true);
     expect(closure.nodes.has('beauty1')).toBe(true);
     expect(closure.nodes.has('depth1')).toBe(true);
     expect(closure.nodes.has('normal1')).toBe(true);
-    // The Prompt node is on a different edge kind; pass-input walk must
+    // The Prompt node is on a different edge kind; the pass walk must
     // not free-mix into 'children' or unnamed edges.
     expect(closure.nodes.has('prompt')).toBe(false);
     expect(closure.nodes.has('beauty2')).toBe(false);
@@ -260,22 +275,13 @@ describe('P5 Wave A — integration', () => {
     const storage = new MemoryStorage();
     const cap = new StubComfyUICapability();
     const observed: { frame: number; prev: string | null }[] = [];
-    const compileWorkflow: CompileWorkflowFn = async ({
-      presetId,
-      prompt,
-      passes,
-      frame,
-      prevFrameStylizedPath,
-    }) => {
-      observed.push({ frame, prev: prevFrameStylizedPath ?? null });
+    const compileWorkflow: CompileWorkflowFn = async ({ apiJson, inputs, frame, fed }) => {
+      // The file's one fed input (`prev_frame_image`, marker 8) sees its output's frame N-1.
+      const prev = fed['8'] ?? null;
+      observed.push({ frame, prev });
       return {
-        workflowJson: { preset: presetId, frame, prompt: prompt.text },
-        inputs: {
-          images: Object.fromEntries(
-            passes.map((p) => [p.passKind, new TextEncoder().encode(p.sourceHash)]),
-          ),
-          scalars: { frame, prev: prevFrameStylizedPath ?? '__zero__' },
-        },
+        workflowJson: { ...apiJson, _frame: { frame } },
+        inputs: { images: imagesOf(inputs), scalars: { frame, prev: prev ?? '__zero__' } },
       };
     };
     const completed: number[] = [];
@@ -309,14 +315,9 @@ describe('P5 Wave A — integration', () => {
     const state = buildWaveAState();
     const cap = new StubComfyUICapability();
     const storage = new MemoryStorage();
-    const compileWorkflow: CompileWorkflowFn = async ({ presetId, prompt, passes, frame }) => ({
-      workflowJson: { preset: presetId, frame },
-      inputs: {
-        images: Object.fromEntries(
-          passes.map((p) => [p.passKind, new TextEncoder().encode(p.sourceHash)]),
-        ),
-        scalars: { prompt: prompt.text, frame },
-      },
+    const compileWorkflow: CompileWorkflowFn = async ({ apiJson, inputs, frame }) => ({
+      workflowJson: { ...apiJson, _frame: { frame } },
+      inputs: { images: imagesOf(inputs), scalars: { frame } },
     });
 
     const report = await dryRun('cw', state, { capability: cap, storage, compileWorkflow });
@@ -327,3 +328,14 @@ describe('P5 Wave A — integration', () => {
     expect(await storage.exists(report.samplePath)).toBe(true);
   });
 });
+
+/** Each image input's arrival as a tiny payload (its sourceHash), so the stub's content hash
+ *  tells them apart. */
+function imagesOf(inputs: Readonly<Record<string, unknown>>): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
+  for (const [socket, v] of Object.entries(inputs)) {
+    const img = v as { kind?: string; sourceHash?: string };
+    if (img?.kind === 'Image') out[socket] = new TextEncoder().encode(img.sourceHash ?? '');
+  }
+  return out;
+}

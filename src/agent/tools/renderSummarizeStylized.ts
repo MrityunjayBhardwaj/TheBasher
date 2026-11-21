@@ -16,7 +16,7 @@
 import { z } from 'zod';
 import { evaluate } from '../../core/dag/evaluator';
 import { framePath } from '../../render/dryRun';
-import type { ComfyUIWorkflowParams } from '../../nodes/ComfyUIWorkflow';
+import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../../nodes/ComfyUIWorkflow';
 import type { ImageDescriptor, ImageValue } from '../../nodes/types';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 
@@ -31,7 +31,9 @@ export type SummarizeStylizedArgs = z.infer<typeof SummarizeStylizedSchema>;
 
 interface StylizedSummary {
   workflowId: string;
-  presetId: string;
+  /** #1715 — the workflow file's name, and the output summarized (its first). */
+  workflow: string;
+  output: string;
   frame: number;
   seconds: number;
   fps: number;
@@ -67,7 +69,14 @@ export const renderSummarizeStylizedTool: ToolDefinition<SummarizeStylizedArgs> 
       };
     }
     const params = node.params as Partial<ComfyUIWorkflowParams>;
-    const presetId = params.presetId ?? 'stylizedRealism';
+    const sockets = workflowSocketsOf(params);
+    const first = sockets.outputs[0];
+    if (!first) {
+      return {
+        ops: [],
+        text: `Error: workflow "${args.workflowNodeId}" has no workflow file with a Basher output.`,
+      };
+    }
     const outputPath = params.outputPath ?? '';
     const lastGoodFrame = params.lastGoodFrame ?? -1;
     if (!outputPath) {
@@ -84,7 +93,7 @@ export const renderSummarizeStylizedTool: ToolDefinition<SummarizeStylizedArgs> 
     const fps = 30;
     const seconds = args.frame / fps;
     const evalCtx = { time: { frame: args.frame, seconds, normalized: 0 } };
-    const result = evaluate(dagState, args.workflowNodeId, { ctx: evalCtx });
+    const result = evaluate(dagState, args.workflowNodeId, { ctx: evalCtx, socket: first.socket });
     const stylized = result.value as ImageValue;
     if (stylized.kind !== 'Image' || stylized.passKind !== 'stylized') {
       return {
@@ -107,7 +116,8 @@ export const renderSummarizeStylizedTool: ToolDefinition<SummarizeStylizedArgs> 
 
     const summary: StylizedSummary = {
       workflowId: args.workflowNodeId,
-      presetId,
+      workflow: params.graph?.meta.name ?? '',
+      output: first.socket,
       frame: args.frame,
       seconds,
       fps,

@@ -1,7 +1,7 @@
 // ComfyUIWorkflow — the impure node that drives ComfyUI-mediated
 // stylization. Skeleton-only in Wave A: the evaluator returns metadata
 // (an ImageValue with passKind 'stylized') with a sourceHash that
-// encodes (presetId, prompt, upstream passes, time). Actual frame
+// encodes (workflow file, inputs, time). Actual frame
 // production happens in src/render/runComfyUIWorkflow.ts (Wave B); the
 // V8 file-rooted dispatch rule keeps this evaluator pure of network /
 // filesystem I/O.
@@ -16,11 +16,15 @@
 // is 'stylized'. No new EdgeKind — 'pass-input' is reused for both raw
 // and stylized output. H22 isolation rule already proven on this kind.
 //
-// D-03 (locked): presetId is a closed enum. v0.5 ships only
-// 'stylizedRealism'; v0.6 widens with meta-prompt-authored presets.
+// #1715: no preset. The node runs the workflow FILE it holds (`graph`), and its sockets are
+// that file's Basher markers, read by ONE function (`socketsOfWorkflow`) through the
+// `instanceSockets` hook: each input marker an input (still image, frames, number or text),
+// each output marker an output (still image or frames). Number and text inputs are keyable
+// through `controller:<nodeId>`. The old closed preset enum migrated to this node carrying the
+// preset's workflow file (format v31, `migratePresetsToWorkflowFiles`).
 //
 // D-04 (locked): outputPath default formula is
-// `renders/${jobId}/stylized_${presetId}` — but jobId isn't known at
+// `renders/${jobId}/stylized_<name>` — but jobId isn't known at
 // node-definition time. The Mutator (Wave C) sets the literal path at
 // build time; the schema default is empty string + `?? defaultValue`
 // guard at any consumer.
@@ -31,22 +35,18 @@
 
 import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';
-import type { ImageExtent, ImageTake, NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import {
-  DEFAULT_IMAGE_DESCRIPTOR,
-  type ImageValue,
-  type PromptValue,
-  type TimeValue,
-} from './types';
+import type {
+  ImageExtent,
+  InputDescriptor,
+  InstanceSockets,
+  NodeDefinition,
+  OutputDescriptor,
+  ResolvedInputs,
+} from '../core/dag/types';
+import type { ComfyApiJson } from '../core/comfy/comfyGraph';
+import { socketsOfWorkflow, type WorkflowSockets } from '../core/comfy/workflowSockets';
+import { DEFAULT_IMAGE_DESCRIPTOR, type ImageValue, type TimeValue } from './types';
 import { widget } from './paramWidget';
-
-/**
- * v0.5 ships exactly one preset (D-02 — stylizedRealism only). v0.6
- * widens via meta-prompt authoring; the enum tightens / widens with the
- * preset registry, not on its own.
- */
-export const STYLIZED_PRESET_IDS = ['stylizedRealism'] as const;
-export type StylizedPresetId = (typeof STYLIZED_PRESET_IDS)[number];
 
 /**
  * An imported ComfyUI workflow carried by the node (design §6.2 — the evolution
@@ -70,11 +70,9 @@ export const ComfyGraphParamSchema = z
 export type ComfyGraphParam = z.infer<typeof ComfyGraphParamSchema>;
 
 export const ComfyUIWorkflowParams = z.object({
-  presetId: z.enum(STYLIZED_PRESET_IDS).default('stylizedRealism'),
   /**
-   * The imported workflow (design §6.2). Additive over the v0.5 preset model:
-   * a node may carry a preset (legacy render path) AND/OR an imported graph (the
-   * keyframe-compiler path). Defaults null so legacy projects load unchanged.
+   * #1715 — the workflow FILE this node runs. Its Basher markers are the node's sockets
+   * (`workflowSocketsOf`); null = no file picked yet, so no sockets.
    */
   graph: ComfyGraphParamSchema.default(null),
   /**
@@ -117,31 +115,56 @@ export const ComfyUIWorkflowParams = z.object({
 });
 export type ComfyUIWorkflowParams = z.infer<typeof ComfyUIWorkflowParams>;
 
-/**
- * #1716 — whether this node is a still workflow or a video one, read off how it is set up:
- *
- *  - an IMPORTED graph (`graph` set) is run once and shown as one picture: the compositor decodes
- *    it as a single still (`compositeDecode.ts`, `srcFrames: 1`, "STATIC"), and a coherent clip is
- *    a separate render that lands as a video MediaClip. So it takes a still and makes a still.
- *  - the PRESET path (`graph` null) renders frameStart..frameEnd one frame at a time
- *    (`runComfyUIWorkflow`), each frame from that frame's passes: frames in, frames out.
- *
- * `graph.meta.frames` is deliberately NOT the signal: an import always writes 1 and the built-in
- * SD1.5 text-to-image starter writes 24, so it says nothing about what the workflow makes.
- */
-export function comfyWorkflowTakes(params: unknown): ImageTake {
-  const graph = (params as Partial<ComfyUIWorkflowParams> | null)?.graph;
-  return graph ? 'still' : 'frames';
+/** #1715 — the sockets of a workflow node holding `params`: its file's Basher markers. The one
+ *  door every reader comes through (the node's `instanceSockets`, the inspector, the agent). */
+export function workflowSocketsOf(params: unknown): WorkflowSockets {
+  const graph = (params as Partial<ComfyUIWorkflowParams> | null | undefined)?.graph;
+  return socketsOfWorkflow((graph?.apiJson as ComfyApiJson | undefined) ?? null);
 }
 
-/** What the workflow's output is ({@link comfyWorkflowTakes}): a still, or the preset path's
- *  frameStart..frameEnd at the project's 30 fps (the cadence `runComfyUIWorkflow` renders at). */
-export function comfyWorkflowExtent(params: Partial<ComfyUIWorkflowParams>): ImageExtent {
-  if (comfyWorkflowTakes(params) === 'still') return { kind: 'still' };
+/** #1716 — a frames output covers frameStart..frameEnd at the project's 30 fps (the cadence the
+ *  runner renders at); a still output is one picture. */
+function outputExtent(
+  type: 'still' | 'frames',
+  params: Partial<ComfyUIWorkflowParams>,
+): ImageExtent {
+  if (type === 'still') return { kind: 'still' };
   return {
     kind: 'frames',
     range: { start: params.frameStart ?? 0, end: params.frameEnd ?? 60, fps: 30 },
   };
+}
+
+/** The `instanceSockets` of a workflow node: its markers as Basher sockets. A still image input
+ *  takes a still, a frames input frames (#1716's arrival rule), a number a Number, text a String
+ *  or a Prompt (whose text it reads). Cached by the derivation (per file). */
+const descriptors = new WeakMap<WorkflowSockets, InstanceSockets>();
+function workflowInstanceSockets(params: unknown): InstanceSockets {
+  const sockets = workflowSocketsOf(params);
+  const known = descriptors.get(sockets);
+  if (known) return known;
+  const inputs: Record<string, InputDescriptor> = {};
+  for (const i of sockets.inputs) {
+    inputs[i.socket] =
+      i.type === 'number'
+        ? { type: 'Number', cardinality: 'single' }
+        : i.type === 'text'
+          ? { type: ['String', 'Prompt'], cardinality: 'single' }
+          : { type: 'Image', cardinality: 'single', takes: i.type };
+  }
+  const outputs: Record<string, OutputDescriptor> = {};
+  for (const o of sockets.outputs) outputs[o.socket] = { type: 'Image', cardinality: 'single' };
+  const result = { inputs, outputs };
+  descriptors.set(sockets, result);
+  return result;
+}
+
+/** What arrives on a text socket, as text: a String, or a Prompt's `text`. */
+export function textOf(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'Prompt')
+    return String((value as { text?: unknown }).text ?? '');
+  return null;
 }
 
 export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageValue> = {
@@ -151,69 +174,64 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
   cost: 'expensive',
   paramSchema: ComfyUIWorkflowParams,
   mainInput: null,
+  // #1715 — every other input and output comes from the workflow file.
   inputs: {
-    prompt: { type: 'Prompt', cardinality: 'single' },
-    /** Raw pass results consumed as ControlNet / img2img inputs. Socket
-     *  name MUST equal the EdgeKind literal so per-kind closure BFS
-     *  isolates pass siblings (H22). */
-    'pass-input': { type: 'Image', cardinality: 'list', takes: comfyWorkflowTakes },
     time: { type: 'Time', cardinality: 'single' },
   },
-  outputs: { out: { type: 'Image', cardinality: 'single' } },
+  outputs: {},
+  instanceSockets: workflowInstanceSockets,
   inspectorSections: ['render'],
   home: {
-    presetId: 'render',
     frameStart: 'render',
     frameEnd: 'render',
     outputPath: 'render',
   },
-  evaluate(params, inputs: ResolvedInputs): ImageValue {
-    const prompt = inputs.prompt as PromptValue | undefined;
-    const passes = (inputs['pass-input'] as ImageValue[] | undefined) ?? [];
+  evaluate(params, inputs: ResolvedInputs): Record<string, ImageValue> {
+    const sockets = workflowSocketsOf(params);
     const time = inputs.time as TimeValue | undefined;
-    return {
-      kind: 'Image',
-      passKind: 'stylized',
-      descriptor: {
-        // V10 guard — destructured fields default at the evaluator so a
-        // legacy project missing width/height (added post-release) loads
-        // without crash.
-        width: params.width ?? DEFAULT_IMAGE_DESCRIPTOR.width,
-        height: params.height ?? DEFAULT_IMAGE_DESCRIPTOR.height,
-        format: 'rgba8',
-      },
-      sourceHash: hashValue({
+    // Every wired input participates: an image by its source hash (different beauty bytes
+    // make different stylized bytes), a number or text by its value. Keyed number/text values
+    // live on channels off the graph (`controller:<nodeId>`); they are folded where the file
+    // is submitted, not here, since evaluate sees only params + inputs.
+    const arrived = sockets.inputs.map((i) => {
+      const v = inputs[i.socket];
+      if (v === undefined) return [i.socket, null];
+      if (i.type === 'still' || i.type === 'frames') {
+        const img = v as ImageValue;
+        return [i.socket, { passKind: img.passKind, sourceHash: img.sourceHash }];
+      }
+      return [i.socket, i.type === 'text' ? textOf(v) : v];
+    });
+    // A still-only workflow is run once, so the time does not pick its picture (#1716): hashing
+    // it would make one still a different image at every frame. Any frames output renders
+    // each frame from that frame's time.
+    const anyFrames = sockets.outputs.some((o) => o.type === 'frames');
+    const out: Record<string, ImageValue> = {};
+    for (const o of sockets.outputs) {
+      out[o.socket] = {
+        kind: 'Image',
         passKind: 'stylized',
-        presetId: params.presetId ?? 'stylizedRealism',
-        // The imported graph participates by its json: a different workflow (or
-        // an edited literal) produces a different stylized frame. Bound keyframe
-        // channels target this node externally (free-floating V57) — they are
-        // folded at the decode/render site, not here, since evaluate sees only
-        // params + inputs.
-        graph: params.graph ?? null,
-        // Image bindings participate: a different bound project image (or a cleared
-        // binding) produces a different stylized frame. The bytes are uploaded +
-        // the input rewritten at the decode/submit site; here only the binding map
-        // discriminates the value.
-        imageBindings: params.imageBindings ?? {},
-        prompt: prompt ?? null,
-        // Upstream pass results participate by sourceHash — different
-        // beauty bytes produce different stylized bytes (parallels stub
-        // capability's content-hash mixing).
-        passes: passes.map((p) => ({
-          passKind: p.passKind,
-          sourceHash: p.sourceHash,
-        })),
-        // #1716 — a still workflow is run once, so the time does not pick its picture: hashing
-        // it would make one still a different image at every frame, and a frames input it feeds
-        // would not hold it. The preset path renders each frame from that frame's time.
-        time: comfyWorkflowTakes(params) === 'still' ? null : (time ?? null),
-        // frameRange + lastGoodFrame intentionally NOT in the hash:
-        // they describe a dispatch plan, not the per-frame value. Frame
-        // identity is carried by the time socket; resume state is a
-        // bookkeeping field on params, not a content discriminator.
-      }),
-      extent: comfyWorkflowExtent(params),
-    };
+        descriptor: {
+          // V10 guard — a project missing width/height (added post-release) loads.
+          width: params.width ?? DEFAULT_IMAGE_DESCRIPTOR.width,
+          height: params.height ?? DEFAULT_IMAGE_DESCRIPTOR.height,
+          format: 'rgba8',
+        },
+        sourceHash: hashValue({
+          passKind: 'stylized',
+          output: o.socket,
+          // The file participates whole: a different workflow (or an edited literal) is a
+          // different picture.
+          graph: params.graph ?? null,
+          imageBindings: params.imageBindings ?? {},
+          inputs: arrived,
+          time: anyFrames ? (time ?? null) : null,
+          // frameRange + lastGoodFrame intentionally NOT in the hash: they describe a
+          // dispatch plan, not the per-frame value.
+        }),
+        extent: outputExtent(o.type, params),
+      };
+    }
+    return out;
   },
 };

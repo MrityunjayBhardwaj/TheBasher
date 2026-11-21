@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import { getComfyCapability, getStorage } from '../boot';
 import type { NodeId } from '../../core/dag/types';
-import { stylizedRealismPreset } from '../../agent/strategy/presets/stylizedRealism';
+import { compileWorkflowFrame } from '../../render/compileWorkflowFrame';
 import { CostPreview, type CostPreviewDeps } from './CostPreview';
 
 export function CostPreviewConnector({ workflowNodeId }: { workflowNodeId: NodeId }) {
@@ -23,9 +23,8 @@ export function CostPreviewConnector({ workflowNodeId }: { workflowNodeId: NodeI
     Promise.all([getComfyCapability(), getStorage()])
       .then(([capability, storage]) => {
         if (cancelled) return;
-        // v0.5: only stylizedRealism is registered (D-02). v0.6 dispatches
-        // over presetId via the preset registry.
-        const compileWorkflow = stylizedRealismPreset.compile({ storage });
+        // #1715 — any workflow file, compiled from its Basher markers.
+        const compileWorkflow = compileWorkflowFrame({ storage });
         setDeps({ capability, storage, compileWorkflow });
       })
       .catch((err) => {

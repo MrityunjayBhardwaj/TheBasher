@@ -3,6 +3,10 @@
 //
 // REF: P2.5.2 PLAN §5 Wave C; vyapti V13/V14.
 
+import {
+  STYLIZED_REALISM_META,
+  STYLIZED_REALISM_WORKFLOW,
+} from '../../core/comfy/builtinWorkflows';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetRegistryForTests,
@@ -3238,7 +3242,7 @@ describe('mutator.render.addAIPass', () => {
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'cinematic cube',
       },
       state,
@@ -3256,17 +3260,29 @@ describe('mutator.render.addAIPass', () => {
     if (r.ops[1].type === 'addNode') {
       expect(r.ops[1].nodeType).toBe('ComfyUIWorkflow');
       const params = r.ops[1].params as {
-        presetId: string;
+        graph: { apiJson: Record<string, unknown> };
         outputPath: string;
         lastGoodFrame: number;
       };
-      expect(params.presetId).toBe('stylizedRealism');
-      // D-04: outputPath = ${jobOutputPath}/stylized_${sanitize(presetId)}
+      // #1715 — the generic node holding the shipped workflow file, not a preset.
+      expect(params).not.toHaveProperty('presetId');
+      expect(Object.keys(params.graph.apiJson)).toEqual(Object.keys(STYLIZED_REALISM_WORKFLOW));
+      // D-04: outputPath = ${jobOutputPath}/stylized_${sanitize(workflow)}
       expect(params.outputPath).toBe('renders/job/stylized_stylizedRealism');
       expect(params.lastGoodFrame).toBe(-1);
     }
     const connects = r.ops.slice(2).filter((o) => o.type === 'connect');
     expect(connects).toHaveLength(5);
+    // Each pass on the file's input of its kind; the prompt on `prompt`.
+    expect(
+      connects.map((c) => (c.type === 'connect' ? `${c.from.node}>${c.to.socket}` : '')),
+    ).toEqual([
+      'job_stylizedRealism_prompt>prompt',
+      'beauty>beauty',
+      'depth>depth',
+      'normal>normal',
+      'time>time',
+    ]);
   });
 
   it('inherits frame range from RenderJob when not explicitly overridden', () => {
@@ -3288,7 +3304,7 @@ describe('mutator.render.addAIPass', () => {
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'a cube',
       },
       s,
@@ -3337,7 +3353,7 @@ describe('mutator.render.addAIPass', () => {
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'a cube',
       },
       s,
@@ -3356,7 +3372,7 @@ describe('mutator.render.addAIPass', () => {
       addAIPassMutator,
       {
         jobId: 'box',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'x',
       },
       state,
@@ -3365,13 +3381,13 @@ describe('mutator.render.addAIPass', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('rejects when presetId is unknown (zod schema rejection — gate 2)', () => {
+  it('rejects when the workflow is not one Basher ships (zod schema rejection — gate 2)', () => {
     const state = buildSceneWithJobAndPasses();
     const r = validatePlan(
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'anime', // not registered in v0.5
+        workflow: 'anime', // not shipped
         promptText: 'a cube',
       } as unknown as Parameters<typeof validatePlan>[1],
       state,
@@ -3386,7 +3402,7 @@ describe('mutator.render.addAIPass', () => {
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'a cube',
         promptId: 'p_test',
         workflowId: 'wf_test',
@@ -3398,7 +3414,7 @@ describe('mutator.render.addAIPass', () => {
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'a cube',
         promptId: 'p_test',
         workflowId: 'wf_test',
@@ -3409,13 +3425,13 @@ describe('mutator.render.addAIPass', () => {
     expect(a).toEqual(b);
   });
 
-  it('sanitizes presetId in workflow outputPath (defense-in-depth)', () => {
+  it('sanitizes the workflow name in its outputPath (defense-in-depth)', () => {
     const state = buildSceneWithJobAndPasses();
     const r = validatePlan(
       addAIPassMutator,
       {
         jobId: 'job',
-        presetId: 'stylizedRealism',
+        workflow: 'stylizedRealism',
         promptText: 'a cube',
       },
       state,
@@ -3452,7 +3468,7 @@ function buildSceneWithJobAndWorkflow(): DagState {
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: 0,
       frameEnd: 4,
       lastGoodFrame: -1,
@@ -3468,7 +3484,7 @@ function buildSceneWithJobAndWorkflow(): DagState {
     s = applyOp(s, {
       type: 'connect',
       from: { node: id, socket: 'out' },
-      to: { node: 'cw', socket: 'pass-input' },
+      to: { node: 'cw', socket: id },
     }).next;
   }
   s = applyOp(s, {
@@ -4774,7 +4790,7 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     'mutator.render.addAIPass': {
       mutator: _addAIPassM as MutatorDefinition<unknown>,
       build: buildSceneWithJobAndPasses,
-      spec: { jobId: 'job', presetId: 'stylizedRealism', promptText: 'cinematic cube' },
+      spec: { jobId: 'job', workflow: 'stylizedRealism', promptText: 'cinematic cube' },
     },
     'mutator.render.addStitch': {
       mutator: _addStitchM as MutatorDefinition<unknown>,

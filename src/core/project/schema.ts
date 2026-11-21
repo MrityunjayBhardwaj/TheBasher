@@ -111,7 +111,10 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // `migrateConstraintsToChains` (`CONSTRAINT_CHAINS_FORMAT`).
 // v30 (#1856): a lens saved past v26 without the v26 strip loses `lookAt`, `roll` and `zoom`. See
 // migrations.ts `migrateStaleLensFields` (`CAMERA_LENS_STRIP_FORMAT`).
-export const PROJECT_FORMAT_VERSION = 30;
+// v31 (#1715): a ComfyUI workflow node holds its workflow file and the preset enum is gone — a
+// preset node gets the preset's file, its pass wires on the sockets named after each pass. See
+// migrations.ts `migratePresetsToWorkflowFiles` (`WORKFLOW_FILES_FORMAT`).
+export const PROJECT_FORMAT_VERSION = 31;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

@@ -11,6 +11,10 @@
 // spec does not depend on a running ComfyUI server. The same flow lights
 // up against the real server in Wave D4 — only the capability swaps.
 
+import {
+  STYLIZED_REALISM_META,
+  STYLIZED_REALISM_WORKFLOW,
+} from '../../src/core/comfy/builtinWorkflows';
 import { test, expect } from './_fixtures';
 import { objectPosing } from './_seedNodes';
 
@@ -62,7 +66,7 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
   // the ComfyUI cost preview — was reached.
   const seedCamId = await objectPosing(page, 'CameraData');
   await page.evaluate(
-    async ({ end, seedCamId: camIdIn }) => {
+    async ({ end, seedCamId: camIdIn, graph }) => {
       const w = window as unknown as StubComfyWindow;
       const dag = w.__basher_dag!.getState();
       const nodes = dag.state.nodes;
@@ -75,9 +79,9 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
           `seed scene missing time/cam/scene: time=${timeId} cam=${camId} scene=${sceneId}`,
         );
       }
-      // Wire all three required upstream passes — stylizedRealism preset
-      // mandates beauty + depth + normal. Match the addAIPass Mutator's
-      // canonical wiring shape so the cost preview's compile() finds them.
+      // Wire all three upstream passes the stylized-realism workflow file reads (#1715:
+      // beauty + depth + normal, each on its input of the same name), as addAIPass wires them,
+      // so the frame compiler finds them.
       dag.dispatchAtomic(
         [
           {
@@ -109,7 +113,7 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
             nodeId: 'cw_test',
             nodeType: 'ComfyUIWorkflow',
             params: {
-              presetId: 'stylizedRealism',
+              graph,
               frameStart: 0,
               frameEnd: end,
               lastGoodFrame: -1,
@@ -135,7 +139,7 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
             {
               type: 'connect',
               from: { node: passId, socket: 'out' },
-              to: { node: 'cw_test', socket: 'pass-input' },
+              to: { node: 'cw_test', socket: passId.replace('_test', '') },
             },
           ]),
           {
@@ -153,17 +157,17 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
         'p5-c5-e2e seed',
       );
 
-      // Pre-populate raw pass bytes at the D-04 paths the preset's compile()
+      // Pre-populate raw pass bytes at the D-04 paths the frame compiler
       // reads. Production produces these via runRenderJob; for the cost-
       // preview spec we only need bytes that exist (content is not asserted
       // by the stub capability beyond hashing).
       //
-      // Path formula matches stylizedRealism.rawPassPath:
+      // Path formula matches compileWorkflowFrame's passFramePath:
       //   `renders/cw_test/${passKind}_NNNN.png`
       // dryRun probes frame 0 of frameStart..frameEnd, so frame 0000 must
       // exist for all three required passes.
       const fakeBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-      // Submit (C5.3) iterates frames 0..frameEnd; each frame's compile()
+      // Submit (C5.3) iterates frames 0..frameEnd; each frame's compile
       // reads raw passes at THAT frame's path. Seed all frames in range.
       for (let f = 0; f <= end; f++) {
         const padded = f.toString().padStart(4, '0');
@@ -174,7 +178,11 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
 
       w.__basher_selection!.getState().select('cw_test');
     },
-    { end: frameEnd, seedCamId },
+    {
+      end: frameEnd,
+      seedCamId,
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
+    },
   );
 }
 

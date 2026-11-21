@@ -196,6 +196,9 @@ const CONSUMERS: Record<string, Decision> = {
   // #1318 — the Comfy batch bakes create one cache per bake for `resolveEvaluatedParam`, which
   // folds the channels and drivers itself, so the state it is handed must stay authored.
   'src/app/video/compileComfyBatch.ts': authored('delegates-to-a-folding-resolver'),
+  // #1715 — the frame runner's keyed number / text inputs, read through `resolveEvaluatedParam`
+  // on `controller:<nodeId>` (which folds the channels itself) with one cache per run.
+  'src/app/render/controllerValue.ts': authored('delegates-to-a-folding-resolver'),
   // #1766 — a camera's Track-To aim brought into its parent's space. It takes its caller's cache
   // (TYPE only) and hands the authored state to the Track-To and parent-world resolvers, which
   // fold their own overlays. No new road: the three camera reads it serves called them directly.
@@ -412,7 +415,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // fixed-ctx).
     // 70 → 71 at #1721, a new road: the NLA pane's generated-run strips (declared above as
     // fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(71); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 71 → 72 at #1715, a new road: the frame runner's keyed workflow inputs (declared above as
+    // delegates-to-a-folding-resolver).
+    expect(evaluatorConsumers()).toHaveLength(72); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

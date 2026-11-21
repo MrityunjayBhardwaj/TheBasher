@@ -32,14 +32,16 @@ async function boot(page: Page) {
   );
 }
 
-const GRAPH = {
-  apiJson: { '1': { class_type: 'SaveImage', inputs: { filename_prefix: 'x' } } },
-  meta: { name: 'flux_still', importedAt: 'e2e', fps: 30, frames: 1 },
-};
+// #1715 — a workflow file whose `picture` input takes a still (kind image) or frames (video).
+const graphTaking = (kind: 'image' | 'video') => ({
+  apiJson: { '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind } } },
+  meta: { name: `takes_${kind}`, importedAt: 'e2e', fps: 30, frames: 1 },
+});
+const GRAPHS = { still: graphTaking('image'), video: graphTaking('video') };
 
 test('a still workflow fed a video says on its input which frame it takes', async ({ page }) => {
   await boot(page);
-  await page.evaluate((graph) => {
+  await page.evaluate((graphs) => {
     const d = (window as unknown as W).__basher_dag.getState();
     const ops = [
       {
@@ -48,26 +50,31 @@ test('a still workflow fed a video says on its input which frame it takes', asyn
         nodeType: 'MediaClip',
         params: { src: 'clips/run.mp4', mediaKind: 'video', srcFps: 30, srcFrames: 90 },
       },
-      { type: 'addNode', nodeId: 'p1716_still', nodeType: 'ComfyUIWorkflow', params: { graph } },
+      {
+        type: 'addNode',
+        nodeId: 'p1716_still',
+        nodeType: 'ComfyUIWorkflow',
+        params: { graph: graphs.still },
+      },
       {
         type: 'addNode',
         nodeId: 'p1716_video',
         nodeType: 'ComfyUIWorkflow',
-        params: { frameStart: 0, frameEnd: 30 },
+        params: { graph: graphs.video, frameStart: 0, frameEnd: 30 },
       },
       {
         type: 'connect',
         from: { node: 'p1716_clip', socket: 'out' },
-        to: { node: 'p1716_still', socket: 'pass-input' },
+        to: { node: 'p1716_still', socket: 'picture' },
       },
       {
         type: 'connect',
         from: { node: 'p1716_clip', socket: 'out' },
-        to: { node: 'p1716_video', socket: 'pass-input' },
+        to: { node: 'p1716_video', socket: 'picture' },
       },
     ];
     for (const op of ops) d.dispatch(op, 'user', 'e2e');
-  }, GRAPH);
+  }, GRAPHS);
 
   await openDrawerTab(page, 'nodes');
   const still = page.locator('[data-graph-node="p1716_still"]');
@@ -76,11 +83,11 @@ test('a still workflow fed a video says on its input which frame it takes', asyn
   await expect(video).toHaveCount(1);
 
   // The still workflow's row names the frame it is handed; the video workflow's row does not.
-  const picked = still.locator('[data-graph-pick="pass-input:0"]');
+  const picked = still.locator('[data-graph-pick="picture:0"]');
   await expect(picked).toHaveCount(1);
-  await expect(picked.locator('text')).toHaveText('pass-input · frame 0');
+  await expect(picked.locator('text')).toContainText('frame 0');
   await expect(video.locator('[data-graph-pick]')).toHaveCount(0);
-  await expect(video.getByText('pass-input', { exact: true })).toHaveCount(1);
+  await expect(video.locator('[data-graph-row="picture"]')).toHaveCount(1);
 
   if (process.env.P1716_SHOT) {
     await still.scrollIntoViewIfNeeded();

@@ -32,6 +32,10 @@ import { posesFromKeyframes } from '../import/keyframePoses';
 import type { AnimationKeyframe } from '../../nodes/types';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../comfy/builtinWorkflows';
+import { writeBasherControllerValues } from '../comfy/basherControllers';
+import type { ComfyApiJson } from '../comfy/comfyGraph';
+import { socketsOfWorkflow } from '../comfy/workflowSockets';
 import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 import {
   FILTER_NAME_OF_GLTF,
@@ -61,6 +65,10 @@ export const CONSTRAINT_CHAINS_FORMAT = PARENT_INPUTS_FORMAT + 1;
 
 /** #1856 — the format version that finishes the v26 lens strip on files saved past v26 without it. */
 export const CAMERA_LENS_STRIP_FORMAT = CONSTRAINT_CHAINS_FORMAT + 1;
+
+/** #1715 — the format version where a ComfyUI workflow node holds its workflow file and the
+ *  preset enum is gone. */
+export const WORKFLOW_FILES_FORMAT = CAMERA_LENS_STRIP_FORMAT + 1;
 
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
@@ -189,6 +197,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v29 → v30 (#1856): a lens saved past v26 still holding `lookAt`, `roll` or `zoom` loses them, as
   // the v26 step does now; a file saved before the step learned to strip them never ran it again.
   [CAMERA_LENS_STRIP_FORMAT - 1]: migrateStaleLensFields,
+  // v30 → v31 (#1715): the ComfyUI preset enum is gone. A preset node becomes the generic workflow
+  // node holding the preset's workflow file, its pass wires on the sockets of the same names and
+  // its output wires on the file's output.
+  [WORKFLOW_FILES_FORMAT - 1]: migratePresetsToWorkflowFiles,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -3216,4 +3228,111 @@ export function migrateStaleLensFields(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CAMERA_LENS_STRIP_FORMAT };
+}
+
+// ── v30 → v31: a ComfyUI workflow node holds its workflow file (#1715) ─────────────────────────
+// The node had a closed `presetId` enum (only `stylizedRealism`) and fixed sockets: `prompt`, a
+// `pass-input` list of render passes, `time`, and one output `out`. It now runs the workflow FILE
+// it holds (`graph`), and its sockets are that file's Basher markers. So:
+//   - `presetId` goes from every workflow node.
+//   - A node with no file (the preset path) gets the preset's workflow file
+//     (`STYLIZED_REALISM_WORKFLOW`, the preset's template rewritten with markers). Its wires move
+//     onto the file's sockets: each render pass on `pass-input` onto the input named after its
+//     kind (beauty, depth, normal); `prompt` and `time` keep their names. The negative text the
+//     preset read off the Prompt node is written into the file's `negative` input, as the file
+//     reads it from there. A wire with no such socket (an ID pass, a second beauty) stays on
+//     `pass-input`, kept and shown as broken, never dropped.
+//   - Every wire read off a workflow node's `out` (a stitch, a render output) moves to the file's
+//     first output: `stylized` for the preset, the first Basher output of an imported file. An
+//     imported file with no output keeps `out`, broken and shown.
+// An imported file's own wires on `prompt` / `pass-input` are left where they are: nothing read
+// them before (the compositor binds images by `imageBindings`), and they now show as broken.
+const PASS_SOCKET_BY_TYPE: Record<string, string> = {
+  BeautyPass: 'beauty',
+  DepthPass: 'depth',
+  NormalPass: 'normal',
+};
+
+export function migratePresetsToWorkflowFiles(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode>; outputs?: Record<string, RawRef | null> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: WORKFLOW_FILES_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const firstOutput = new Map<string, string | null>();
+  const kept: string[] = [];
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'ComfyUIWorkflow') continue;
+    const { presetId: _presetId, ...params } = node.params ?? {};
+    void _presetId;
+    const graph = params.graph as { apiJson?: ComfyApiJson } | null | undefined;
+    if (graph?.apiJson) {
+      out[id] = { ...node, params };
+      firstOutput.set(id, socketsOfWorkflow(graph.apiJson).outputs[0]?.socket ?? null);
+      continue;
+    }
+    // The preset path: the preset's file, the negative it read, the pass wires by kind.
+    let apiJson = structuredClone(STYLIZED_REALISM_WORKFLOW);
+    const promptRef = asRefs(node.inputs?.prompt)[0];
+    const negative = promptRef?.node ? nodes[promptRef.node]?.params?.negative : undefined;
+    if (typeof negative === 'string' && negative) {
+      const neg = socketsOfWorkflow(apiJson).inputs.find((i) => i.socket === 'negative');
+      if (neg) apiJson = writeBasherControllerValues(apiJson, { [neg.nodeId]: [negative] });
+    }
+    const inputs: Record<string, RawRef | RawRef[]> = { ...(node.inputs ?? {}) };
+    delete inputs['pass-input'];
+    const left: RawRef[] = [];
+    for (const ref of asRefs(node.inputs?.['pass-input'])) {
+      const socket = ref.node ? PASS_SOCKET_BY_TYPE[nodes[ref.node]?.type ?? ''] : undefined;
+      if (socket && inputs[socket] === undefined) inputs[socket] = ref;
+      else left.push(ref);
+    }
+    if (left.length > 0) {
+      inputs['pass-input'] = left;
+      kept.push(id);
+    }
+    out[id] = {
+      ...node,
+      params: { ...params, graph: { apiJson, meta: { ...STYLIZED_REALISM_META } } },
+      inputs,
+    };
+    firstOutput.set(id, 'stylized');
+  }
+  if (firstOutput.size === 0) return { ...proj, formatVersion: WORKFLOW_FILES_FORMAT };
+
+  const moved = (ref: RawRef): RawRef => {
+    if (!ref?.node || ref.socket !== 'out' || !firstOutput.has(ref.node)) return ref;
+    const to = firstOutput.get(ref.node);
+    return to ? { ...ref, socket: to } : ref;
+  };
+  for (const [id, node] of Object.entries(out)) {
+    if (!node?.inputs) continue;
+    let changed = false;
+    const inputs: Record<string, RawRef | RawRef[]> = {};
+    for (const [socket, binding] of Object.entries(node.inputs)) {
+      const next = Array.isArray(binding) ? binding.map(moved) : moved(binding);
+      if (next !== binding && JSON.stringify(next) !== JSON.stringify(binding)) changed = true;
+      inputs[socket] = next;
+    }
+    if (changed) out[id] = { ...node, inputs };
+  }
+  const outputs = proj.state?.outputs
+    ? Object.fromEntries(
+        Object.entries(proj.state.outputs).map(([k, ref]) => [k, ref ? moved(ref) : ref]),
+      )
+    : proj.state?.outputs;
+  if (kept.length > 0) {
+    console.warn(
+      `[migratePresetsToWorkflowFiles] ${kept.length} workflow node(s) (${kept.join(', ')}) had a ` +
+        'pass wire with no socket of its kind in the workflow file; kept on pass-input and shown ' +
+        'as broken (#1715).',
+    );
+  }
+  return {
+    ...proj,
+    state: { ...proj.state, nodes: out, ...(outputs ? { outputs } : {}) },
+    formatVersion: WORKFLOW_FILES_FORMAT,
+  };
 }

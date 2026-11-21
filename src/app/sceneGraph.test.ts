@@ -307,10 +307,11 @@ describe('sceneGraphOf — #1825 a wire the mode switched off is not drawn', () 
 });
 
 describe('sceneGraphOf — #1716 frames into a still input say which frame they pick', () => {
-  const GRAPH = {
-    apiJson: { '1': { class_type: 'SaveImage', inputs: { filename_prefix: 'x' } } },
-    meta: { name: 'flux_still', importedAt: 'test', fps: 30, frames: 1 },
-  };
+  // #1715 — the workflow file's `picture` input takes a still (kind image) or frames (video).
+  const graphTaking = (kind: 'image' | 'video') => ({
+    apiJson: { '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind } } },
+    meta: { name: `takes_${kind}`, importedAt: 'test', fps: 30, frames: 1 },
+  });
   /** A video clip and a still picture, each wired into a workflow. */
   function wiredTo(workflowParams: object): DagState {
     return applyOps(buildDefaultDagState(), [
@@ -324,23 +325,23 @@ describe('sceneGraphOf — #1716 frames into a still input say which frame they 
       {
         type: 'connect',
         from: { node: 'clip', socket: 'out' },
-        to: { node: 'wf', socket: 'pass-input' },
+        to: { node: 'wf', socket: 'picture' },
       },
     ]).next;
   }
   const passRow = (s: DagState) =>
     sceneGraphOf(s, { showHidden: false })
       .nodes.find((n) => n.id === 'wf')
-      ?.inputs.find((r) => r.socket === 'pass-input');
+      ?.inputs.find((r) => r.socket === 'picture');
 
   it('a still workflow fed a video picks frame 0, and the row says so', () => {
-    const row = passRow(wiredTo({ graph: GRAPH }));
+    const row = passRow(wiredTo({ graph: graphTaking('image') }));
     expect(row).toBeDefined();
     expect(row!.picks).toEqual([0]);
   });
 
   it('a video workflow fed the same video picks nothing (it steps through the frames)', () => {
-    const row = passRow(wiredTo({ frameStart: 0, frameEnd: 30 }));
+    const row = passRow(wiredTo({ graph: graphTaking('video'), frameStart: 0, frameEnd: 30 }));
     expect(row).toBeDefined();
     expect(row!.picks).toBeUndefined();
   });

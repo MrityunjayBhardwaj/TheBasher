@@ -3,8 +3,8 @@
 // P5 §43 amendment (D-02 locked): Depth ships in v0.5 because
 // stylizedRealism's ControlNet-Depth conditioning needs it. LineArt /
 // Segmentation / AO / Albedo / Alpha / MotionVector remain deferred to
-// v0.6 — they only land when a preset registered in
-// src/agent/strategy/presets/ demands them.
+// v0.6 — they only land when a shipped workflow file
+// (src/core/comfy/builtinWorkflows.ts) reads them.
 //
 // Pure: returns ImageValue metadata only. Pixel work happens at
 // RenderJob / runComfyUIWorkflow execution time. Format = rgba8 so

@@ -2,6 +2,10 @@
 // it made and the model's name; a project of permissive parts lists nothing; an unknown licence is
 // listed as unknown, never allowed.
 
+import {
+  STYLIZED_REALISM_META,
+  STYLIZED_REALISM_WORKFLOW,
+} from '../../core/comfy/builtinWorkflows';
 import { describe, expect, it } from 'vitest';
 import type { DagState } from '../../core/dag/state';
 import type { Node } from '../../core/dag/types';
@@ -107,11 +111,10 @@ describe('licenceReport', () => {
     expect(stub.notCleared).toEqual([]);
   });
 
-  it("names every model file an imported ComfyUI graph loads, and the preset's when it has none", () => {
+  it('names every model file a ComfyUI workflow file loads, the migrated preset’s included', () => {
     const imported = licenceReport(
       stateOf(
         node('c', 'ComfyUIWorkflow', {
-          presetId: 'stylizedRealism',
           graph: { apiJson: SD15_TEXT2IMG, meta: { name: 'Toon pass' } },
         }),
       ),
@@ -120,8 +123,13 @@ describe('licenceReport', () => {
     expect(imported.parts.map((p) => [p.asset, p.model])).toEqual([
       ['Toon pass', 'v1-5-pruned-emaonly.safetensors'],
     ]);
+    // #1715 — the old preset is a workflow file now; its models are read off the file.
     const preset = licenceReport(
-      stateOf(node('c', 'ComfyUIWorkflow', { presetId: 'stylizedRealism', graph: null })),
+      stateOf(
+        node('c', 'ComfyUIWorkflow', {
+          graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
+        }),
+      ),
       none,
     );
     expect(preset.parts.map((p) => p.model)).toEqual([
@@ -131,6 +139,10 @@ describe('licenceReport', () => {
     ]);
     // None of them is recorded, so each is listed — unknown, never allowed.
     expect(preset.notCleared).toHaveLength(3);
+    // A node with no file picked yet loads no model.
+    expect(
+      licenceReport(stateOf(node('c', 'ComfyUIWorkflow', { graph: null })), none).parts,
+    ).toEqual([]);
   });
 
   it('lists an imported media clip and an imported environment map by their own names', () => {

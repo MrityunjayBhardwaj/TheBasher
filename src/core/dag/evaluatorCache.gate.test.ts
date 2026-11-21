@@ -343,6 +343,9 @@ const TAKERS: string[] = [
   'resolveActiveTrackTo@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
+  // #1715 — a workflow node's inputs at one frame; the frame runner and the probe each hand it
+  // the one cache they hold for the whole run.
+  'workflowInputsAt@src/render/dryRun.ts',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
   'cameraLocalPose@src/app/resolveWorldTransform.ts',
   // #1763 — the keys I takes on a camera; the I key hands it the shared UI cache.

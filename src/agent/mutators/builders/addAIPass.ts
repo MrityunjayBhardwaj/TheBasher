@@ -1,12 +1,15 @@
 // addAIPass Mutator — wires a Prompt + ComfyUIWorkflow chain into an
-// existing RenderJob, producing stylized output via the named preset.
+// existing RenderJob, producing stylized output from a workflow file.
 //
-// Single Mutator covers all presets (D-03 locked). presetId discriminates
-// at build time; the workflow's outputPath is authored from the
-// RenderJob's outputPath + the sanitized presetId per D-04. The Mutator
-// REQUIRES that the upstream RenderJob already has every required pass
-// of the chosen preset wired (Beauty + Depth + Normal for stylized-
-// realism). The agent emits addPass calls first, then addAIPass.
+// #1715: no presets. The node is the generic ComfyUI workflow node holding a
+// workflow FILE Basher ships (`BUILTIN_WORKFLOWS`) or one the agent passes,
+// and its sockets are that file's Basher markers (`workflowSocketsOf`), the
+// same ones the Nodes view draws. The Mutator wires by socket name: each
+// image input named after a render pass (beauty, depth, normal, id) reads
+// that pass off the job, and a Prompt node feeds the text input `prompt`.
+// The workflow's outputPath is authored from the RenderJob's outputPath per
+// D-04. The upstream RenderJob must already have every pass the file asks
+// for; the agent emits addPass calls first, then addAIPass.
 //
 // Closure: rootSelectors=[jobId], followedEdges=['pass-input']. The
 // existing raw passes hanging off the job sit in scope alongside the
@@ -28,7 +31,10 @@ import { z } from 'zod';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
-import { listPresetIds, getPreset } from '../../strategy/presets/stylizedRealism';
+import { BUILTIN_WORKFLOWS } from '../../../core/comfy/builtinWorkflows';
+import { writeBasherControllerValues } from '../../../core/comfy/basherControllers';
+import type { ComfyApiJson, ComfyGraphMeta } from '../../../core/comfy/comfyGraph';
+import { socketsOfWorkflow, type WorkflowSockets } from '../../../core/comfy/workflowSockets';
 import type { ImagePassKind } from '../../../nodes/types';
 import type { MutatorDefinition } from '../types';
 
@@ -38,22 +44,17 @@ function sanitizePathSegment(s: string): string {
   return s.replace(/[[\].:/]/g, '_');
 }
 
-const presetIds = listPresetIds();
-if (presetIds.length === 0) {
-  throw new Error(
-    'addAIPass: preset registry is empty — at least one preset must register before this Mutator loads.',
-  );
-}
-
-const PresetIdEnum = z.enum(presetIds as [string, ...string[]]);
+const workflowNames = Object.keys(BUILTIN_WORKFLOWS) as [string, ...string[]];
 
 const AddAIPassSpec = z.object({
   jobId: z.string().min(1),
-  presetId: PresetIdEnum,
+  /** A workflow file Basher ships, by name. */
+  workflow: z.enum(workflowNames),
   promptText: z.string().min(1),
+  /** The text input `negative`'s value, when the file has one. */
   promptNegative: z.string().optional(),
   promptTags: z.array(z.string()).optional(),
-  /** Optional explicit ids. Auto-derived from jobId + presetId when omitted. */
+  /** Optional explicit ids. Auto-derived from jobId + workflow when omitted. */
   promptId: z.string().optional(),
   workflowId: z.string().optional(),
   /** Inclusive frame range. Defaults to RenderJob's [frameStart, frameEnd]. */
@@ -68,26 +69,49 @@ interface RenderJobLikeParams {
   frameEnd?: number;
 }
 
-function defaultPromptId(jobId: NodeId, presetId: string, used: Set<NodeId>): NodeId {
-  const base = `${jobId}_${sanitizePathSegment(presetId)}_prompt`;
+function defaultPromptId(jobId: NodeId, workflow: string, used: Set<NodeId>): NodeId {
+  const base = `${jobId}_${sanitizePathSegment(workflow)}_prompt`;
   if (!used.has(base)) return base;
   let n = 1;
   while (used.has(`${base}_${n}`)) n++;
   return `${base}_${n}`;
 }
 
-function defaultWorkflowId(jobId: NodeId, presetId: string, used: Set<NodeId>): NodeId {
-  const base = `${jobId}_${sanitizePathSegment(presetId)}_workflow`;
+function defaultWorkflowId(jobId: NodeId, workflow: string, used: Set<NodeId>): NodeId {
+  const base = `${jobId}_${sanitizePathSegment(workflow)}_workflow`;
   if (!used.has(base)) return base;
   let n = 1;
   while (used.has(`${base}_${n}`)) n++;
   return `${base}_${n}`;
+}
+
+const PASS_KINDS: ReadonlySet<string> = new Set(['beauty', 'id', 'depth', 'normal']);
+
+/** The render passes a workflow file asks for: its image inputs named after one. */
+function passInputsOf(sockets: WorkflowSockets): ImagePassKind[] {
+  return sockets.inputs
+    .filter((i) => (i.type === 'still' || i.type === 'frames') && PASS_KINDS.has(i.socket))
+    .map((i) => i.socket as ImagePassKind);
+}
+
+/** The file for `name`, with the negative written into its `negative` text input. */
+function workflowFileFor(name: string, negative: string | undefined) {
+  const builtin = BUILTIN_WORKFLOWS[name]!;
+  let apiJson: ComfyApiJson = structuredClone(builtin.apiJson);
+  const neg = socketsOfWorkflow(apiJson).inputs.find(
+    (i) => i.socket === 'negative' && i.type === 'text',
+  );
+  if (neg && negative !== undefined) {
+    apiJson = writeBasherControllerValues(apiJson, { [neg.nodeId]: [negative] });
+  }
+  const meta: ComfyGraphMeta = { ...builtin.meta };
+  return { apiJson, meta };
 }
 
 /**
  * Walk job's pass-input list and return the set of passKinds already
- * wired. Used to verify the preset's required passes are present
- * before we add the workflow.
+ * wired. Used to verify the file's passes are present before we add
+ * the workflow.
  */
 function wiredPassKinds(jobId: NodeId, state: DagState): Set<ImagePassKind> {
   const job = state.nodes[jobId];
@@ -115,17 +139,18 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
   name: 'mutator.render.addAIPass',
   description:
     'Wire a stylized AI render pass (Prompt + ComfyUIWorkflow) into an ' +
-    'existing RenderJob, producing stylized frames via the named preset. ' +
-    "The upstream RenderJob must already have the preset's required " +
-    'passes wired (call mutator.render.addPass first for each). v0.5 ' +
-    'ships one preset (stylizedRealism — Beauty + Depth + Normal → SDXL ' +
-    'ControlNet). Output flows over the existing pass-input edge kind ' +
-    'with passKind "stylized" — agent disambiguates by source node, not ' +
-    'socket type.',
+    'existing RenderJob, producing stylized frames from a workflow file Basher ' +
+    'ships. The node is the generic ComfyUI workflow node: its sockets are the ' +
+    "file's Basher markers (inspect it to see them). Each image input named after " +
+    'a render pass (beauty, depth, normal, id) reads that pass off the job, so the ' +
+    'job must have those passes wired first (mutator.render.addPass). Shipped: ' +
+    'stylizedRealism (beauty + depth + normal → SDXL ControlNet, img2img on the ' +
+    'previous frame). The first output flows back over pass-input with passKind ' +
+    '"stylized".',
   spec: AddAIPassSpec,
   specExample: {
     jobId: 'job',
-    presetId: 'stylizedRealism',
+    workflow: 'stylizedRealism',
     promptText: 'cinematic cube, golden hour, 35mm',
     promptNegative: 'lowres, blurry',
   },
@@ -151,20 +176,21 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
         reason: `jobId "${spec.jobId}" is ${job.type}; expected a RenderJob.`,
       };
     }
-    const preset = getPreset(spec.presetId);
-    if (!preset) {
+    const builtin = BUILTIN_WORKFLOWS[spec.workflow];
+    if (!builtin) {
       return {
         ok: false,
-        reason: `presetId "${spec.presetId}" not registered. Known presets: ${listPresetIds().join(', ')}.`,
+        reason: `workflow "${spec.workflow}" is not one Basher ships. Shipped: ${workflowNames.join(', ')}.`,
       };
     }
+    const required = passInputsOf(socketsOfWorkflow(builtin.apiJson));
     const wired = wiredPassKinds(spec.jobId, state);
-    const missing = preset.requiredPasses.filter((k) => !wired.has(k));
+    const missing = required.filter((k) => !wired.has(k));
     if (missing.length > 0) {
       return {
         ok: false,
         reason:
-          `presetId "${spec.presetId}" requires passes [${preset.requiredPasses.join(', ')}] ` +
+          `workflow "${spec.workflow}" reads passes [${required.join(', ')}] ` +
           `wired to RenderJob "${spec.jobId}". Missing: [${missing.join(', ')}]. ` +
           'Call mutator.render.addPass for each before retrying.',
       };
@@ -191,19 +217,20 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const usedIds = new Set<NodeId>(Object.keys(state.nodes));
-    const promptId = spec.promptId ?? defaultPromptId(spec.jobId, spec.presetId, usedIds);
+    const promptId = spec.promptId ?? defaultPromptId(spec.jobId, spec.workflow, usedIds);
     usedIds.add(promptId);
-    const workflowId = spec.workflowId ?? defaultWorkflowId(spec.jobId, spec.presetId, usedIds);
+    const workflowId = spec.workflowId ?? defaultWorkflowId(spec.jobId, spec.workflow, usedIds);
+    const graph = workflowFileFor(spec.workflow, spec.promptNegative);
+    const sockets = socketsOfWorkflow(graph.apiJson);
 
     // Derive workflow outputPath from the RenderJob's outputPath. RenderJob's
     // outputPath default is 'renders/job'; the workflow's path becomes
-    // 'renders/job/stylized_${sanitize(presetId)}'. Both share the
+    // 'renders/job/stylized_${sanitize(workflow)}'. Both share the
     // ${jobId} prefix so D-04 holds.
     const job = state.nodes[spec.jobId];
     const jobParams = (job?.params as RenderJobLikeParams | undefined) ?? {};
     const jobOutputPath = (jobParams.outputPath ?? 'renders/job').replace(/\/+$/, '');
-    const sanitizedPresetId = sanitizePathSegment(spec.presetId);
-    const workflowOutputPath = `${jobOutputPath}/stylized_${sanitizedPresetId}`;
+    const workflowOutputPath = `${jobOutputPath}/stylized_${sanitizePathSegment(spec.workflow)}`;
 
     // Default frame range to the RenderJob's range when not explicitly
     // overridden — keeps stylized output aligned with raw passes.
@@ -240,27 +267,23 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
       nodeId: workflowId,
       nodeType: 'ComfyUIWorkflow',
       params: {
-        presetId: spec.presetId,
+        graph,
         frameStart,
         frameEnd,
         lastGoodFrame: -1,
         outputPath: workflowOutputPath,
       },
     });
-    // 3. Wire prompt → workflow.prompt.
-    ops.push({
-      type: 'connect',
-      from: { node: promptId, socket: 'out' },
-      to: { node: workflowId, socket: 'prompt' },
-    });
-    // 4. Wire each required raw pass into workflow.pass-input. Pass
-    //    nodes already exist on the job (precondition verified).
-    const preset = getPreset(spec.presetId);
-    if (!preset) {
-      throw new Error(
-        `addAIPass.build: preset "${spec.presetId}" disappeared after preconditions — registry mutation race?`,
-      );
+    // 3. Wire prompt → the file's text input `prompt`, when it has one.
+    if (sockets.inputs.some((i) => i.socket === 'prompt' && i.type === 'text')) {
+      ops.push({
+        type: 'connect',
+        from: { node: promptId, socket: 'out' },
+        to: { node: workflowId, socket: 'prompt' },
+      });
     }
+    // 4. Wire each pass the file reads into its same-named input. Pass
+    //    nodes already exist on the job (precondition verified).
     const jobBinding = job?.inputs['pass-input'];
     const jobPassRefs =
       jobBinding === undefined ? [] : Array.isArray(jobBinding) ? jobBinding : [jobBinding];
@@ -270,20 +293,20 @@ export const addAIPassMutator: MutatorDefinition<AddAIPassSpec> = {
       DepthPass: 'depth',
       NormalPass: 'normal',
     };
-    for (const requiredKind of preset.requiredPasses) {
+    for (const kind of passInputsOf(sockets)) {
       const ref = jobPassRefs.find((r) => {
         const passNode = state.nodes[r.node];
-        return passNode && kindByType[passNode.type] === requiredKind;
+        return passNode && kindByType[passNode.type] === kind;
       });
       if (!ref) {
         throw new Error(
-          `addAIPass.build: required pass "${requiredKind}" not found on RenderJob "${spec.jobId}" — preconditions should have rejected.`,
+          `addAIPass.build: pass "${kind}" not found on RenderJob "${spec.jobId}" — preconditions should have rejected.`,
         );
       }
       ops.push({
         type: 'connect',
         from: { node: ref.node, socket: 'out' },
-        to: { node: workflowId, socket: 'pass-input' },
+        to: { node: workflowId, socket: kind },
       });
     }
     // 5. Wire time → workflow.time.

@@ -172,7 +172,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   ColorCorrect:
     '[effect] brightness=(unrouted) contrast=(unrouted) saturation=(unrouted) muted=(unrouted)',
   ComfyUIWorkflow:
-    '[render] presetId=render graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
+    '[render] graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
   Composition:
     '[layout] name=layout width=(unrouted) height=(unrouted) fps=(unrouted) durationFrames=(unrouted) background=(unrouted)',
   CurveData: '[curve] points=curve closed=curve resolution=curve',
@@ -499,4 +499,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
 // #1720 adds `ModelGenerate`, its twelve params unrouted (the Library's Generate form mints them):
 //   types 103 + 1 = 104 · routed 147 · unrouted 271 + 12 = 283
-export const GOLDEN_TOTALS = { types: 104, routed: 147, unrouted: 283 } as const;
+// #1715 removes ComfyUIWorkflow's `presetId` (routed to render): the node runs its workflow file.
+//   types 104 · routed 147 - 1 = 146 · unrouted 283
+export const GOLDEN_TOTALS = { types: 104, routed: 146, unrouted: 283 } as const;

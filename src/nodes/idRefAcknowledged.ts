@@ -313,8 +313,7 @@ export const SHARED_WIRES: readonly string[] = [
   'ClipSelect.clips',
   'Collection.collections',
   'Collection.members',
-  'ComfyUIWorkflow.pass-input',
-  'ComfyUIWorkflow.prompt',
+  // #1715 — every other input of a workflow node comes from its file and owns nothing.
   'ComfyUIWorkflow.time',
   'Composition.layers',
   'DepthPass.camera',

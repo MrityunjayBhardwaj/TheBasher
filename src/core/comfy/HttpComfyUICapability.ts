@@ -4,8 +4,8 @@
 //   1. Upload each input image via POST /upload/image. Each image lands at
 //      `${name}.png` inside ComfyUI's input folder.
 //   2. POST /prompt with the workflow JSON. The caller's workflow JSON
-//      already references the uploaded images by `${name}.png` — the preset
-//      compiler in src/agent/strategy/presets/ owns substitution.
+//      already references the uploaded images by `${name}.png` — the frame
+//      compiler (src/render/compileWorkflowFrame.ts) owns substitution.
 //   3. Poll /history/{prompt_id} until the prompt's outputs land.
 //   4. Fetch the output image via /view?filename=...&type=output.
 //   5. Return { jobId, frame }.

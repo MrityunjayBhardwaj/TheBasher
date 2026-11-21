@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  STYLIZED_REALISM_META,
+  STYLIZED_REALISM_WORKFLOW,
+} from '../../core/comfy/builtinWorkflows';
 import { StubComfyUICapability, type ComfyInputs, type ComfyWorkflowJson } from '../../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
@@ -74,7 +78,7 @@ function seedWorkflowDag(
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: opts.frameStart ?? 0,
       frameEnd: opts.frameEnd ?? 2,
       lastGoodFrame: opts.lastGoodFrame ?? -1,
@@ -89,7 +93,7 @@ function seedWorkflowDag(
   s = applyOp(s, {
     type: 'connect',
     from: { node: 'beauty', socket: 'out' },
-    to: { node: 'cw', socket: 'pass-input' },
+    to: { node: 'cw', socket: 'beauty' },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -100,17 +104,13 @@ function seedWorkflowDag(
   useDagStore.getState().hydrate(s);
 }
 
-const stubCompiler: CompileWorkflowFn = async ({ presetId, prompt, passes, frame }) => {
-  const workflowJson: ComfyWorkflowJson = {
-    preset: presetId,
-    prompt: prompt.text,
-    frame,
-    passKinds: passes.map((p) => p.passKind),
-  };
+const stubCompiler: CompileWorkflowFn = async ({ apiJson, inputs, frame }) => {
+  const workflowJson: ComfyWorkflowJson = { ...apiJson, _frame: { frame } };
   const images: Record<string, Uint8Array> = {};
-  for (const p of passes) images[p.passKind] = new TextEncoder().encode(p.sourceHash);
-  const inputs: ComfyInputs = { images, scalars: { frame } };
-  return { workflowJson, inputs };
+  const beauty = inputs.beauty as { sourceHash?: string } | undefined;
+  if (beauty) images.beauty = new TextEncoder().encode(beauty.sourceHash ?? '');
+  const compiled: ComfyInputs = { images, scalars: { frame } };
+  return { workflowJson, inputs: compiled };
 };
 
 describe('runWorkflow (Wave B2 — caller seam)', () => {
@@ -152,8 +152,8 @@ describe('runWorkflow (Wave B2 — caller seam)', () => {
     seedWorkflowDag({ frameStart: 0, frameEnd: 4 });
     const cap = new StubComfyUICapability();
     let count = 0;
-    const wrapped = cap.submit.bind(cap);
-    cap.submit = async (...args) => {
+    const wrapped = cap.submitBatch.bind(cap);
+    cap.submitBatch = async (...args) => {
       count += 1;
       if (count === 3) throw new Error('comfy down');
       return wrapped(...args);
@@ -180,8 +180,8 @@ describe('runWorkflow (Wave B2 — caller seam)', () => {
     seedWorkflowDag({ frameStart: 0, frameEnd: 4 });
     const cap1 = new StubComfyUICapability();
     let count = 0;
-    const wrapped1 = cap1.submit.bind(cap1);
-    cap1.submit = async (...args) => {
+    const wrapped1 = cap1.submitBatch.bind(cap1);
+    cap1.submitBatch = async (...args) => {
       count += 1;
       if (count === 3) throw new Error('crash');
       return wrapped1(...args);
@@ -218,7 +218,7 @@ describe('runWorkflow (Wave B2 — caller seam)', () => {
       nodeId: 'cw2',
       nodeType: 'ComfyUIWorkflow',
       params: {
-        presetId: 'stylizedRealism',
+        graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
         frameStart: 0,
         frameEnd: 1,
         lastGoodFrame: -1,
@@ -233,7 +233,7 @@ describe('runWorkflow (Wave B2 — caller seam)', () => {
     s = applyOp(s, {
       type: 'connect',
       from: { node: 'beauty', socket: 'out' },
-      to: { node: 'cw2', socket: 'pass-input' },
+      to: { node: 'cw2', socket: 'beauty' },
     }).next;
     s = applyOp(s, {
       type: 'connect',

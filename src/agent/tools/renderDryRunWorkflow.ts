@@ -14,7 +14,7 @@
 
 import { z } from 'zod';
 import { dryRun, type DryRunReport } from '../../render/dryRun';
-import { stylizedRealismPreset } from '../strategy/presets/stylizedRealism';
+import { compileWorkflowFrame } from '../../render/compileWorkflowFrame';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 
 const DryRunWorkflowSchema = z.object({
@@ -69,10 +69,10 @@ export const renderDryRunWorkflowTool: ToolDefinition<DryRunWorkflowArgs> = {
         text: 'Error: no storage capability configured for cost preview.',
       };
     }
-    // v0.5: only the stylizedRealism preset is registered, so we bind
-    // its compile factory directly. v0.6 dispatches over presetId via
-    // the preset registry.
-    const compileWorkflow = stylizedRealismPreset.compile({ storage: ctx.storage });
+    // #1715 — any workflow file, compiled from its Basher markers (the same compiler the
+    // inspector's estimate uses). Keyed inputs are read by the app's runner; the agent's probe
+    // uses each marker's default, as an unkeyed run does.
+    const compileWorkflow = compileWorkflowFrame({ storage: ctx.storage });
     let report: DryRunReport;
     try {
       report = await dryRun(args.workflowNodeId, dagState, {

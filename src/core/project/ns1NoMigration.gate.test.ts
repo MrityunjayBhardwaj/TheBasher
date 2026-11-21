@@ -165,7 +165,9 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1856 is the TWENTY-FIRST: a lens saved past v26 before the v26 step learned to strip its
     // `lookAt`, `roll` and `zoom` loses them (formatMigrations[29]). The v26 step never runs again
     // on such a file, so only a later pass can finish it.
-    const MIGRATIONS_SINCE_FREEZE = 21; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824, #1812, #1856
+    // #1715 is the TWENTY-SECOND: the ComfyUI preset enum is gone, and a preset node holds the
+    // preset's workflow file (formatMigrations[30]).
+    const MIGRATIONS_SINCE_FREEZE = 22; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824, #1812, #1856, #1715
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

@@ -875,7 +875,7 @@ export function boot(): Promise<void> {
       });
       // P5 Wave C5 — minimal OPFS write seam so the CostPreview spec can
       // pre-populate fake raw-pass bytes (beauty/depth/normal) at the
-      // D-04 paths the stylizedRealism preset reads. Production agents
+      // D-04 paths the frame compiler reads (#1715). Production agents
       // never call this — runRenderJob produces the real bytes.
       w.__basher_writeOpfsBytes = async (path: string, bytes: Uint8Array) => {
         const storage = await getStorage();
