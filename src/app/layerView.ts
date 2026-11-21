@@ -26,6 +26,7 @@
 //      src/app/resolveEvaluatedParam.ts; src/app/stackTree.ts.
 
 import type { z } from 'zod';
+import type { EvaluatorCache } from '../core/dag/evaluator';
 import { getNodeType, mainInputOfType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { templatesOf } from '../core/dag/templates';
@@ -111,8 +112,18 @@ export function nameOf(state: DagState, nodeId: string): string {
 /**
  * The read model for one stack row, from the declared contract + the render-identical resolver.
  * `ctx` is the playhead the folded values are read at; a static default reads scene time zero.
+ * `cache` is the warm evaluator cache the influence read forwards (the shared UI cache, #1389):
+ * `StackPanel` follows the playhead (`usePlayheadFor`), so a constrained object's stack re-reads
+ * each blended row's folded influence per scrub tick — the same playhead-following read
+ * `useAnimatableField` threads `uiEvaluatorCache` through. Omitted (pure tests, the static default)
+ * it is a cold walk, as before.
  */
-export function layerView(state: DagState, row: StackNodeRow, ctx: EvalCtx = STATIC_CTX): RowView {
+export function layerView(
+  state: DagState,
+  row: StackNodeRow,
+  ctx: EvalCtx = STATIC_CTX,
+  cache?: EvaluatorCache,
+): RowView {
   const node = state.nodes[row.nodeId];
   const def = getNodeType(row.nodeType);
   const params = (node?.params ?? {}) as Record<string, unknown>;
@@ -141,7 +152,7 @@ export function layerView(state: DagState, row: StackNodeRow, ctx: EvalCtx = STA
   let influence: string | null;
   if (!row.blend) influence = null;
   else if (factor && holder?.type === 'Value') {
-    const resolved = resolveEvaluatedParam(state, factor.node, 'value', ctx);
+    const resolved = resolveEvaluatedParam(state, factor.node, 'value', ctx, cache);
     const value = resolved ? resolved.value : (holder.params as { value?: unknown }).value;
     influence = formatValue(value);
   } else influence = 'wired';

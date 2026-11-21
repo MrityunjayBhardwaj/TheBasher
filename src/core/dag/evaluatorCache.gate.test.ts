@@ -468,6 +468,10 @@ const TAKERS: string[] = [
   'resolveConstraintRotation@src/app/nodeConstraints.ts',
   'resolveEvaluatedMesh@src/app/resolveEvaluatedMesh.ts',
   'resolveEvaluatedParam@src/app/resolveEvaluatedParam.ts',
+  // #1894 S1 — the stack row's folded influence read; `StackPanel` follows the playhead, so it
+  // hands this the shared UI cache (#1389), the way `useAnimatableField` does, and the forward
+  // below keeps the walk off the cold-origin census.
+  'layerView@src/app/layerView.ts',
   'resolveEvaluatedTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveFollowedWorldPosition@src/app/nodeConstraints.ts',
   'resolveOwnTransform@src/app/resolveEvaluatedTransform.ts',

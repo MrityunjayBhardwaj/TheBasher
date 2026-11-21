@@ -156,6 +156,11 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/gltfNodeWorld.ts': authored('folds-its-own-overlays'),
   'src/app/resolveEvaluatedParam.ts': authored('produces-an-overlay'),
   'src/app/resolveEvaluatedTransform.ts': authored('produces-an-overlay'),
+  // #1894 S1 — the stack row's read model imports only the `EvaluatorCache` type: it hands the
+  // authored state and StackPanel's shared UI cache to `resolveEvaluatedParam` (its row above), so
+  // a keyed or driven influence folds through that one resolver. Not a new road — the read already
+  // went through it; S1 threads the cache so a per-scrub re-read stays warm (#1389).
+  'src/app/layerView.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/transformChannelSource.ts': authored('produces-an-overlay'),
   'src/app/paramDrivers.ts': authored('produces-an-overlay'),
   'src/app/statefulOps.ts': authored('produces-an-overlay'),
@@ -443,7 +448,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // fixed-ctx).
     // 77 → 78 at #1950: a render pass's camera on screen (declared above as
     // delegates-to-a-folding-resolver).
-    expect(evaluatorConsumers()).toHaveLength(78); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 78 → 79 at #1894 S1, not a new road: the stack row's read model threads StackPanel's shared
+    // UI cache into `resolveEvaluatedParam` it already called, so a per-scrub influence re-read
+    // stays warm (declared above as delegates-to-a-folding-resolver). TYPE-only import.
+    expect(evaluatorConsumers()).toHaveLength(79); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

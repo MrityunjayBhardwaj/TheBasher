@@ -36,6 +36,7 @@ import {
   type Offer,
 } from './stackPanelModel';
 import { stackOf, type StackGroup, type StackNodeRow, type StackRow } from './stackTree';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const BTN =
   'rounded border border-border px-1.5 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg';
@@ -274,7 +275,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
     named: string | null,
   ): ReactNode {
     const editable = named === null;
-    const view = rowView(state, row, ctx);
+    const view = rowView(state, row, ctx, uiEvaluatorCache);
     const active = row.nodeId === selectedNodeId;
     const empty = emptySockets(state, row);
     const inside = row.template ? isOpen(insideKey(row), false) : false;
