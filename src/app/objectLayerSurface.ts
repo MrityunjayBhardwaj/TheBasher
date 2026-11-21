@@ -40,10 +40,11 @@
 // constraints and pose CONSUME those params downstream. The structural order below is the tail of
 // that pipeline; the value lanes are the head.
 //
-// #1928 BOUNDARY (not handled here): T0b enumerates ALL contributors, including those on material
-// params / glTF-child transforms whose render road is base-only today. The honest caveat that a
-// material/glTF row renders base only is T1's job; nothing MOUNTS this surface between T0b and T1
-// (T2 does), so no read≠render row ships in the interim.
+// #1928 BOUNDARY (T1): a value row's RENDER road may apply only the BASE value, not the folded one.
+// Each row carries `rendersBaseOnly` — material params (`material.*`) are flagged true, so a surface
+// presents them with that caveat and never as a plain row (the one silent read≠render class this arc
+// kills). glTF-child TRS is a NAMED, deferred gap (no cheap imported-child predicate — see
+// `rendersBaseOnly`). Flips to all-false when #1928 wires those render roads to fold.
 //
 // read == render, cache-forwarded: the value adapters call `resolveEvaluatedParam` with the SAME
 // forwarded cache (`cache`), opening no cold eval origin of their own (#1386) — the surface stays a
@@ -69,6 +70,15 @@ import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { stackOf, type StackNodeRow, type StackRow } from './stackTree';
 import { stripTargetsOf } from './stripTargetIndex';
 
+/**
+ * A surface row: a `RowView` plus whether this lane's RENDER road applies only the BASE value, not
+ * the folded one (#1928). `true` ⇒ the row reads right but renders base-only today, so a surface
+ * MUST present it with that caveat, never as a plain row — the one silent read≠render class this
+ * whole arc exists to kill. Structural rows (modifier/constraint/pose) render folded, so they are
+ * always `false`; only value-lane rows on a render-incomplete param carry `true`.
+ */
+export type SurfaceRow = RowView & { readonly rendersBaseOnly: boolean };
+
 /** One lane's worth of rows, with the group label and its count. */
 export interface LaneGroup {
   /**
@@ -77,7 +87,7 @@ export interface LaneGroup {
    * `modifier`, `constraint`, `pose`.
    */
   readonly lane: string;
-  readonly rows: readonly RowView[];
+  readonly rows: readonly SurfaceRow[];
   readonly count: number;
 }
 
@@ -104,16 +114,32 @@ const STRUCTURAL_LANES: readonly { readonly lane: SocketTypeName; readonly group
  *  defaults to. `resolveEvaluatedParam` needs a ctx; this supplies it for the pure, cache-less read. */
 const STATIC_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
+/**
+ * Whether the RENDER road for `paramPath` applies only the BASE value, not the folded one (#1928).
+ * Two param kinds fold on the READ side yet are not applied on the render side today:
+ *   - material params (`material.*`) — the applied material (`resolveMeshMaterial`) reads the base;
+ *   - glTF-child transforms — DEFERRED, ON PURPOSE. There is no cheap runtime predicate for "this
+ *     node is an imported glTF child", and a loose detector would MISLABEL honest rows (worse than a
+ *     named gap). So this covers only the material case; a glTF-child TRS row is a KNOWN, documented
+ *     gap until a child detector lands, guarded by a test that reds the day it becomes detectable
+ *     (V208 — a decision you cannot take yet is a test that reds when it becomes takeable).
+ * Flips to all-false when #1928 wires these render roads to fold.
+ */
+function rendersBaseOnly(paramPath: string): boolean {
+  return paramPath.startsWith('material.');
+}
+
 /** One uniform value-lane row: its contributor's label, the lane word, the folded param value read
- *  == render, and the contributor's mute. `tag` carries the param path the lane writes; a value row
- *  is not a structural stack node, so it exposes/overrides nothing and holds no pose vocabulary. */
+ *  == render, the contributor's mute, and whether its render road is base-only (#1928). `tag` carries
+ *  the param path the lane writes; a value row is not a structural stack node, so it exposes/overrides
+ *  nothing and holds no pose vocabulary. */
 function valueRow(
   lane: string,
   name: string,
   paramPath: string,
   muted: boolean,
   influence: string | null,
-): RowView {
+): SurfaceRow {
   return {
     name,
     type: lane,
@@ -123,6 +149,7 @@ function valueRow(
     influence,
     muted,
     pose: null,
+    rendersBaseOnly: rendersBaseOnly(paramPath),
   };
 }
 
@@ -220,9 +247,11 @@ export function objectLayerSurface(
   // One group per structural lane the object stands on, in the fixed pipeline order. A lane with no
   // rows is omitted (no empty group).
   for (const { lane, group } of STRUCTURAL_LANES) {
-    const laneRows = rows
+    const laneRows: SurfaceRow[] = rows
       .filter((row) => rowLaneOfType(row.nodeType) === lane)
-      .map((row) => layerView(state, row, ctx, cache));
+      // Structural lanes render the FOLDED value (modifiers/constraints/pose all apply), so never
+      // base-only (#1928 is a value-lane concern). `rendersBaseOnly: false`, not a guess.
+      .map((row) => ({ ...layerView(state, row, ctx, cache), rendersBaseOnly: false }));
     if (laneRows.length > 0) {
       groups.push({ lane: group, rows: laneRows, count: laneRows.length });
     }

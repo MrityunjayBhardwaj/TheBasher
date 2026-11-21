@@ -433,3 +433,63 @@ describe('G-cache — the value read forwards the cache: warm == cold, no cold o
     expect(warm!.rows[0].influence).toBe('0.5');
   });
 });
+
+// ── T1 — the #1928 honesty boundary: a value row flags when its render road is base-only ──
+
+/** Default box + a channel on a NON-material transform param (`position`): the transform render
+ *  road DOES fold, so this row must NOT be flagged base-only. */
+function boxWithTransformChannel(): DagState {
+  return applyOps(buildDefaultDagState(), [
+    {
+      type: 'addNode',
+      nodeId: 'ch_pos',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'posx',
+        target: BOX_ID,
+        paramPath: 'position',
+        keyframes: [{ time: 0, value: 0, easing: 'linear' }],
+      },
+    },
+  ]).next;
+}
+
+describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its render road is base-only', () => {
+  it('a material.* channel row is flagged rendersBaseOnly (material renders base only, #1928)', () => {
+    const channel = groupNamed(
+      objectLayerSurface(boxWithChannel(), BOX_ID, ctxAt(0.5)).groups,
+      'channel',
+    );
+    expect(channel!.rows[0].tag).toBe('material.base.metalness');
+    expect(channel!.rows[0].rendersBaseOnly).toBe(true);
+  });
+
+  it('a non-material (transform) channel row is NOT flagged — the transform road folds', () => {
+    const channel = groupNamed(
+      objectLayerSurface(boxWithTransformChannel(), BOX_ID, ctxAt(0)).groups,
+      'channel',
+    );
+    expect(channel).toBeDefined();
+    expect(channel!.rows[0].tag).toBe('position');
+    expect(channel!.rows[0].rendersBaseOnly).toBe(false);
+  });
+  // The two cases above together MUTATION-PROVE the predicate: a constant-true reds the transform
+  // case, a constant-false reds the material case. Neither can pass a gamed predicate.
+
+  it('structural rows (modifier/constraint/pose) are never base-only — they render folded', () => {
+    const { state, objectId } = crateWithPose();
+    const structural = objectLayerSurface(state, objectId).groups.filter((g) =>
+      ['modifier', 'constraint', 'pose'].includes(g.lane),
+    );
+    expect(structural.length).toBeGreaterThan(0); // non-vacuous
+    for (const g of structural) for (const row of g.rows) expect(row.rendersBaseOnly).toBe(false);
+  });
+
+  // glTF-child TRS renders base-only too (#1928), but there is no cheap runtime predicate for an
+  // imported glTF child, and a loose detector would mislabel honest rows. V208: this is the
+  // decision we cannot take yet — when a child predicate lands, add the glTF-child arm to
+  // `rendersBaseOnly` and make this a live assertion.
+  it.todo(
+    'flags a glTF-child TRS row rendersBaseOnly once an imported-child predicate exists (#1928)',
+  );
+});
