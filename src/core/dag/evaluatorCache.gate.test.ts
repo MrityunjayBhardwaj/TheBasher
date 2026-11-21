@@ -327,6 +327,8 @@ const TAKERS: string[] = [
   'motionPathScaleFit@src/app/asset/fitMotionPathScale.ts',
   'retargetRatios@src/app/asset/fitMotionPathScale.ts',
   'worldUnitsOf@src/app/asset/fitMotionPathScale.ts',
+  // #1721 — the NLA pane's generated-run strips; the pane hands it the shared UI cache.
+  'generatedRuns@src/nodes/motionGenerateRuns.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   // #1556 — the Spreadsheet's read of the selected mesh; the view hands it the shared UI cache.
   'attributeSheetOf@src/app/attributeSheet.ts',

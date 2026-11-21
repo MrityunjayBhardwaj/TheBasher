@@ -218,6 +218,11 @@ const CONSUMERS: Record<string, Decision> = {
   // graph depend on where the scrubber happened to be, so two cooks of an
   // unedited project would disagree.
   'src/app/asset/bakeGeneratedClip.ts': authored('fixed-ctx-by-design'),
+  // #1721 — a generated run's strip asks the same question as the cook above, per run: is the
+  // clip's baked hash behind the producer's request (`clipBakeStates`), and does the path still
+  // fit the character (`motionPathScaleFit`). AUTHORED and fixed-ctx for the same reason: whether
+  // a run is stale is a property of the generation, not of where the playhead is.
+  'src/nodes/motionGenerateRuns.ts': authored('fixed-ctx-by-design'),
   // #935 — the node road's placement half reads the landed generation's world
   // offset off the producer. AUTHORED and fixed-ctx for the third time in this
   // chain and for the third instance of one reason: where a character stands at
@@ -405,7 +410,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // keyed settings at its cook, declared above.
     // 69 → 70 at #1716, a new road: the node view's frame-pick marker (declared above as
     // fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(70); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 70 → 71 at #1721, a new road: the NLA pane's generated-run strips (declared above as
+    // fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(71); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
