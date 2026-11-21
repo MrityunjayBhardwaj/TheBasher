@@ -153,3 +153,96 @@ test('double-click looks through; Esc and an orbit drag come back to the free vi
     1,
   );
 });
+
+interface FrustumStyle {
+  color: string;
+  opacity: number;
+}
+interface LivePath {
+  cameraId: string;
+  points: [number, number, number][];
+  dashed: boolean;
+  color: string;
+  chrome: boolean;
+}
+
+/** Key `CAM3`'s position across its shot (2 s → 4 s), so it has a path to draw. */
+async function animateCam3(page: Page) {
+  await page.evaluate((target) => {
+    (window as unknown as W).__basher_dag.getState().dispatch({
+      type: 'addNode',
+      nodeId: 'p1708_cam3_pos',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'position',
+        target,
+        paramPath: 'position',
+        keyframes: [
+          { time: 2, value: [36, 2, 8], easing: 'linear' },
+          { time: 4, value: [44, 2, 8], easing: 'linear' },
+        ],
+      },
+    });
+  }, CAM3);
+}
+
+const frustumStyles = (page: Page) =>
+  page.evaluate(async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+    return (window as unknown as { __basher_frustum_style?: Record<string, FrustumStyle> })
+      .__basher_frustum_style!;
+  });
+
+const livePath = (page: Page) =>
+  page.evaluate(async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+    return (
+      (window as unknown as { __basher_live_camera_path?: LivePath | null })
+        .__basher_live_camera_path ?? null
+    );
+  });
+
+test('cameras draw in their shot colour; the live one is solid with its path dashed behind it', async ({
+  page,
+}) => {
+  await boot(page);
+  await animateCam3(page);
+  // Palette order is the order cameras first come on screen: seed camera, CAM3, CAM2.
+  const BLUE = '4ea1ff';
+  const AMBER = 'e0a940';
+  const VIOLET = 'a78bfa';
+
+  let s = await frustumStyles(page);
+  console.log(`p1708 frames at 0: ${JSON.stringify(s)}`);
+  expect(s.n_camera.color).toBe(BLUE);
+  expect(s[CAM3].color).toBe(AMBER);
+  expect(s[CAM2].color).toBe(VIOLET);
+  expect(s.n_camera.opacity, 'the live camera is solid').toBe(1);
+  expect(s[CAM3].opacity, 'a camera off screen is dimmer').toBeLessThan(1);
+  // The seed camera does not move, so it has no path to draw.
+  expect(await livePath(page)).toBeNull();
+
+  await setPlayhead(page, 3);
+  s = await frustumStyles(page);
+  console.log(`p1708 frames at 3: ${JSON.stringify(s)}`);
+  expect(s[CAM3].opacity).toBe(1);
+  expect(s.n_camera.opacity).toBeLessThan(1);
+  const path = (await livePath(page))!;
+  console.log(
+    `p1708 path: ${path.cameraId} ${path.points.length} points ${JSON.stringify(path.points[0])} → ${JSON.stringify(path.points.at(-1))} dashed=${path.dashed} chrome=${path.chrome}`,
+  );
+  expect(path.cameraId).toBe(CAM3);
+  expect(path.dashed).toBe(true);
+  expect(path.color).toBe(AMBER);
+  expect(path.chrome, 'the path is editor chrome: never in a render').toBe(true);
+  expect(path.points.length).toBeGreaterThan(8);
+  expect(path.points[0][0]).toBeCloseTo(36, 3);
+  expect(path.points.at(-1)![0]).toBeCloseTo(44, 1);
+
+  // Selected keeps its shot colour.
+  await page.getByTestId('shot-select-2').click();
+  s = await frustumStyles(page);
+  expect(s[CAM2].color).toBe(VIOLET);
+  // The Shots list wears the same colours.
+  await expect(page.getByTestId('shot-color-1')).toHaveAttribute('data-color', `#${AMBER}`);
+});

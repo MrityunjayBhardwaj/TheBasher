@@ -96,7 +96,7 @@ import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
-import { CameraHelper } from './CameraHelpers';
+import { CameraHelper, LiveCameraPath } from './CameraHelpers';
 import { ArmatureHelper } from './ArmatureHelper';
 import {
   collectReferenceRigs,
@@ -662,6 +662,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
             })
           : null}
+        {/* #1708 — the live camera's path over its shot, dashed behind it. */}
+        {showLightHelpers ? <LiveCameraPath /> : null}
         {/* #972 — octahedral bones for every rig in the scene. A camera gets a
           frustum and a light gets a gizmo; until now a rig got nothing, so a
           character animating wrongly and a character not animating at all

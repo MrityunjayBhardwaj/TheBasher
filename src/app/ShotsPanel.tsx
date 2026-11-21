@@ -31,6 +31,7 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { sceneEndSeconds } from './sceneRange';
 import { shotsOf } from './shots';
+import { shotCameraColors } from './shotColors';
 import { buildCutOps, buildRemoveCutOps, buildSetShotCameraOps } from './shotOps';
 import { buildShotSpeedOps, speedOver } from './shotSpeed';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
@@ -48,6 +49,8 @@ export function ShotsPanel(): ReactNode {
   const end = sceneEndSeconds(state);
   const view = useMemo(() => shotsOf(state, end), [state, end]);
   const cameras = useMemo(() => enumerateCameraNodeIds(state), [state]);
+  // #1708 — each shot wears its camera's colour, the one its frame draws in the viewport.
+  const colors = useMemo(() => shotCameraColors(view.shots), [view]);
   const nameOf = (id: string | null) => (id ? nodeDisplayName(state.nodes, id) : 'No camera');
   const current = view.shots.find((s) => playhead >= s.start && playhead < s.end) ?? null;
   // The camera a new cut goes to: the first one that is not on screen at the playhead.
@@ -112,6 +115,13 @@ export function ShotsPanel(): ReactNode {
                 title="Select this shot's camera · Double-click to look through it"
                 className="flex items-baseline gap-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
+                <span
+                  data-testid={`shot-color-${shot.index}`}
+                  data-color={colors.get(shot.cameraId ?? '') ?? undefined}
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 self-center rounded-full"
+                  style={{ background: colors.get(shot.cameraId ?? '') ?? 'transparent' }}
+                />
                 <span className="font-medium text-fg">Shot {shot.index + 1}</span>
                 <span className="font-mono text-[11px] text-fg-dim">
                   {secs(shot.start)} – {secs(shot.end)}
