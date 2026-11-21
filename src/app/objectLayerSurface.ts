@@ -29,7 +29,7 @@
 // THE VALUE LANES (T0b, #1940): channel / strip / driver are NOT nodes in the `stackOf` walk —
 // they are folds inside `resolveEvaluatedParam` (`:98-156`, base → channels → strips → drivers →
 // mute, render-identical), each enumerated by its OWN function off the object id, not by walking
-// edges. So they need a per-lane ADAPTER rather than `layerView`: `directChannelValuesForTarget`,
+// edges. So they need a per-lane ADAPTER rather than `layerView`: `channelEntriesFromNodes`,
 // `stripChannelValuesForTarget` and `driverBandsForTarget` each yield that lane's contributors, and
 // the adapter maps each to the SAME `RowView` the structural lanes use. A value row's displayed
 // amount is the FOLDED param value — `resolveEvaluatedParam(state, objectId, paramPath, ctx, cache)`,
@@ -55,7 +55,7 @@
 //      (`resolveStackObject`); src/app/operatorChain.ts (`rowLaneOfType`);
 //      src/app/resolveEvaluatedParam.ts (the value fold); src/app/driverStack.ts
 //      (`driverBandsForTarget`); src/app/layeredChannels.ts (`stripChannelValuesForTarget`);
-//      src/app/nodeChannels.ts (`directChannelValuesForTarget`).
+//      src/app/nodeChannels.ts (`channelEntriesFromNodes` / `directChannelNodesForTarget`).
 
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
@@ -63,7 +63,7 @@ import type { EvalCtx, SocketTypeName } from '../core/dag/types';
 import { driverBandsForTarget } from './driverStack';
 import { formatValue, layerView, type RowView } from './layerView';
 import { stripChannelValuesForTarget } from './layeredChannels';
-import { directChannelValuesForTarget } from './nodeChannels';
+import { channelEntriesFromNodes, directChannelNodesForTarget } from './nodeChannels';
 import { rowLaneOfType } from './operatorChain';
 import { resolveStackObject } from './operatorStack';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
@@ -77,7 +77,12 @@ import { stripTargetsOf } from './stripTargetIndex';
  * whole arc exists to kill. Structural rows (modifier/constraint/pose) render folded, so they are
  * always `false`; only value-lane rows on a render-incomplete param carry `true`.
  */
-export type SurfaceRow = RowView & { readonly rendersBaseOnly: boolean };
+export type SurfaceRow = RowView & {
+  readonly rendersBaseOnly: boolean;
+  /** The node the row stands for — the modifier/constraint/pose/driver/channel node — so a surface
+   *  can route a click to it. Null when the contributor is synthetic (a strip has no own node). */
+  readonly nodeId: string | null;
+};
 
 /** One lane's worth of rows, with the group label and its count. */
 export interface LaneGroup {
@@ -91,8 +96,10 @@ export interface LaneGroup {
   readonly count: number;
 }
 
-/** The grouped read-only surface for one object: its structural lanes, in pipeline order. */
+/** The grouped read-only surface for one object: its value + structural lanes, in pipeline order. */
 export interface ObjectSurface {
+  /** The Object `nodeId` resolved to — what a row pick reports as its `objectId`. */
+  readonly objectId: string;
   readonly groups: readonly LaneGroup[];
 }
 
@@ -139,6 +146,7 @@ function valueRow(
   paramPath: string,
   muted: boolean,
   influence: string | null,
+  nodeId: string | null,
 ): SurfaceRow {
   return {
     name,
@@ -150,6 +158,7 @@ function valueRow(
     muted,
     pose: null,
     rendersBaseOnly: rendersBaseOnly(paramPath),
+    nodeId,
   };
 }
 
@@ -178,23 +187,27 @@ function valueLaneGroups(
   // (name, param path and mute read off `KeyframeChannelValue`, never an inline cast of raw params),
   // one row per channel. A channel with no keyframes contributes nothing, so it is no contributor.
   // Symmetric with the strip path below — both read the normalized value the fold consumes.
-  const channelRows = directChannelValuesForTarget(state.nodes, objectId).map((v) =>
-    valueRow('channel', v.name, v.paramPath, v.mute === true, folded(v.paramPath)),
+  const channelRows = channelEntriesFromNodes(
+    directChannelNodesForTarget(state.nodes, objectId),
+  ).map(({ node, value: v }) =>
+    valueRow('channel', v.name, v.paramPath, v.mute === true, folded(v.paramPath), node.id),
   );
 
   // strip — the synthetic channels a placed Strip emits (one per strip·param), the SAME enumerator
-  // the fold consumes; asked only of a node some strip targets (`stripTargetsOf`), else skipped.
+  // the fold consumes; asked only of a node some strip targets (`stripTargetsOf`), else skipped. The
+  // value is synthetic (no own node), so a strip row carries `nodeId: null` — the surface routes it
+  // by lane, not by node.
   const stripRows = stripTargetsOf(state.nodes).has(objectId)
     ? stripChannelValuesForTarget(state.nodes, objectId).map((v) =>
-        valueRow('strip', v.name, v.paramPath, v.mute === true, folded(v.paramPath)),
+        valueRow('strip', v.name, v.paramPath, v.mute === true, folded(v.paramPath), null),
       )
     : [];
 
-  // driver — every driven param BAND, one row per contributor (its driver source name), the SAME
-  // bottom → top order `DriverStackControls` renders.
+  // driver — every driven param BAND, one row per contributor (its driver source name + its own
+  // node), the SAME bottom → top order `DriverStackControls` renders.
   const driverRows = driverBandsForTarget(state, objectId).flatMap((band) =>
     band.entries.map((e) =>
-      valueRow('driver', e.label, band.paramPath, e.muted, folded(band.paramPath)),
+      valueRow('driver', e.label, band.paramPath, e.muted, folded(band.paramPath), e.nodeId),
     ),
   );
 
@@ -250,11 +263,16 @@ export function objectLayerSurface(
     const laneRows: SurfaceRow[] = rows
       .filter((row) => rowLaneOfType(row.nodeType) === lane)
       // Structural lanes render the FOLDED value (modifiers/constraints/pose all apply), so never
-      // base-only (#1928 is a value-lane concern). `rendersBaseOnly: false`, not a guess.
-      .map((row) => ({ ...layerView(state, row, ctx, cache), rendersBaseOnly: false }));
+      // base-only (#1928 is a value-lane concern). `rendersBaseOnly: false`, not a guess. The row
+      // carries its own node id (the stack node) so a surface can route a click to it.
+      .map((row) => ({
+        ...layerView(state, row, ctx, cache),
+        rendersBaseOnly: false,
+        nodeId: row.nodeId,
+      }));
     if (laneRows.length > 0) {
       groups.push({ lane: group, rows: laneRows, count: laneRows.length });
     }
   }
-  return { groups };
+  return { objectId, groups };
 }
