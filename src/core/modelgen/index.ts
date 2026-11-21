@@ -114,6 +114,13 @@ export {
 } from './TripoModelGenerationCapability';
 
 export {
+  estimateModelGenerationCost,
+  estimateTripoCredits,
+  MODEL_COST_ESTIMATE_SOURCE,
+  type ModelGenerationCostEstimate,
+} from './tripoPricing';
+
+export {
   TRIPO_PROXY_PREFIX,
   TRIPO_PROXY_ROUTES,
   rewriteTripoProxyPath,
