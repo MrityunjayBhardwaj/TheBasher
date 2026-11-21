@@ -117,6 +117,21 @@ export function workflowInputsAt(
   return out;
 }
 
+/**
+ * #1946 — the last frame a run of the workflow covers. A workflow whose outputs are all stills
+ * makes one picture (its evaluator leaves the time out of a still's hash, #1716), so it runs over
+ * its first frame alone; any frames output runs the whole range.
+ */
+export function runFrameEnd(
+  params: Partial<ComfyUIWorkflowParams>,
+  sockets: WorkflowSockets,
+): number {
+  const frameStart = params.frameStart ?? 0;
+  const frameEnd = params.frameEnd ?? 60;
+  const stillsOnly = sockets.outputs.length > 0 && sockets.outputs.every((o) => o.type === 'still');
+  return stillsOnly ? Math.min(frameStart, frameEnd) : frameEnd;
+}
+
 /** Where output `socket` of a workflow node writes its frames: the first output at the node's
  *  `outputPath` (what the stitch and the compositor read), every other one beside it. */
 export function outputPathOf(outputPath: string, sockets: WorkflowSockets, socket: string): string {
@@ -165,7 +180,7 @@ export async function dryRun(
   const { params, sockets, apiJson } = workflowNodeOf(state, workflowNodeId, 'dryRun');
   // V10 guard — defensive defaults for a project that lacks frameStart / frameEnd / outputPath.
   const frameStart = params.frameStart ?? 0;
-  const frameEnd = params.frameEnd ?? 60;
+  const frameEnd = runFrameEnd(params, sockets);
   const outputPath = params.outputPath ?? '';
   if (!outputPath) {
     throw new Error(

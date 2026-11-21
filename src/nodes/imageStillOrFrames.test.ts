@@ -255,7 +255,7 @@ describe('#1716 — frames into a still input pick the stated frame (the first)'
     });
   }
 
-  it('a still ComfyUI workflow, run by the ComfyUI runner, is handed frame 0 of the video every frame', async () => {
+  it('a still ComfyUI workflow, run by the ComfyUI runner, is run once and handed frame 0 of the video', async () => {
     let s = withVideo(emptyDagState());
     s = add(s, 'p', 'Prompt', { text: 'a cube', negative: '', tags: [] });
     s = add(s, 'still', 'ComfyUIWorkflow', {
@@ -267,7 +267,8 @@ describe('#1716 — frames into a still input pick the stated frame (the first)'
     s = wire(s, 'p', 'still', 'prompt');
     s = wire(s, 'video', 'still', 'picture');
     const seen = await runRecording(s, 'still', 'picture');
-    expect(seen.map((x) => x.frame)).toEqual([0, 1, 2, 3]);
+    // #1946 — a workflow that makes only stills is run once, at its first frame.
+    expect(seen.map((x) => x.frame)).toEqual([0]);
     for (const x of seen) {
       expect(x.passes[0].sourceHash, `at frame ${x.frame}`).toBe(clipFrame('clips/run.mp4', 0));
       expect(x.passes[0].extent).toEqual({ kind: 'still', pickedFrame: 0 });

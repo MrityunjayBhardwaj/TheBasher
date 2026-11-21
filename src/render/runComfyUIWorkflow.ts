@@ -37,6 +37,7 @@ import { WHOLE_WORKFLOW_OUTPUT } from '../nodes/ComfyUIWorkflow';
 import {
   framePath,
   outputPathOf,
+  runFrameEnd,
   workflowInputsAt,
   workflowNodeOf,
   type CompileWorkflowFn,
@@ -86,7 +87,8 @@ export async function runComfyUIWorkflow(
   // saved before P5 schema landed.
   const { params, sockets, apiJson } = workflowNodeOf(state, workflowNodeId, 'runComfyUIWorkflow');
   const frameStart = params.frameStart ?? 0;
-  const frameEnd = params.frameEnd ?? 60;
+  // #1946 — a still-only workflow runs over its first frame alone.
+  const frameEnd = runFrameEnd(params, sockets);
   const lastGoodFrame = params.lastGoodFrame ?? -1;
   const outputPath = params.outputPath ?? '';
   if (!outputPath) {
