@@ -16,6 +16,7 @@ import { StubComfyUICapability, type ComfyInputs } from '../core/comfy';
 import type { ComfyApiJson } from '../core/comfy/comfyGraph';
 import stillEdit from '../core/comfy/fixtures/workflow-still-edit.json';
 import video from '../core/comfy/fixtures/workflow-video.json';
+import lookalikes from '../core/comfy/fixtures/workflow-lookalikes.json';
 import {
   __resetRegistryForTests,
   applyOp,
@@ -37,6 +38,7 @@ import type { ImageValue } from './types';
 
 const STILL = stillEdit as unknown as ComfyApiJson;
 const VIDEO = video as unknown as ComfyApiJson;
+const LOOKALIKES = lookalikes as unknown as ComfyApiJson;
 const file = (apiJson: ComfyApiJson, name: string) => ({
   apiJson,
   meta: { name, importedAt: 'test', fps: 30, frames: 1 },
@@ -92,6 +94,20 @@ describe('#1715 — the ComfyUI workflow node’s sockets come from its file', (
   it('a node with no file has only its time input, and no output', () => {
     const s = apply(emptyDagState(), [add('n', 'ComfyUIWorkflow')]);
     expect(sockets(s, 'n')).toEqual({ inputs: ['time:Time'], outputs: [] });
+  });
+
+  it('a file with no Basher output is collected whole: one still `out`, read off no node', () => {
+    const s = apply(emptyDagState(), [
+      add('v', 'ComfyUIWorkflow', { graph: file(LOOKALIKES, 'vanilla') }),
+      add('m', 'ComfyUIWorkflow', { graph: file(STILL, 'still edit') }),
+    ]);
+    // The look-alikes give no input, and the whole workflow is one still output.
+    expect(sockets(s, 'v')).toEqual({ inputs: ['time:Time'], outputs: ['out'] });
+    expect((evaluate(s, 'v', { socket: 'out' }).value as ImageValue).extent).toEqual({
+      kind: 'still',
+    });
+    // A file that declares an output has only its declared ones.
+    expect(sockets(s, 'm').outputs).toEqual(['result']);
   });
 
   it('each output says what it makes: a still, or the node’s frame range', () => {

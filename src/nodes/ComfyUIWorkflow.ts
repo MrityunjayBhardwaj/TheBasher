@@ -115,11 +115,37 @@ export const ComfyUIWorkflowParams = z.object({
 });
 export type ComfyUIWorkflowParams = z.infer<typeof ComfyUIWorkflowParams>;
 
-/** #1715 — the sockets of a workflow node holding `params`: its file's Basher markers. The one
- *  door every reader comes through (the node's `instanceSockets`, the inspector, the agent). */
+/** #1715 — the node id of the WHOLE-WORKFLOW output: a file that declares no Basher output is
+ *  collected whole (every image it saves), as Basher has always read such a file
+ *  (`hasBasherExports` false → "all output images → one clip"). Not a node of the file. */
+export const WHOLE_WORKFLOW_OUTPUT = '*';
+
+const wholeWorkflow = new WeakMap<WorkflowSockets, WorkflowSockets>();
+
+/**
+ * #1715 — the sockets of a workflow node holding `params`: its file's Basher markers
+ * (`socketsOfWorkflow`). The one door every reader comes through (the node's `instanceSockets`,
+ * the runner, the inspector, the agent).
+ *
+ * One addition, and it is not read off the file: a file that declares NO Basher output still
+ * makes pictures (its SaveImage nodes), and Basher collects them whole, as it always has. That
+ * file's node has one still output `out` standing for the whole workflow, so a vanilla workflow
+ * keeps feeding a compositor layer. It goes the moment the file declares any output.
+ */
 export function workflowSocketsOf(params: unknown): WorkflowSockets {
   const graph = (params as Partial<ComfyUIWorkflowParams> | null | undefined)?.graph;
-  return socketsOfWorkflow((graph?.apiJson as ComfyApiJson | undefined) ?? null);
+  const apiJson = (graph?.apiJson as ComfyApiJson | undefined) ?? null;
+  const sockets = socketsOfWorkflow(apiJson);
+  if (!apiJson || sockets.outputs.length > 0) return sockets;
+  let whole = wholeWorkflow.get(sockets);
+  if (!whole) {
+    whole = {
+      ...sockets,
+      outputs: [{ socket: 'out', nodeId: WHOLE_WORKFLOW_OUTPUT, type: 'still' }],
+    };
+    wholeWorkflow.set(sockets, whole);
+  }
+  return whole;
 }
 
 /** #1716 — a frames output covers frameStart..frameEnd at the project's 30 fps (the cadence the

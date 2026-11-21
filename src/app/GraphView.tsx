@@ -56,13 +56,36 @@ function kindOf(type: string): keyof typeof KIND {
   return 'geo';
 }
 
-const nodeHeight = (n: GraphNode) => boxHeight(n.inputs.length, n.outputs.length);
+// #1715 — a node whose sockets come from its settings (it carries `outputTypes`) lists its
+// outputs as rows below its inputs, each with its type, so long labels never run into the title.
+const nodeHeight = (n: GraphNode) =>
+  n.outputTypes
+    ? boxHeight(n.inputs.length + n.outputs.length, 0)
+    : boxHeight(n.inputs.length, n.outputs.length);
 const inY = (n: GraphNode, socket: string, ref: boolean) =>
   HEAD + n.inputs.findIndex((r) => r.socket === socket && r.ref === ref) * ROW + ROW / 2 - 2;
-const outY = (n: GraphNode, socket: string) => 20 + n.outputs.indexOf(socket) * ROW;
+const outY = (n: GraphNode, socket: string) =>
+  n.outputTypes
+    ? HEAD + (n.inputs.length + n.outputs.indexOf(socket)) * ROW + ROW / 2 - 2
+    : 20 + n.outputs.indexOf(socket) * ROW;
 // Long names keep both ends: imported tiles often differ only in their last characters.
 const clip = (s: string, n: number) =>
   s.length > n ? s.slice(0, Math.ceil(n / 2) - 1) + '…' + s.slice(s.length - Math.floor(n / 2)) : s;
+
+/** #1715 — add a ComfyUI workflow node (no file yet) and select it, so the inspector offers
+ *  its file picker. One undo step. */
+function addComfyWorkflowNode(): void {
+  const dag = useDagStore.getState();
+  let n = 1;
+  while (dag.state.nodes[`comfy_workflow_${n}`]) n++;
+  const nodeId = `comfy_workflow_${n}`;
+  dag.dispatchAtomic(
+    [{ type: 'addNode', nodeId, nodeType: 'ComfyUIWorkflow', params: {} }],
+    'user',
+    'add ComfyUI workflow',
+  );
+  useSelectionStore.getState().select(nodeId);
+}
 
 export function GraphView(): ReactNode {
   const real = useDagStore((s) => s.state);
@@ -314,6 +337,16 @@ export function GraphView(): ReactNode {
             <option value="none">None</option>
           </select>
         </label>
+        {/* #1715 — a ComfyUI workflow node, here where its sockets are drawn; pick its file in
+            the inspector. */}
+        <button
+          type="button"
+          data-testid="graph-view-add-comfy-workflow"
+          onClick={addComfyWorkflowNode}
+          className="rounded border border-border px-2 py-0.5 text-fg hover:border-border-strong"
+        >
+          + ComfyUI workflow
+        </button>
         <button
           type="button"
           data-testid="graph-view-fit"
@@ -460,27 +493,40 @@ export function GraphView(): ReactNode {
                         data-graph-row={r.ref ? undefined : r.socket}
                         data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
                         data-graph-pick={r.picks ? `${r.socket}:${r.picks.join(',')}` : undefined}
+                        data-graph-socket-type={r.socketType}
+                        data-graph-broken={r.broken ? r.socket : undefined}
                       >
                         {/* #1716 — a still input fed a run of frames says which frame it takes. */}
                         {r.picks && (
                           <title>{`takes one frame of a run of frames: frame ${r.picks.join(', ')}`}</title>
                         )}
+                        {/* #1715 — a wire kept on a socket the node's file no longer has. */}
+                        {r.broken && (
+                          <title>{`"${r.socket}" is not in this workflow file any more: the wire is kept and not read`}</title>
+                        )}
                         <circle
                           cx={0}
                           cy={y}
                           r={4}
-                          fill={tint ?? (r.ref ? '#e3cf5b' : '#5b6478')}
-                          stroke="#111114"
+                          fill={
+                            r.broken
+                              ? '#e05252'
+                              : (tint ??
+                                (r.ref ? '#e3cf5b' : r.count === 0 ? '#1c1c22' : '#5b6478'))
+                          }
+                          stroke={r.count === 0 && !r.ref ? '#5b6478' : '#111114'}
                           strokeWidth={1.5}
                         />
                         <text
                           x={10}
                           y={y + 3.5}
                           fontSize={10.5}
-                          fill={tint ?? '#9b9ca6'}
+                          fill={r.broken ? '#e05252' : (tint ?? '#9b9ca6')}
                           fontFamily="ui-monospace, Menlo, monospace"
                         >
                           {r.count > 1 ? `${r.socket} ×${r.count}` : r.socket}
+                          {r.socketType && <tspan fill="#6b6c76">{` · ${r.socketType}`}</tspan>}
+                          {r.broken && <tspan>{' · not in file'}</tspan>}
                           {r.picks && (
                             <tspan fill="#f0c75e">{` · frame ${r.picks.join(', ')}`}</tspan>
                           )}
@@ -490,8 +536,13 @@ export function GraphView(): ReactNode {
                   })}
                   {n.outputs.map((s) => {
                     const y = outY(n, s);
+                    const outType = n.outputTypes?.[s];
                     return (
-                      <g key={`o:${s}`}>
+                      <g
+                        key={`o:${s}`}
+                        data-graph-output={n.outputTypes ? s : undefined}
+                        data-graph-socket-type={outType}
+                      >
                         <circle
                           cx={W}
                           cy={y}
@@ -500,7 +551,7 @@ export function GraphView(): ReactNode {
                           stroke="#111114"
                           strokeWidth={1.5}
                         />
-                        {s !== 'out' && (
+                        {(s !== 'out' || outType) && (
                           <text
                             x={W - 10}
                             y={y + 3.5}
@@ -509,6 +560,7 @@ export function GraphView(): ReactNode {
                             fill="#9b9ca6"
                             fontFamily="ui-monospace, Menlo, monospace"
                           >
+                            {outType && <tspan fill="#6b6c76">{`${outType} · `}</tspan>}
                             {s}
                           </text>
                         )}

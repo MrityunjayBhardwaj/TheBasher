@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sceneGraphOf } from './sceneGraph';
-import { nodeHeight, viewEdgesOf, viewRowsOf } from '../core/dag/layout';
+import { nodeHeight, ownSocketsHeight, viewEdgesOf, viewRowsOf } from '../core/dag/layout';
 import { buildDefaultDagState } from '../core/project/default';
 import { applyOps } from '../core/dag/ops';
 import { rawSpringOps } from '../test-utils/rawSpring';
@@ -344,5 +344,59 @@ describe('sceneGraphOf — #1716 frames into a still input say which frame they 
     const row = passRow(wiredTo({ graph: graphTaking('video'), frameStart: 0, frameEnd: 30 }));
     expect(row).toBeDefined();
     expect(row!.picks).toBeUndefined();
+  });
+});
+
+describe('sceneGraphOf — #1715 a workflow node draws the sockets its file declares', () => {
+  const file = (apiJson: object) => ({
+    apiJson,
+    meta: { name: 'f', importedAt: 'test', fps: 30, frames: 1 },
+  });
+  const STILL = file({
+    '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind: 'image' } },
+    '2': { class_type: 'basher_controller', inputs: { name: 'strength', kind: 'float' } },
+    '3': { class_type: 'basher_export', inputs: { name: 'result', images: ['9', 0] } },
+    '4': { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+  });
+  const VIDEO = file({
+    '1': { class_type: 'basher_controller', inputs: { name: 'footage', kind: 'video' } },
+    '2': { class_type: 'basher_export', inputs: { name: 'clip', kind: 'video', images: ['9', 0] } },
+  });
+  const draw = (s: DagState) => {
+    const n = sceneGraphOf(s, { showHidden: true }).nodes.find((x) => x.id === 'wf')!;
+    return {
+      inputs: n.inputs.map((r) => `${r.socket}:${r.broken ? 'broken' : r.socketType}`),
+      outputs: n.outputs.map((o) => `${o}:${n.outputTypes?.[o]}`),
+    };
+  };
+
+  it('every socket, wired or not, with its type; a wire that lost its socket shows broken', () => {
+    let s = applyOps(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'v', nodeType: 'Value', params: { value: 1 } },
+      { type: 'addNode', nodeId: 'wf', nodeType: 'ComfyUIWorkflow', params: { graph: STILL } },
+      {
+        type: 'connect',
+        from: { node: 'v', socket: 'out' },
+        to: { node: 'wf', socket: 'strength' },
+      },
+    ]).next;
+    expect(draw(s)).toEqual({
+      inputs: ['picture:still image', 'strength:number', 'time:time'],
+      outputs: ['result:still image'],
+    });
+    s = applyOps(s, [{ type: 'setParam', nodeId: 'wf', paramPath: 'graph', value: VIDEO }]).next;
+    expect(draw(s)).toEqual({
+      inputs: ['footage:frames', 'time:time', 'strength:broken'],
+      outputs: ['clip:frames'],
+    });
+  });
+
+  it('the layout leaves room for every row it draws', () => {
+    const s = applyOps(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'wf', nodeType: 'ComfyUIWorkflow', params: { graph: STILL } },
+    ]).next;
+    // picture, strength, time, then the output `result`: four rows.
+    expect(ownSocketsHeight(s, 'wf')).toBe(nodeHeight(4, 0));
+    expect(ownSocketsHeight(s, 'v')).toBeNull();
   });
 });

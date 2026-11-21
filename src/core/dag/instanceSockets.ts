@@ -75,3 +75,19 @@ export function outputExists(def: NodeDefinition, params: unknown, socket: strin
   if (!def.instanceSockets) return true;
   return Object.prototype.hasOwnProperty.call(outputsOfNode(def, params), socket);
 }
+
+/**
+ * The inputs a node holds a wire on that its params no longer give (its workflow file changed):
+ * kept, read as unconnected, and shown as broken by every surface that draws or lists the node.
+ * Empty for a type whose sockets do not come from its params.
+ */
+export function brokenInputsOf(
+  def: NodeDefinition,
+  node: { params?: unknown; inputs: Readonly<Record<string, unknown>> },
+): string[] {
+  if (!def.instanceSockets) return [];
+  const has = inputsOfNode(def, node.params);
+  return Object.keys(node.inputs).filter(
+    (s) => !Object.prototype.hasOwnProperty.call(has, s) && node.inputs[s] !== undefined,
+  );
+}

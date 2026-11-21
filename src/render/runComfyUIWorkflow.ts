@@ -33,6 +33,7 @@ import { createEvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
+import { WHOLE_WORKFLOW_OUTPUT } from '../nodes/ComfyUIWorkflow';
 import {
   framePath,
   outputPathOf,
@@ -172,7 +173,8 @@ export async function runComfyUIWorkflow(
     // one reported (what the stitch reads).
     for (const [i, out] of sockets.outputs.entries()) {
       const bytes =
-        result.framesByNode?.[out.nodeId]?.[0] ?? (i === 0 ? result.frames[0] : undefined);
+        result.framesByNode?.[out.nodeId]?.[0] ??
+        (i === 0 || out.nodeId === WHOLE_WORKFLOW_OUTPUT ? result.frames[0] : undefined);
       if (!bytes) {
         throw new Error(
           `runComfyUIWorkflow: ComfyUI returned no picture for "${out.socket}" at frame ${frame}.`,

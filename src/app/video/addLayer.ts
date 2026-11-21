@@ -12,6 +12,7 @@
 // REF: docs/COMPOSITOR-DESIGN.md §4.2/§4.3; vyapti V1 (one op path) + V34;
 //      sibling: addPrimitives (addNode→connect into a list socket); issue #237.
 
+import { workflowSocketsOf } from '../../nodes/ComfyUIWorkflow';
 import type { NodeId, Op } from '../../core/dag/types';
 import { useDagStore } from '../../core/dag/store';
 import { buildMediaClipOps, freshMediaClipId, ingestMediaClipFile } from '../asset/importMediaClip';
@@ -33,12 +34,14 @@ export function buildAddLayerOps(
   sourceNodeId: NodeId,
   name: string,
   extraParams: Record<string, unknown> = {},
+  /** #1715 — the source's output the layer reads; a workflow node's is its file's first. */
+  sourceSocket = 'out',
 ): Op[] {
   return [
     { type: 'addNode', nodeId: layerId, nodeType: 'Layer', params: { name, ...extraParams } },
     {
       type: 'connect',
-      from: { node: sourceNodeId, socket: 'out' },
+      from: { node: sourceNodeId, socket: sourceSocket },
       to: { node: layerId, socket: 'source' },
     },
     {
@@ -136,7 +139,15 @@ export function addComfyWorkflowLayerFromGraph(
 
   const ops: Op[] = [
     { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: { graph } },
-    ...buildAddLayerOps(layerId, compId, comfyId, name, { outPoint: compDurationFrames }),
+    ...buildAddLayerOps(
+      layerId,
+      compId,
+      comfyId,
+      name,
+      { outPoint: compDurationFrames },
+      // #1715 — the layer reads the workflow file's first output.
+      workflowSocketsOf({ graph }).outputs[0]?.socket ?? 'out',
+    ),
   ];
   dag.dispatchAtomic(ops, 'user', `add ComfyUI workflow layer: ${name}`);
   return layerId;

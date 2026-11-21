@@ -455,6 +455,8 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/app/asset/generateModel.ts': 'a ModelGenerate, which nothing reads as a value',
   'src/app/asset/importMediaClip.ts': 'a MediaClip, an Image',
   'src/app/CameraLookAtTarget.tsx': 'a Track-To on an existing camera',
+  // #1715 — the Nodes view's "+ ComfyUI workflow": a workflow node, an Image producer.
+  'src/app/GraphView.tsx': 'a ComfyUI workflow node; no scene node',
   'src/app/character/walkTo.ts': 'a clock and a WalkPath, not scene nodes',
   'src/app/driverBind.ts': 'a ParamDriver',
   'src/app/materialLink.ts': 'a Material, a resource',

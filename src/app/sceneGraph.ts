@@ -26,11 +26,11 @@
 // REF: src/core/dag/layout.ts (viewEdgesOf, viewRowsOf, levelOf); src/app/collections.ts
 //      (hiddenNodes); src/app/timeDependence.ts (timeDependentNodes).
 
-import { inputsOfNode } from '../core/dag/instanceSockets';
+import { brokenInputsOf, inputsOfNode, outputsOfNode } from '../core/dag/instanceSockets';
 import { levelOf, viewEdgesOf, viewRowsOf, type ViewEdge, type ViewRow } from '../core/dag/layout';
 import type { DagState } from '../core/dag/state';
-import type { NodeId, NodeRef } from '../core/dag/types';
-import { evaluateInputRef, type EvaluatorCache } from '../core/dag/evaluator';
+import type { InputDescriptor, NodeId, NodeRef, OutputDescriptor } from '../core/dag/types';
+import { evaluate, evaluateInputRef, type EvaluatorCache } from '../core/dag/evaluator';
 import { imageTakeOf, isImageValueLike } from '../core/dag/imageExtent';
 import { relationsOf } from '../core/dag/idRefSweep';
 import { getNodeType } from '../core/dag/registry';
@@ -47,6 +47,12 @@ export interface GraphInputRow extends ViewRow {
   /** #1716 — set on a still input fed a run of frames: the frame each such wire picks, in wire
    *  order. Absent when nothing is picked. */
   readonly picks?: readonly number[];
+  /** #1715 — on a node whose sockets come from its settings (a workflow node's file): what the
+   *  socket takes, in words ("still image", "frames", "number", "text"). Such a node draws every
+   *  socket it has, wired or not, so the file's sockets can be read off the node. */
+  readonly socketType?: string;
+  /** #1715 — a wire kept on a socket the node's file no longer has: read as unconnected. */
+  readonly broken?: true;
 }
 
 /**
@@ -90,6 +96,65 @@ function withPicks(
     return picks ? { ...r, picks } : r;
   });
 }
+/** #1715 — a socket's type in words: an Image by what it takes, else its type name. */
+function typeInWords(desc: InputDescriptor | OutputDescriptor, params: unknown): string {
+  const take =
+    'takes' in desc
+      ? typeof desc.takes === 'function'
+        ? desc.takes(params)
+        : desc.takes
+      : undefined;
+  if (take === 'still') return 'still image';
+  if (take === 'frames') return 'frames';
+  const t = Array.isArray(desc.type) ? desc.type[0] : desc.type;
+  if (t === 'Number') return 'number';
+  if (t === 'String') return 'text';
+  return String(t).toLowerCase();
+}
+
+/**
+ * #1715 — a node whose sockets come from its settings draws all of them, each with its type, and
+ * a row for every wire it keeps on a socket its file no longer has. Every other node draws the
+ * rows its wires land on, as before.
+ */
+function withOwnSockets(
+  state: DagState,
+  id: NodeId,
+  rows: GraphInputRow[],
+  outputs: readonly string[],
+  cache: EvaluatorCache | undefined,
+): { inputs: GraphInputRow[]; outputs: readonly string[]; outputTypes?: Record<string, string> } {
+  const node = state.nodes[id];
+  const def = node ? getNodeType(node.type) : undefined;
+  if (!node || !def?.instanceSockets) return { inputs: rows, outputs };
+  const ins = inputsOfNode(def, node.params);
+  const out: GraphInputRow[] = Object.entries(ins).map(([socket, desc]) => {
+    const drawn = rows.find((r) => r.socket === socket && !r.ref);
+    return {
+      ...(drawn ?? { socket, count: 0, ref: false }),
+      socketType: typeInWords(desc, node.params),
+    };
+  });
+  for (const socket of brokenInputsOf(def, node)) {
+    out.push({ socket, count: bindingRefs(node.inputs[socket]).length, ref: false, broken: true });
+  }
+  out.push(...rows.filter((r) => r.ref));
+  const outs = outputsOfNode(def, node.params);
+  const outputTypes: Record<string, string> = {};
+  const extentOf = (socket: string) => {
+    try {
+      // The output's own value says whether it is a still or frames (#1716's extent).
+      const v = evaluate(state, id, { socket, cache }).value;
+      return isImageValueLike(v) ? (v.extent.kind === 'still' ? 'still image' : 'frames') : null;
+    } catch {
+      return null;
+    }
+  };
+  for (const [socket, desc] of Object.entries(outs))
+    outputTypes[socket] = extentOf(socket) ?? typeInWords(desc, node.params);
+  return { inputs: out, outputs: Object.keys(outs), outputTypes };
+}
+
 export type GraphWire = ViewEdge;
 export type GraphFlag = 'scene' | 'render';
 
@@ -98,8 +163,11 @@ export interface GraphNode {
   readonly type: string;
   readonly name: string;
   readonly inputs: readonly GraphInputRow[];
-  /** Output sockets something reads, in first-use order. */
+  /** Output sockets something reads, in first-use order. #1715 — a node whose sockets come from
+   *  its settings lists every output it has. */
   readonly outputs: readonly string[];
+  /** #1715 — each listed output's type in words, for a node whose sockets come from its settings. */
+  readonly outputTypes?: Readonly<Record<string, string>>;
   /** Hidden in the viewport (its own flag or a collection's). */
   readonly hidden: boolean;
   /** How many nodes its sub-network shows one level down; 0 when it owns none. */
@@ -297,17 +365,23 @@ export function sceneGraphOf(
   };
   const nodes = here
     .filter((id) => shown.has(id))
-    .map((id) => ({
+    .map((id) => {
+      const own = withOwnSockets(
+        state,
+        id,
+        withPicks(state, id, withTints(rows.inputs.get(id) ?? [], tinted.get(id) ?? []), cache),
+        rows.outputs.get(id) ?? [],
+        cache,
+      );
+      return { id, own };
+    })
+    .map(({ id, own }) => ({
       id,
       type: state.nodes[id].type,
       name: nodeDisplayName(state.nodes, id),
-      inputs: withPicks(
-        state,
-        id,
-        withTints(rows.inputs.get(id) ?? [], tinted.get(id) ?? []),
-        cache,
-      ),
-      outputs: rows.outputs.get(id) ?? [],
+      inputs: own.inputs,
+      outputs: own.outputs,
+      ...(own.outputTypes ? { outputTypes: own.outputTypes } : {}),
       hidden: hidden.has(id),
       inside: inside.get(id) ?? 0,
       flags: flagged(id),

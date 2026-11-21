@@ -3244,7 +3244,8 @@ export function migrateStaleLensFields(raw: unknown): unknown {
 //     `pass-input`, kept and shown as broken, never dropped.
 //   - Every wire read off a workflow node's `out` (a stitch, a render output) moves to the file's
 //     first output: `stylized` for the preset, the first Basher output of an imported file. An
-//     imported file with no output keeps `out`, broken and shown.
+//     imported file with no Basher output keeps `out`: such a file is collected whole, and `out`
+//     is that whole-workflow output (`workflowSocketsOf`).
 // An imported file's own wires on `prompt` / `pass-input` are left where they are: nothing read
 // them before (the compositor binds images by `imageBindings`), and they now show as broken.
 const PASS_SOCKET_BY_TYPE: Record<string, string> = {

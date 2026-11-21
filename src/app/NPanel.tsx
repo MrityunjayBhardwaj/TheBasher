@@ -157,6 +157,7 @@ import {
   type SectionControlRenderers,
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
+import { ComfyWorkflowSection } from './ComfyWorkflowSection';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { WrapInRigConnector } from './animate/WrapInRigConnector';
@@ -5586,6 +5587,8 @@ export function NPanel() {
               (`body`) + the live controller channel it reads. Renders only for a Solver;
               `seedFrame` shows as an ordinary row above. */}
           <SolverControls nodeId={node.id} />
+          {/* #1715 — the workflow file this node runs, and the sockets it declares. */}
+          {node.type === 'ComfyUIWorkflow' ? <ComfyWorkflowSection nodeId={node.id} /> : null}
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
           ) : null}

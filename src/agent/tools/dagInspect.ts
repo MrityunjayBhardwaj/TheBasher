@@ -5,7 +5,7 @@
 //
 // REF: THESIS.md §6-10, vyapti V7.
 
-import { inputsOfNode, outputsOfNode } from '../../core/dag/instanceSockets';
+import { brokenInputsOf, inputsOfNode, outputsOfNode } from '../../core/dag/instanceSockets';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from './types';
 import { getNodeType } from '../../core/dag/registry';
@@ -297,6 +297,6 @@ function socketTypesOf(
     inputs[s] = typeOf(d.type, typeof d.takes === 'function' ? d.takes(params) : d.takes);
   const outputs: Record<string, string> = {};
   for (const [s, d] of Object.entries(outputsOfNode(def, params))) outputs[s] = typeOf(d.type);
-  const broken = Object.keys(held).filter((s) => !(s in ins));
+  const broken = brokenInputsOf(def, { params, inputs: held });
   return broken.length > 0 ? { inputs, outputs, brokenWires: broken } : { inputs, outputs };
 }

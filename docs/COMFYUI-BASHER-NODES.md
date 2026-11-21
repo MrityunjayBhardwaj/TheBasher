@@ -52,7 +52,10 @@ node's sockets, derived in one place (`socketsOfWorkflow`, `src/core/comfy/workf
 `kind` on `basher_export` is optional; a workflow saved before it existed reads as `image`.
 Exports are images only, because the node's input is an `IMAGE` and Basher collects what it
 saves. Nothing else in the file becomes a socket: a LoadImage or a CLIPTextEncode is the
-workflow's own business.
+workflow's own business. One output is not read off the file: a file
+that declares no `basher_export` is collected whole (every image it saves), as Basher always
+read such a file, and its node has one still output `out` standing for that. It goes as soon as
+the file declares an output.
 
 **Feedback.** A `basher_controller` of kind image whose `feedback_of` names one of the
 workflow's own exports is fed, at each frame, with that export's picture from the frame before.
