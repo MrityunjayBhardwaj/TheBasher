@@ -161,6 +161,11 @@ const CONSUMERS: Record<string, Decision> = {
   // a keyed or driven influence folds through that one resolver. Not a new road — the read already
   // went through it; S1 threads the cache so a per-scrub re-read stays warm (#1389).
   'src/app/layerView.ts': authored('delegates-to-a-folding-resolver'),
+  // #1940 T0a — the per-object layer surface imports only the `EvaluatorCache` type: it hands the
+  // authored state and the caller's warm cache straight to `layerView` (its row builder, declared
+  // above), which folds each structural row's influence through `resolveEvaluatedParam`. No new
+  // road — it opens no resolver of its own; it forwards the cache so a per-scrub re-read stays warm.
+  'src/app/objectLayerSurface.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/transformChannelSource.ts': authored('produces-an-overlay'),
   'src/app/paramDrivers.ts': authored('produces-an-overlay'),
   'src/app/statefulOps.ts': authored('produces-an-overlay'),
@@ -451,7 +456,8 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 78 → 79 at #1894 S1, not a new road: the stack row's read model threads StackPanel's shared
     // UI cache into `resolveEvaluatedParam` it already called, so a per-scrub influence re-read
     // stays warm (declared above as delegates-to-a-folding-resolver). TYPE-only import.
-    expect(evaluatorConsumers()).toHaveLength(79); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 79 → 80 at #1940 T0a: the per-object layer surface, delegating to layerView.
+    expect(evaluatorConsumers()).toHaveLength(80); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
