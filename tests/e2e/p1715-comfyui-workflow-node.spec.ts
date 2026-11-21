@@ -15,6 +15,10 @@ import { openDrawerTab } from './_drawer';
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
 
+// #1953 — the Nodes tab has its own panel with the selected node's settings, the same block the
+// inspector draws, so with both open a node's controls appear twice: read the inspector's.
+const inspector = (page: import('@playwright/test').Page) => page.getByTestId('inspector');
+
 interface W {
   __basher_dag: {
     getState(): {
@@ -72,7 +76,7 @@ async function observe(page: Page, nodeId: string, name: string) {
   await page.mouse.wheel(0, -450);
   await page.waitForTimeout(200);
   await node.screenshot({ path: shot });
-  const section = page.getByTestId('comfy-workflow-section');
+  const section = inspector(page).getByTestId('comfy-workflow-section');
   await section.scrollIntoViewIfNeeded();
   await section.screenshot({ path: shot.replace('.png', '-inspector.png') });
   await page.screenshot({ path: shot.replace('.png', '-page.png') });
@@ -80,7 +84,7 @@ async function observe(page: Page, nodeId: string, name: string) {
 
 async function pickWorkflow(page: Page, file: string) {
   const chooser = page.waitForEvent('filechooser');
-  await page.getByTestId('comfy-workflow-pick').click();
+  await inspector(page).getByTestId('comfy-workflow-pick').click();
   await (await chooser).setFiles(path.join(FIXTURES, file));
 }
 
@@ -114,16 +118,18 @@ test('a workflow file’s markers are the node’s sockets; another file, other 
   const id = 'comfy_workflow_1';
   const node = page.locator(`[data-graph-node="${id}"]`);
   await expect(node).toHaveCount(1);
-  await expect(page.getByTestId('comfy-workflow-file')).toHaveText('none picked');
+  await expect(inspector(page).getByTestId('comfy-workflow-file')).toHaveText('none picked');
 
   // The still-edit file: an image, a prompt and a strength in; one still out.
   await pickWorkflow(page, 'workflow-still-edit.json');
-  await expect(page.getByTestId('comfy-workflow-file')).toHaveText('workflow-still-edit');
+  await expect(inspector(page).getByTestId('comfy-workflow-file')).toHaveText(
+    'workflow-still-edit',
+  );
   await expect
     .poll(() => drawnInputs(page, id))
     .toEqual(['picture:still image', 'prompt:text', 'strength:number', 'time:time']);
   expect(await drawnOutputs(page, id)).toEqual(['result:still image']);
-  await expect(page.getByTestId('comfy-socket-in-strength')).toHaveAttribute(
+  await expect(inspector(page).getByTestId('comfy-socket-in-strength')).toHaveAttribute(
     'data-socket-type',
     'number',
   );
@@ -148,16 +154,16 @@ test('a workflow file’s markers are the node’s sockets; another file, other 
     );
   }, id);
   await pickWorkflow(page, 'workflow-video.json');
-  await expect(page.getByTestId('comfy-workflow-file')).toHaveText('workflow-video');
+  await expect(inspector(page).getByTestId('comfy-workflow-file')).toHaveText('workflow-video');
   await expect
     .poll(() => drawnInputs(page, id))
     .toEqual(['footage:frames', 'seed:number', 'style:text', 'time:time', 'strength:broken']);
   expect(await drawnOutputs(page, id)).toEqual(['clip:frames', 'poster:still image']);
   // The fed input is listed in the inspector, never drawn as a socket.
-  await expect(page.getByTestId('comfy-socket-fed-previous')).toContainText(
+  await expect(inspector(page).getByTestId('comfy-socket-fed-previous')).toContainText(
     'previous frame of clip',
   );
-  await expect(page.getByTestId('comfy-socket-broken-strength')).toBeVisible();
+  await expect(inspector(page).getByTestId('comfy-socket-broken-strength')).toBeVisible();
   // The wire is still in the graph: kept, not dropped.
   expect(
     await page.evaluate(
@@ -168,7 +174,7 @@ test('a workflow file’s markers are the node’s sockets; another file, other 
   ).toEqual({ node: 'p1715_value', socket: 'out' });
 
   // I over the `seed` row keys it on its controller path.
-  await page.getByTestId('comfy-workflow-value-seed').hover();
+  await inspector(page).getByTestId('comfy-workflow-value-seed').hover();
   await page.keyboard.press('i');
   await expect
     .poll(() =>
@@ -253,7 +259,7 @@ test('an old project with the stylized-realism preset opens as the node holding 
 
   await openDrawerTab(page, 'nodes');
   await page.locator('[data-graph-node="old_ai"]').click();
-  await expect(page.getByTestId('comfy-workflow-file')).toHaveText('Stylized realism');
+  await expect(inspector(page).getByTestId('comfy-workflow-file')).toHaveText('Stylized realism');
   await expect
     .poll(() => drawnInputs(page, 'old_ai'))
     .toEqual([
@@ -265,7 +271,7 @@ test('an old project with the stylized-realism preset opens as the node holding 
       'time:time',
     ]);
   expect(await drawnOutputs(page, 'old_ai')).toEqual(['stylized:frames']);
-  await expect(page.getByTestId('comfy-socket-fed-prev_frame_image')).toContainText(
+  await expect(inspector(page).getByTestId('comfy-socket-fed-prev_frame_image')).toContainText(
     'previous frame of stylized',
   );
   await observe(page, 'old_ai', 'migrated-preset');

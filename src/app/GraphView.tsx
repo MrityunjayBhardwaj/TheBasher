@@ -8,12 +8,21 @@
 // the app's own (`useSelectionStore`), so clicking a node here selects it in the outliner,
 // inspector and viewport, and selecting there lights its lineage up here.
 //
-// File-rooted V8: src/app/. Read-only surface — never touches the DAG.
+// #1953 (design board 8b) — the decided Nodes tab: each node carries its key values, editable in
+// place through the inspector's own rows (`ParamRow`: keyable with I, driver-aware), the tab has its
+// own right panel (N) with the selected node's full params (`NodeParams`, the inspector's block), a
+// view flag says which node's result the viewport shows (`viewFlag.ts`), and a network ends at its
+// object: the Scene node is not drawn (`endAtObjects`).
+//
+// File-rooted V8: src/app/. The graph's shape is read-only here; values are edited through the
+// inspector's rows, which dispatch exactly as they do in the inspector.
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { layoutOf, nodeHeight as boxHeight, NODE_WIDTH } from '../core/dag/layout';
+import { layoutOf, nodeHeight as boxHeight, NODE_PAD, NODE_WIDTH } from '../core/dag/layout';
+import { NODE_VALUE_ROW, NODE_VALUE_VEC_ROW } from '../core/dag/nodeValues';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId } from '../core/dag/types';
+import type { DagState } from '../core/dag/state';
 import { type GraphNode, sceneGraphOf } from './sceneGraph';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { useSelectionStore } from './stores/selectionStore';
@@ -21,6 +30,9 @@ import { useAgentContextStore } from './stores/agentContextStore';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
 import { usePendingProposal, useProposedNodeIds } from '../agent/diff/useProposal';
 import { PROPOSAL_AMBER } from './proposalStyle';
+import { NodeParams, ParamRow } from './NPanel';
+import { useNodesTabStore } from './stores/nodesTabStore';
+import { viewFlagOf } from './viewFlag';
 
 const W = NODE_WIDTH;
 const HEAD = 40;
@@ -58,10 +70,24 @@ function kindOf(type: string): keyof typeof KIND {
 
 // #1715 — a node whose sockets come from its settings (it carries `outputTypes`) lists its
 // outputs as rows below its inputs, each with its type, so long labels never run into the title.
-const nodeHeight = (n: GraphNode) =>
+const rowsHeight = (n: GraphNode) =>
   n.outputTypes
     ? boxHeight(n.inputs.length + n.outputs.length, 0)
     : boxHeight(n.inputs.length, n.outputs.length);
+// #1953 — a node's values sit below its socket rows, one row each (an x/y/z takes two lines). The
+// same heights the layout spaces the node by (`nodeValuesHeight`).
+const isVec3 = (v: unknown) =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+const valueRowHeight = (v: unknown) => (isVec3(v) ? NODE_VALUE_VEC_ROW : NODE_VALUE_ROW);
+const paramsIn = (state: DagState, id: NodeId) =>
+  (state.nodes[id]?.params ?? {}) as Record<string, unknown>;
+const valuesHeight = (state: DagState, n: GraphNode) =>
+  n.values.reduce((h, key) => h + valueRowHeight(paramsIn(state, n.id)[key]), 0);
+const nodeHeight = (state: DagState, n: GraphNode) => rowsHeight(n) + valuesHeight(state, n);
+/** The width of the Nodes tab's own right panel (board 8b). */
+const PANEL_WIDTH = 330;
+/** The view flag's square, in the node's top-right corner (board 8b). */
+const FLAG = 13;
 const inY = (n: GraphNode, socket: string, ref: boolean) =>
   HEAD + n.inputs.findIndex((r) => r.socket === socket && r.ref === ref) * ROW + ROW / 2 - 2;
 const outY = (n: GraphNode, socket: string) =>
@@ -119,9 +145,19 @@ export function GraphView(): ReactNode {
   const [refLines, setRefLines] = useState<'all' | 'selected' | 'none'>('all');
 
   const graph = useMemo(
-    () => sceneGraphOf(state, { showHidden, showAnimation, level }, uiEvaluatorCache),
+    () =>
+      sceneGraphOf(
+        state,
+        { showHidden, showAnimation, level, endAtObjects: true },
+        uiEvaluatorCache,
+      ),
     [state, showHidden, showAnimation, level],
   );
+  // #1953 — the tab's own panel and the view flag.
+  const panelOpen = useNodesTabStore((s) => s.panelOpen);
+  const togglePanel = useNodesTabStore((s) => s.togglePanel);
+  const viewing = useNodesTabStore((s) => s.viewing);
+  const toggleViewing = useNodesTabStore((s) => s.toggleViewing);
   const lines = useMemo(
     () =>
       graph.wires.filter(
@@ -155,7 +191,7 @@ export function GraphView(): ReactNode {
       x0 = Math.min(x0, x);
       y0 = Math.min(y0, y);
       x1 = Math.max(x1, x + W);
-      y1 = Math.max(y1, y + nodeHeight(n));
+      y1 = Math.max(y1, y + nodeHeight(state, n));
     }
     if (pos.size === 0) return { pos, x0: 0, y0: 0, width: 0, height: 0 };
     return { pos, x0, y0, width: x1 - x0, height: y1 - y0 };
@@ -228,6 +264,16 @@ export function GraphView(): ReactNode {
     moved: boolean;
   } | null>(null);
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    // #1953 — a press on a node's values or its view flag is theirs: no pan, no capture (a
+    // captured pointer would take the value's own drag-scrub away from it). A press on a value
+    // selects its node, as a press on the node does, so the panel follows what is being edited.
+    const target = e.target as Element;
+    const valuesOf = target.closest('[data-graph-values]')?.getAttribute('data-graph-values');
+    if (valuesOf) {
+      if (real.nodes[valuesOf] && valuesOf !== primary) select(valuesOf);
+      return;
+    }
+    if (target.closest('[data-graph-flag]')) return;
     const node =
       (e.target as Element).closest('[data-graph-node]')?.getAttribute('data-graph-node') ?? null;
     drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, node, moved: false };
@@ -244,9 +290,14 @@ export function GraphView(): ReactNode {
   // The node the last click landed on. The pointer is captured on press, so the double-click
   // that follows is aimed at the canvas, not at the node under it.
   const clicked = useRef<NodeId | null>(null);
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     drag.current = null;
+    // #1953 — Ctrl-click (Cmd on a Mac) views the node's result, as the flag does (board 8b).
+    if (d && !d.moved && d.node && (e.ctrlKey || e.metaKey) && real.nodes[d.node]) {
+      if (viewFlagOf(real, d.node)) toggleViewing(d.node);
+      return;
+    }
     if (d && !d.moved) {
       // A node the pending proposal adds is not in the scene yet: there is nothing to select.
       select(d.node && real.nodes[d.node] ? d.node : null);
@@ -355,239 +406,357 @@ export function GraphView(): ReactNode {
         >
           Fit
         </button>
-      </div>
-      <div className="relative flex-1" style={{ minHeight: 0 }}>
-        <svg
-          ref={svgRef}
-          data-testid="graph-view-canvas"
-          className="h-full w-full cursor-grab touch-none select-none"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onDoubleClick={onDoubleClick}
-          role="img"
-          aria-label={`Scene graph: ${graph.nodes.length} nodes`}
+        {/* #1953 — the tab's own right panel (board 8b); N toggles it too. */}
+        <button
+          type="button"
+          data-testid="graph-view-panel-toggle"
+          aria-pressed={panelOpen}
+          title="The selected node's settings (N)"
+          onClick={togglePanel}
+          className={[
+            'rounded border px-2 py-0.5 hover:border-border-strong',
+            panelOpen ? 'border-accent text-fg' : 'border-border text-fg-dim',
+          ].join(' ')}
         >
-          <defs>
-            <pattern id="graph-view-dots" width="24" height="24" patternUnits="userSpaceOnUse">
-              <circle cx="1" cy="1" r="1" fill="#2a2a33" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#graph-view-dots)" />
-          <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-            {lines.map((w, i) => {
-              const a = byId.get(w.from)!;
-              const b = byId.get(w.to)!;
-              const pa = layout.pos.get(w.from)!;
-              const pb = layout.pos.get(w.to)!;
-              const x1 = pa.x + W;
-              const y1 = pa.y + outY(a, w.fromSocket);
-              const x2 = pb.x;
-              const y2 = pb.y + inY(b, w.toSocket, w.ref);
-              const dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
-              // A reference takes the colour of the node that holds it: the channel or
-              // constraint acting, or the constraint reading its aim.
-              const holder = w.fromSocket === 'out' ? b : a;
-              const on =
-                lit &&
-                ((lit.up.has(w.from) && lit.up.has(w.to)) ||
-                  (lit.down.has(w.from) && lit.down.has(w.to)));
-              return (
-                <path
-                  key={i}
-                  data-graph-line={w.ref ? `ref:${w.from}>${w.to}` : `wire:${w.from}>${w.to}`}
-                  d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
-                  fill="none"
-                  stroke={w.ref ? KIND[kindOf(holder.type)].color : '#5b6478'}
-                  strokeWidth={on ? 2.4 : w.ref ? 1.8 : 1.4}
-                  strokeDasharray={w.ref ? '5 4' : undefined}
-                  opacity={lit && !on ? 0.1 : 1}
-                />
-              );
-            })}
-            {graph.nodes.map((n) => {
-              const p = layout.pos.get(n.id)!;
-              const h = nodeHeight(n);
-              const color = KIND[kindOf(n.type)].color;
-              const selected = n.id === primary;
-              const isProposed = proposed.has(n.id);
-              const isNew = proposedSummary?.added.has(n.id) ?? false;
-              // #1706 — a node the proposal touches is never dimmed by the lineage highlight.
-              const dim = lit && !isProposed ? !(lit.up.has(n.id) || lit.down.has(n.id)) : false;
-              const badges = [
-                ...(isNew ? ['NEW'] : []),
-                ...n.flags.map((f) => (f === 'scene' ? 'SCENE' : 'RENDER')),
-                ...(n.timeDependent ? ['⏱'] : []),
-                ...(n.away ? [`↗${n.away}`] : []),
-              ];
-              return (
-                <g
-                  key={n.id}
-                  data-graph-node={n.id}
-                  data-selected={selected || undefined}
-                  data-proposed={isProposed || undefined}
-                  transform={`translate(${p.x},${p.y})`}
-                  opacity={dim ? 0.18 : n.hidden ? 0.55 : 1}
-                  className="cursor-pointer"
-                >
-                  <title>
-                    {[
-                      n.name,
-                      `${n.type} · ${n.id}`,
-                      ...n.flags.map((f) => `the ${f} output`),
-                      ...(n.timeDependent ? ['changes with time'] : []),
-                      ...(n.away ? [`${n.away} lines to another level`] : []),
-                      ...(n.namedAfter ? [`named after ${n.namedAfter}`] : []),
-                      ...(n.hidden ? ['hidden'] : []),
-                      ...(n.inside ? ['double-click to go inside'] : []),
-                    ].join('\n')}
-                  </title>
-                  <rect
-                    width={W}
-                    height={h}
-                    rx={5}
-                    fill="#1c1c22"
-                    stroke={selected ? '#f0c75e' : isProposed ? PROPOSAL_AMBER : '#2a2a33'}
-                    strokeWidth={selected || isProposed ? 2 : 1}
-                    strokeDasharray={isNew ? '5 3' : undefined}
+          Panel <span className="text-fg/40">N</span>
+        </button>
+      </div>
+      <div className="flex flex-1" style={{ minHeight: 0 }}>
+        <div className="relative flex-1" style={{ minHeight: 0 }}>
+          <svg
+            ref={svgRef}
+            data-testid="graph-view-canvas"
+            className="h-full w-full cursor-grab touch-none select-none"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onDoubleClick={onDoubleClick}
+            // #1953 — a group, not an image: the nodes now hold fields, and an image's contents
+            // are hidden from a screen reader.
+            role="group"
+            aria-label={`Scene graph: ${graph.nodes.length} nodes`}
+          >
+            <defs>
+              <pattern id="graph-view-dots" width="24" height="24" patternUnits="userSpaceOnUse">
+                <circle cx="1" cy="1" r="1" fill="#2a2a33" />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#graph-view-dots)" />
+            <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
+              {lines.map((w, i) => {
+                const a = byId.get(w.from)!;
+                const b = byId.get(w.to)!;
+                const pa = layout.pos.get(w.from)!;
+                const pb = layout.pos.get(w.to)!;
+                const x1 = pa.x + W;
+                const y1 = pa.y + outY(a, w.fromSocket);
+                const x2 = pb.x;
+                const y2 = pb.y + inY(b, w.toSocket, w.ref);
+                const dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
+                // A reference takes the colour of the node that holds it: the channel or
+                // constraint acting, or the constraint reading its aim.
+                const holder = w.fromSocket === 'out' ? b : a;
+                const on =
+                  lit &&
+                  ((lit.up.has(w.from) && lit.up.has(w.to)) ||
+                    (lit.down.has(w.from) && lit.down.has(w.to)));
+                return (
+                  <path
+                    key={i}
+                    data-graph-line={w.ref ? `ref:${w.from}>${w.to}` : `wire:${w.from}>${w.to}`}
+                    d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
+                    fill="none"
+                    stroke={w.ref ? KIND[kindOf(holder.type)].color : '#5b6478'}
+                    strokeWidth={on ? 2.4 : w.ref ? 1.8 : 1.4}
+                    strokeDasharray={w.ref ? '5 4' : undefined}
+                    opacity={lit && !on ? 0.1 : 1}
                   />
-                  <rect width={W} height={4} rx={2} fill={color} />
-                  <text x={10} y={19} fontSize={12.5} fontWeight={600} fill="#ededf2">
-                    {clip(n.name, badges.length ? 20 : 30)}
-                  </text>
-                  {badges.length > 0 && (
-                    <text
-                      data-graph-badges={badges.join(' ')}
-                      x={W - 10}
-                      y={19}
-                      fontSize={9.5}
-                      fontWeight={600}
-                      textAnchor="end"
-                      fill="#f0c75e"
-                    >
-                      {badges.join(' ')}
+                );
+              })}
+              {graph.nodes.map((n) => {
+                const p = layout.pos.get(n.id)!;
+                const h = nodeHeight(state, n);
+                const flag = viewFlagOf(state, n.id);
+                const isViewing = flag !== null && viewing === n.id;
+                // #1953 — the values are edited on the real node, so they show its real values;
+                // a pending proposal's change shows beside them (the row's proposed mark), as in
+                // the inspector. A node only the proposal adds has nothing to edit yet.
+                const params = paramsIn(real, n.id);
+                const editable = Boolean(real.nodes[n.id]);
+                const color = KIND[kindOf(n.type)].color;
+                const selected = n.id === primary;
+                const isProposed = proposed.has(n.id);
+                const isNew = proposedSummary?.added.has(n.id) ?? false;
+                // #1706 — a node the proposal touches is never dimmed by the lineage highlight.
+                const dim = lit && !isProposed ? !(lit.up.has(n.id) || lit.down.has(n.id)) : false;
+                const badges = [
+                  ...(isNew ? ['NEW'] : []),
+                  ...n.flags.map((f) => (f === 'scene' ? 'SCENE' : 'RENDER')),
+                  ...(n.timeDependent ? ['⏱'] : []),
+                  ...(n.away ? [`↗${n.away}`] : []),
+                ];
+                return (
+                  <g
+                    key={n.id}
+                    data-graph-node={n.id}
+                    data-selected={selected || undefined}
+                    data-proposed={isProposed || undefined}
+                    transform={`translate(${p.x},${p.y})`}
+                    opacity={dim ? 0.18 : n.hidden ? 0.55 : 1}
+                    className="cursor-pointer"
+                  >
+                    <title>
+                      {[
+                        n.name,
+                        `${n.type} · ${n.id}`,
+                        ...n.flags.map((f) => `the ${f} output`),
+                        ...(n.timeDependent ? ['changes with time'] : []),
+                        ...(n.away ? [`${n.away} lines to another level`] : []),
+                        ...(n.namedAfter ? [`named after ${n.namedAfter}`] : []),
+                        ...(n.hidden ? ['hidden'] : []),
+                        ...(n.inside ? ['double-click to go inside'] : []),
+                      ].join('\n')}
+                    </title>
+                    <rect
+                      width={W}
+                      height={h}
+                      rx={5}
+                      fill="#1c1c22"
+                      stroke={selected ? '#f0c75e' : isProposed ? PROPOSAL_AMBER : '#2a2a33'}
+                      strokeWidth={selected || isProposed ? 2 : 1}
+                      strokeDasharray={isNew ? '5 3' : undefined}
+                    />
+                    <rect width={W} height={4} rx={2} fill={color} />
+                    <text x={10} y={19} fontSize={12.5} fontWeight={600} fill="#ededf2">
+                      {clip(n.name, badges.length ? 20 : 30)}
                     </text>
-                  )}
-                  <text x={10} y={33} fontSize={10.5} fill="#9b9ca6">
-                    {clip(n.type, n.inside ? 22 : 34)}
-                  </text>
-                  {n.inside > 0 && (
-                    <text
-                      data-graph-inside={n.inside}
-                      x={W - 10}
-                      y={33}
-                      fontSize={10.5}
-                      textAnchor="end"
-                      fill="#9b9ca6"
-                    >
-                      {`${n.inside} inside ⤵`}
-                    </text>
-                  )}
-                  {n.inputs.map((r) => {
-                    const y = inY(n, r.socket, r.ref);
-                    // A row driven by hidden animation takes the colour of what drives it.
-                    const tint = r.tint ? KIND[kindOf(r.tint)].color : undefined;
-                    return (
+                    {flag && (
+                      // #1953 — the view flag (board 8b): filled while this node's result is the
+                      // one the viewport shows. Not on a constraint, a channel or the scene's ends.
                       <g
-                        key={`${r.ref ? 'r' : 'w'}:${r.socket}`}
-                        data-graph-row={r.ref ? undefined : r.socket}
-                        data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
-                        data-graph-pick={r.picks ? `${r.socket}:${r.picks.join(',')}` : undefined}
-                        data-graph-socket-type={r.socketType}
-                        data-graph-broken={r.broken ? r.socket : undefined}
+                        data-graph-flag={n.id}
+                        data-testid={`graph-view-flag-${n.id}`}
+                        data-viewing={isViewing ? 'true' : 'false'}
+                        role="button"
+                        aria-label={isViewing ? 'Viewing this result' : 'View this result'}
+                        aria-pressed={isViewing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (real.nodes[n.id]) toggleViewing(n.id);
+                        }}
+                        className="cursor-pointer"
                       >
-                        {/* #1716 — a still input fed a run of frames says which frame it takes. */}
-                        {r.picks && (
-                          <title>{`takes one frame of a run of frames: frame ${r.picks.join(', ')}`}</title>
-                        )}
-                        {/* #1715 — a wire kept on a socket the node's file no longer has. */}
-                        {r.broken && (
-                          <title>{`"${r.socket}" is not in this workflow file any more: the wire is kept and not read`}</title>
-                        )}
-                        <circle
-                          cx={0}
-                          cy={y}
-                          r={4}
-                          fill={
-                            r.broken
-                              ? '#e05252'
-                              : (tint ??
-                                (r.ref ? '#e3cf5b' : r.count === 0 ? '#1c1c22' : '#5b6478'))
-                          }
-                          stroke={r.count === 0 && !r.ref ? '#5b6478' : '#111114'}
-                          strokeWidth={1.5}
+                        <title>
+                          {isViewing
+                            ? 'Viewing this result (click to go back to the scene)'
+                            : flag === 'final'
+                              ? 'View this result: the final object'
+                              : 'View this result: the object as it is at this step'}
+                        </title>
+                        <rect
+                          x={W - 10 - FLAG}
+                          y={7}
+                          width={FLAG}
+                          height={FLAG}
+                          rx={4}
+                          fill={isViewing ? '#3e9fc4' : '#1c1c22'}
+                          stroke={isViewing ? '#3e9fc4' : '#4a4a56'}
+                          strokeWidth={1}
                         />
-                        <text
-                          x={10}
-                          y={y + 3.5}
-                          fontSize={10.5}
-                          fill={r.broken ? '#e05252' : (tint ?? '#9b9ca6')}
-                          fontFamily="ui-monospace, Menlo, monospace"
-                        >
-                          {r.count > 1 ? `${r.socket} ×${r.count}` : r.socket}
-                          {r.socketType && <tspan fill="#6b6c76">{` · ${r.socketType}`}</tspan>}
-                          {r.broken && <tspan>{' · not in file'}</tspan>}
-                          {r.picks && (
-                            <tspan fill="#f0c75e">{` · frame ${r.picks.join(', ')}`}</tspan>
-                          )}
-                        </text>
                       </g>
-                    );
-                  })}
-                  {n.outputs.map((s) => {
-                    const y = outY(n, s);
-                    const outType = n.outputTypes?.[s];
-                    return (
-                      <g
-                        key={`o:${s}`}
-                        data-graph-output={n.outputTypes ? s : undefined}
-                        data-graph-socket-type={outType}
+                    )}
+                    {badges.length > 0 && (
+                      <text
+                        data-graph-badges={badges.join(' ')}
+                        x={flag ? W - 16 - FLAG : W - 10}
+                        y={19}
+                        fontSize={9.5}
+                        fontWeight={600}
+                        textAnchor="end"
+                        fill="#f0c75e"
                       >
-                        <circle
-                          cx={W}
-                          cy={y}
-                          r={4}
-                          fill={color}
-                          stroke="#111114"
-                          strokeWidth={1.5}
-                        />
-                        {(s !== 'out' || outType) && (
+                        {badges.join(' ')}
+                      </text>
+                    )}
+                    <text x={10} y={33} fontSize={10.5} fill="#9b9ca6">
+                      {clip(n.type, n.inside ? 22 : 34)}
+                    </text>
+                    {n.inside > 0 && (
+                      <text
+                        data-graph-inside={n.inside}
+                        x={W - 10}
+                        y={33}
+                        fontSize={10.5}
+                        textAnchor="end"
+                        fill="#9b9ca6"
+                      >
+                        {`${n.inside} inside ⤵`}
+                      </text>
+                    )}
+                    {n.inputs.map((r) => {
+                      const y = inY(n, r.socket, r.ref);
+                      // A row driven by hidden animation takes the colour of what drives it.
+                      const tint = r.tint ? KIND[kindOf(r.tint)].color : undefined;
+                      return (
+                        <g
+                          key={`${r.ref ? 'r' : 'w'}:${r.socket}`}
+                          data-graph-row={r.ref ? undefined : r.socket}
+                          data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
+                          data-graph-pick={r.picks ? `${r.socket}:${r.picks.join(',')}` : undefined}
+                          data-graph-socket-type={r.socketType}
+                          data-graph-broken={r.broken ? r.socket : undefined}
+                        >
+                          {/* #1716 — a still input fed a run of frames says which frame it takes. */}
+                          {r.picks && (
+                            <title>{`takes one frame of a run of frames: frame ${r.picks.join(', ')}`}</title>
+                          )}
+                          {/* #1715 — a wire kept on a socket the node's file no longer has. */}
+                          {r.broken && (
+                            <title>{`"${r.socket}" is not in this workflow file any more: the wire is kept and not read`}</title>
+                          )}
+                          <circle
+                            cx={0}
+                            cy={y}
+                            r={4}
+                            fill={
+                              r.broken
+                                ? '#e05252'
+                                : (tint ??
+                                  (r.ref ? '#e3cf5b' : r.count === 0 ? '#1c1c22' : '#5b6478'))
+                            }
+                            stroke={r.count === 0 && !r.ref ? '#5b6478' : '#111114'}
+                            strokeWidth={1.5}
+                          />
                           <text
-                            x={W - 10}
+                            x={10}
                             y={y + 3.5}
                             fontSize={10.5}
-                            textAnchor="end"
-                            fill="#9b9ca6"
+                            fill={r.broken ? '#e05252' : (tint ?? '#9b9ca6')}
                             fontFamily="ui-monospace, Menlo, monospace"
                           >
-                            {outType && <tspan fill="#6b6c76">{`${outType} · `}</tspan>}
-                            {s}
+                            {r.count > 1 ? `${r.socket} ×${r.count}` : r.socket}
+                            {r.socketType && <tspan fill="#6b6c76">{` · ${r.socketType}`}</tspan>}
+                            {r.broken && <tspan>{' · not in file'}</tspan>}
+                            {r.picks && (
+                              <tspan fill="#f0c75e">{` · frame ${r.picks.join(', ')}`}</tspan>
+                            )}
                           </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                </g>
-              );
-            })}
-          </g>
-        </svg>
-        <div className="pointer-events-none absolute bottom-2 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded border border-border bg-bg-2/90 px-2 py-1 text-[10px] text-fg-dim">
-          {Object.values(KIND).map((k) => (
-            <span key={k.label} className="flex items-center gap-1">
-              <i className="inline-block h-2 w-2 rounded-sm" style={{ background: k.color }} />
-              {k.label}
+                        </g>
+                      );
+                    })}
+                    {editable && n.values.length > 0 && (
+                      // #1953 — the node's key values, editable in place through the inspector's
+                      // own rows: the same dispatch, I keys the row under the mouse, a driven
+                      // value shows driven and locked.
+                      <foreignObject
+                        x={0}
+                        y={rowsHeight(n) - NODE_PAD}
+                        width={W}
+                        height={valuesHeight(state, n)}
+                      >
+                        <div
+                          data-graph-values={n.id}
+                          data-testid={`graph-view-values-${n.id}`}
+                          className="flex flex-col text-fg"
+                          style={{ width: W }}
+                        >
+                          {n.values.map((key) => (
+                            <div
+                              key={key}
+                              data-graph-value={key}
+                              className="overflow-hidden"
+                              style={{ height: valueRowHeight(params[key]) }}
+                            >
+                              <ParamRow nodeId={n.id} paramPath={key} value={params[key]} />
+                            </div>
+                          ))}
+                        </div>
+                      </foreignObject>
+                    )}
+                    {n.outputs.map((s) => {
+                      const y = outY(n, s);
+                      const outType = n.outputTypes?.[s];
+                      return (
+                        <g
+                          key={`o:${s}`}
+                          data-graph-output={n.outputTypes ? s : undefined}
+                          data-graph-socket-type={outType}
+                        >
+                          <circle
+                            cx={W}
+                            cy={y}
+                            r={4}
+                            fill={color}
+                            stroke="#111114"
+                            strokeWidth={1.5}
+                          />
+                          {(s !== 'out' || outType) && (
+                            <text
+                              x={W - 10}
+                              y={y + 3.5}
+                              fontSize={10.5}
+                              textAnchor="end"
+                              fill="#9b9ca6"
+                              fontFamily="ui-monospace, Menlo, monospace"
+                            >
+                              {outType && <tspan fill="#6b6c76">{`${outType} · `}</tspan>}
+                              {s}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+          <div className="pointer-events-none absolute bottom-2 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded border border-border bg-bg-2/90 px-2 py-1 text-[10px] text-fg-dim">
+            {Object.values(KIND).map((k) => (
+              <span key={k.label} className="flex items-center gap-1">
+                <i className="inline-block h-2 w-2 rounded-sm" style={{ background: k.color }} />
+                {k.label}
+              </span>
+            ))}
+            <span className="flex items-center gap-1">
+              <i
+                className="inline-block w-3 border-t-2 border-dashed"
+                style={{ borderColor: '#e3cf5b' }}
+              />
+              Reference by id
             </span>
-          ))}
-          <span className="flex items-center gap-1">
-            <i
-              className="inline-block w-3 border-t-2 border-dashed"
-              style={{ borderColor: '#e3cf5b' }}
-            />
-            Reference by id
-          </span>
+            <span className="flex items-center gap-1">
+              <i className="inline-block h-2 w-2 rounded-sm" style={{ background: '#3e9fc4' }} />
+              Blue square: result in the viewport · Ctrl-click: view result · N: panel
+            </span>
+          </div>
         </div>
+        {panelOpen ? <NodesPanel nodeId={primary && real.nodes[primary] ? primary : null} /> : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * #1953 — the Nodes tab's own right panel (board 8b; Blender's node sidebar, Houdini's parameter
+ * pane): the selected node's full parameters. It is the inspector's own block (`NodeParams`), so
+ * a value here, on the node and in the inspector is one setting with one set of controls.
+ */
+function NodesPanel({ nodeId }: { nodeId: NodeId | null }): ReactNode {
+  return (
+    <aside
+      data-testid="nodes-panel"
+      aria-label="Node settings"
+      className="no-scrollbar flex shrink-0 flex-col overflow-y-auto border-l border-border bg-bg-2 text-xs"
+      style={{ width: PANEL_WIDTH }}
+    >
+      {nodeId ? (
+        <NodeParams nodeId={nodeId} />
+      ) : (
+        <div data-testid="nodes-panel-empty" className="p-4 text-fg-dim">
+          Select a node to see its settings.
+        </div>
+      )}
+    </aside>
   );
 }

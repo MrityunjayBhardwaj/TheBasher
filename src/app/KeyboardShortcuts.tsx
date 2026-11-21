@@ -78,6 +78,9 @@ import {
 } from './keepPlaceReparent';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
+import { useNodesTabStore } from './stores/nodesTabStore';
+import { useTimelineDockStore } from './stores/timelineDockStore';
+import { useAgentContextStore } from './stores/agentContextStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { hoveredElements, underMouse } from './animate/rowKey';
 import { nodeDisplayName } from './sceneTreeWalk';
@@ -694,6 +697,20 @@ export function KeyboardShortcuts() {
           e.preventDefault();
           useRenameStore.getState().begin(primary, 'outliner');
         }
+        return;
+      }
+
+      // #1953 — N folds and unfolds the Nodes tab's own panel while the director works there
+      // (Blender's N over the node editor): the drawer shows the Nodes tab and it is the pane last
+      // pressed, typed or focused in. Nothing else binds N, so elsewhere it does nothing.
+      if (
+        (e.key === 'n' || e.key === 'N') &&
+        useViewportStore.getState().timelineDrawerOpen &&
+        useTimelineDockStore.getState().activeTab === 'nodes' &&
+        useAgentContextStore.getState().lastPane === 'nodes'
+      ) {
+        e.preventDefault();
+        useNodesTabStore.getState().togglePanel();
         return;
       }
 

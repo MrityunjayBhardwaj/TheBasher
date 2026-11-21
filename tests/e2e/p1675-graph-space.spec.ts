@@ -30,7 +30,9 @@ test('View ▸ Nodes draws the scene in the drawer and shares the selection', as
   // one that just names its object, with no wire, is animation, hidden until asked for and counted
   // as hidden. Which types are constraints comes from the product's own list, so the expectation
   // follows the default project as it gains or loses one.
-  const { total, onChain, constraints } = await page.evaluate(async () => {
+  // #1953 — a network ends at its object: the Scene node, and the render output that reads only
+  // it, are not drawn (`ends`).
+  const { total, onChain, constraints, ends } = await page.evaluate(async () => {
     const { ADDABLE_CONSTRAINTS } = await import('/src/app/constraintStack.ts');
     const types = new Set(ADDABLE_CONSTRAINTS.map((c: { type: string }) => c.type));
     const nodes = Object.values(
@@ -42,15 +44,17 @@ test('View ▸ Nodes draws the scene in the drawer and shares the selection', as
       total: nodes.length,
       onChain: wired.map((n) => n.id),
       constraints: steps.length - wired.length,
+      ends: nodes.filter((n) => n.type === 'Scene' || n.type === 'RenderOutput').length,
     };
   });
   // The premise: the starter scene's aim is on a chain, so the case below is not empty.
   expect(onChain.length).toBeGreaterThan(0);
   expect(total).toBeGreaterThan(constraints);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints);
+  expect(ends).toBe(2);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints - ends);
   for (const id of onChain) await expect(page.locator(`[data-graph-node="${id}"]`)).toHaveCount(1);
   const counts = page.getByTestId('graph-view-counts');
-  await expect(counts).toContainText(`${total - constraints} nodes`);
+  await expect(counts).toContainText(`${total - constraints - ends} nodes`);
   if (constraints > 0) await expect(counts).toContainText(`${constraints} animation hidden`);
   else await expect(counts).not.toContainText('animation hidden');
 
@@ -153,11 +157,11 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
   });
   await expect(page.locator('[data-graph-line="ref:s_driver>n_box"]')).toHaveCount(1);
   await page.getByTestId('graph-view-ref-lines').selectOption('all');
-  // The scene and render outputs are flags on their nodes.
-  await expect(page.locator('[data-graph-node="n_scene"] [data-graph-badges]')).toHaveAttribute(
-    'data-graph-badges',
-    /SCENE/,
-  );
+  // #1953 — a network ends at its object: the Scene node (which carried the SCENE flag) and the
+  // render output are not drawn.
+  await expect(page.locator('[data-graph-node="n_scene"]')).toHaveCount(0);
+  await expect(page.locator('[data-graph-node="n_render"]')).toHaveCount(0);
+  const ends = 2;
   const inside = Number(
     await solver.locator('[data-graph-inside]').getAttribute('data-graph-inside'),
   );
@@ -165,9 +169,12 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
   const total = await page.evaluate(
     () => Object.keys((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).length,
   );
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside - ends);
 
-  await solver.locator('rect').first().dblclick({ force: true });
+  await solver
+    .locator('rect')
+    .first()
+    .dblclick({ force: true, position: { x: 30, y: 12 } });
   await expect(page.getByTestId('graph-view-path-s_solver')).toBeVisible();
   await expect(page.locator('[data-graph-node]')).toHaveCount(inside);
   await expect(solver).toHaveCount(0);
@@ -191,5 +198,5 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
 
   await page.getByTestId('graph-view-path-top').click();
   await expect(page.getByTestId('graph-view-path-s_solver')).toHaveCount(0);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside - ends);
 });
