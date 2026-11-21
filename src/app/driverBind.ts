@@ -14,6 +14,7 @@
 // REF: ref/GROUND_TRUTH_HOUDINI_DRIVERS_CONTROLLERS.md §7 (G1/G6, DR10); state.ts
 //      wouldCreateCycle; src/app/paramDrivers.ts (driverParamDeps); issue #293.
 
+import { outputsOfNode } from '../core/dag/instanceSockets';
 import type { DagState } from '../core/dag/state';
 import { outputAvailable } from '../core/dag/socketAvailability';
 import { wouldCreateCycle } from '../core/dag/state';
@@ -278,7 +279,7 @@ export function driverSourceOptions(
     const label = node.meta?.name?.trim() || node.id;
     const def = getNodeType(node.type);
     if (def) {
-      for (const [socket, desc] of Object.entries(def.outputs)) {
+      for (const [socket, desc] of Object.entries(outputsOfNode(def, node.params))) {
         if (desc.type !== wantType) continue;
         // #1801 — an output the node's mode has switched off is not a source (a Mix in Vector
         // mode offers its vector result, not its number one).

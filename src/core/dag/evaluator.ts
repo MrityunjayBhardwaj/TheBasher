@@ -24,6 +24,7 @@ import { hashString, hashValue, type ContentHash } from './hash';
 import { getNodeType, registryEpoch, requireNodeType } from './registry';
 import { loopedWorldRefs, type DagState, type EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
+import { inputsOfNode } from './instanceSockets';
 import { inputAvailable, outputAvailable } from './socketAvailability';
 import { bodyInputLeavesOf } from './subnetworks';
 import type {
@@ -782,8 +783,10 @@ export function evaluate(
     // node types and this node's cache key already carries its own.
     const resolved: ResolvedInputs = {};
     const inputHashes: Record<string, string | string[]> = {};
+    // #1715 — this node's own sockets: a workflow node's come from its file.
+    const ownInputs = inputsOfNode(def, node.params);
     for (const [socket, rawBinding] of Object.entries(drawnInputsOf(state, id, node))) {
-      const into = def.inputs[socket];
+      const into = ownInputs[socket];
       // #1810 — the parent input feeds the world output only, never the node's own value.
       if (into?.world === true) continue;
       // #1811 — and so does a constraint chain's.
@@ -892,7 +895,8 @@ export function evaluateInputRef(
   options: EvaluateOptions = {},
 ): EvalResult {
   const consumer = state.nodes[consumerId];
-  const into = consumer ? getNodeType(consumer.type)?.inputs[socket] : undefined;
+  const consumerDef = consumer ? getNodeType(consumer.type) : undefined;
+  const into = consumerDef ? inputsOfNode(consumerDef, consumer!.params)[socket] : undefined;
   const sub = evaluate(state, ref.node, { ...options, socket: ref.socket });
   return pickedArrival(state, options, imageTakeOf(into, consumer?.params), ref, sub);
 }

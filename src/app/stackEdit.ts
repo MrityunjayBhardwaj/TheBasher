@@ -27,6 +27,7 @@
 // REF: issue #1816; src/app/stackTree.ts (`stackOf`); src/core/dag/chainEdit.ts;
 //      src/app/sceneNodeActions.ts (`planDeleteNodes`); src/core/dag/templates.ts (`templateEdits`).
 
+import { inputsOfNode } from '../core/dag/instanceSockets';
 import type { z } from 'zod';
 import { addStepOps, readChain, removeStepOps } from '../core/dag/chainEdit';
 import { bypassParamOf } from '../core/dag/chainBypass';
@@ -301,8 +302,10 @@ function landOps(
   }
   const { owner, socket } = place.route;
   const row = nodeRowOf(placeOf(places, owner));
+  const rowDef = getNodeType(row.nodeType);
   const input =
-    getNodeType(row.nodeType)?.inputs[socket] ?? refuse(`${row.nodeType} has no input "${socket}"`);
+    (rowDef && inputsOfNode(rowDef, state.nodes[row.nodeId]?.params)[socket]) ??
+    refuse(`${row.nodeType} has no input "${socket}"`);
   if (input.cardinality !== 'list' && state.nodes[row.nodeId].inputs[socket]) {
     refuse(`"${row.nodeId}" already reads something through "${socket}"; add on top of that row`);
   }
@@ -489,7 +492,11 @@ function reorderOps(
 ): Op[] {
   const row = nodeRowOf(placeOf(places, edit.row));
   const binding = state.nodes[row.nodeId].inputs[edit.socket];
-  if (getNodeType(row.nodeType)?.inputs[edit.socket]?.cardinality !== 'list') {
+  const rowDef = getNodeType(row.nodeType);
+  const into = rowDef
+    ? inputsOfNode(rowDef, state.nodes[row.nodeId]?.params)[edit.socket]
+    : undefined;
+  if (into?.cardinality !== 'list') {
     refuse(`"${edit.socket}" holds one wire, so it has no order to change`);
   }
   const list = Array.isArray(binding) ? binding : binding ? [binding] : [];

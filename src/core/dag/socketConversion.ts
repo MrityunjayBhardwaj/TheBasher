@@ -58,6 +58,7 @@
 // 7 runs of 400): 0.365 ms with the check against 0.358 ms with it short-cut, so about 14 ns a
 // wire. An input with no conversion pays one WeakMap read and never looks its producer up.
 
+import { outputsOfNode } from './instanceSockets';
 import { getNodeType } from './registry';
 import { acceptedTypes, inputAccepts } from './socketMembership';
 import type { EvaluableState } from './state';
@@ -116,7 +117,9 @@ export function producedTypeOf(
   ref: { node: NodeId; socket: string },
 ): SocketTypeName | undefined {
   const producer = state.nodes[ref.node];
-  return producer ? getNodeType(producer.type)?.outputs[ref.socket]?.type : undefined;
+  const def = producer ? getNodeType(producer.type) : undefined;
+  // #1715 — the producer's own sockets, which for a workflow node come from its file.
+  return def ? outputsOfNode(def, producer!.params)[ref.socket]?.type : undefined;
 }
 
 /** Whether a wire carrying `produced` may enter `desc`: it is taken as it is, or it converts. */

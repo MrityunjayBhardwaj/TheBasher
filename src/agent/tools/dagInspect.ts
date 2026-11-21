@@ -5,6 +5,7 @@
 //
 // REF: THESIS.md §6-10, vyapti V7.
 
+import { inputsOfNode, outputsOfNode } from '../../core/dag/instanceSockets';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from './types';
 import { getNodeType } from '../../core/dag/registry';
@@ -64,7 +65,7 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             // #1049 — a stored mesh is shown as its counts, never as its packed bytes.
             params: paramsForAgent(n.params),
             inputs: inputs.length > 0 ? inputs : undefined,
-            outputs: def ? Object.keys(def.outputs) : undefined,
+            outputs: def ? Object.keys(outputsOfNode(def, n.params)) : undefined,
           };
         });
 
@@ -105,7 +106,12 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             type: node.type,
             params: paramsForAgent(node.params),
             inputs: listInputs(node.inputs),
-            outputs: def ? Object.keys(def.outputs) : [],
+            outputs: def ? Object.keys(outputsOfNode(def, node.params)) : [],
+            // #1715 — a node whose sockets come from its params (a workflow node's file) lists
+            // them with their types, the same sockets the Nodes view draws and connect accepts.
+            sockets: def?.instanceSockets
+              ? socketTypesOf(def, node.params, node.inputs)
+              : undefined,
             consumers: some(relations.wiresOut.map((w) => ({ id: w.node, socket: w.socket }))),
             referencedBy: some(referencedBy),
             references: some(
@@ -270,4 +276,27 @@ function framePicksOf(
 ): Record<string, readonly number[]> | undefined {
   const picked = rows.flatMap((r) => (r.picks ? [[r.socket, r.picks] as const] : []));
   return picked.length > 0 ? Object.fromEntries(picked) : undefined;
+}
+
+/** #1715 — a node's sockets with their types (`Image (still)`, `Number`, …), and any wire it
+ *  holds on a socket it no longer has (its workflow file changed): kept, read as unconnected. */
+function socketTypesOf(
+  def: NonNullable<ReturnType<typeof getNodeType>>,
+  params: unknown,
+  held: Record<string, unknown> = {},
+): {
+  inputs: Record<string, string>;
+  outputs: Record<string, string>;
+  brokenWires?: string[];
+} {
+  const typeOf = (t: string | readonly string[], takes?: unknown) =>
+    `${Array.isArray(t) ? t.join(' | ') : String(t)}${typeof takes === 'string' ? ` (${takes})` : ''}`;
+  const ins = inputsOfNode(def, params);
+  const inputs: Record<string, string> = {};
+  for (const [s, d] of Object.entries(ins))
+    inputs[s] = typeOf(d.type, typeof d.takes === 'function' ? d.takes(params) : d.takes);
+  const outputs: Record<string, string> = {};
+  for (const [s, d] of Object.entries(outputsOfNode(def, params))) outputs[s] = typeOf(d.type);
+  const broken = Object.keys(held).filter((s) => !(s in ins));
+  return broken.length > 0 ? { inputs, outputs, brokenWires: broken } : { inputs, outputs };
 }

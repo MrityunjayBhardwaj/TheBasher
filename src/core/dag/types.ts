@@ -349,6 +349,12 @@ export interface InputDescriptor {
   takes?: ImageTake | ((params: unknown) => ImageTake);
 }
 
+/** #1715 — the sockets a node has by its params ({@link NodeDefinition.instanceSockets}). */
+export interface InstanceSockets {
+  readonly inputs: Readonly<Record<SocketId, InputDescriptor>>;
+  readonly outputs: Readonly<Record<SocketId, OutputDescriptor>>;
+}
+
 /** #1716 — see {@link InputDescriptor.takes}. */
 export type ImageTake = 'still' | 'frames';
 
@@ -645,6 +651,17 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   paramSchema: z.ZodType<P, z.ZodTypeDef, unknown>;
   inputs: Record<SocketId, InputDescriptor>;
   outputs: Record<SocketId, OutputDescriptor>;
+  /**
+   * #1715 — sockets a node of this type has by its own params, on top of `inputs`/`outputs`:
+   * a ComfyUI workflow node has one per Basher marker in its workflow file. Pure, and the same
+   * params give the same sockets. A socket here carries a type, a cardinality and (Image) a
+   * `takes`, never the structural flags (body, world, chain, owns, gathersChildren, sourceIds,
+   * available), so a reader that only looks for those may keep reading `inputs`. A wire on a
+   * socket the params no longer give is kept and read as unconnected, as #1801 keeps a wire on a
+   * socket that is not available. Read through `inputsOfNode`/`outputsOfNode`
+   * (`instanceSockets.ts`), never by calling this.
+   */
+  instanceSockets?: (params: unknown) => InstanceSockets;
   /**
    * #1548 — the named inputs of the sub-network this node owns (see `BodyInputDescriptor`).
    * Only a node with `body` sockets declares them.

@@ -26,6 +26,7 @@
 // REF: src/core/dag/layout.ts (viewEdgesOf, viewRowsOf, levelOf); src/app/collections.ts
 //      (hiddenNodes); src/app/timeDependence.ts (timeDependentNodes).
 
+import { inputsOfNode } from '../core/dag/instanceSockets';
 import { levelOf, viewEdgesOf, viewRowsOf, type ViewEdge, type ViewRow } from '../core/dag/layout';
 import type { DagState } from '../core/dag/state';
 import type { NodeId, NodeRef } from '../core/dag/types';
@@ -61,7 +62,8 @@ function picksOn(
   cache: EvaluatorCache | undefined,
 ): number[] | undefined {
   const node = state.nodes[id];
-  const desc = node ? getNodeType(node.type)?.inputs[socket] : undefined;
+  const def = node ? getNodeType(node.type) : undefined;
+  const desc = def ? inputsOfNode(def, node.params)[socket] : undefined;
   if (imageTakeOf(desc, node?.params) !== 'still') return undefined;
   const picks: number[] = [];
   for (const ref of bindingRefs(node.inputs?.[socket])) {

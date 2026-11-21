@@ -37,6 +37,7 @@ import type {
 import { acceptedTypes, OpSchema, OUTPUT_SOCKET_TYPES, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
 import { inputAvailable, outputAvailable, whyUnavailable } from './socketAvailability';
+import { inputExists, inputsOfNode, outputsOfNode } from './instanceSockets';
 
 /**
  * #1586 — the graph declining an edit: an operation it will not apply (`OpError`), or a batch
@@ -371,7 +372,7 @@ function applySetOutput(state: DagState, op: Extract<Op, { type: 'setOutput' }>)
   const prior = state.outputs[op.name];
   if (op.ref !== null) {
     const node = getNode(state, op.ref.node);
-    const socket = requireNodeType(node.type).outputs[op.ref.socket];
+    const socket = outputsOfNode(requireNodeType(node.type), node.params)[op.ref.socket];
     if (!socket) {
       throw new OpError(`setOutput: ${node.type} has no output '${op.ref.socket}'`, op);
     }
@@ -471,7 +472,11 @@ function applyAddNode(
   // pose into a Number socket, a socket the type does not have, a producer that is not in the
   // graph. Every wire here answers to the rule `connect` applies, one wire at a time.
   for (const [socket, binding] of Object.entries(op.inputs ?? {})) {
-    const inputDesc = requireInput('addNode', op, op.nodeType, socket);
+    // #1715 — a node whose sockets come from its params may hold a wire on a socket they no
+    // longer give (its workflow file changed). That wire is a kept state, like a wire on a
+    // socket that is not available, so a restore (undo, paste, load) brings it back unchecked.
+    if (!inputExists(def, paramsParsed.data, socket)) continue;
+    const inputDesc = requireInput('addNode', op, op.nodeType, socket, paramsParsed.data);
     const given = Array.isArray(binding);
     // A list on a single socket has no reading. The other way round is left alone: a lone
     // wire on a list socket is what `connect` itself reads as a list of one.
@@ -558,8 +563,10 @@ function requireInput(
   op: Op,
   consumerType: string,
   socket: string,
+  params: unknown,
 ): InputDescriptor {
-  const inputDesc = requireNodeType(consumerType).inputs[socket];
+  // #1715 — the sockets this node has, which for a workflow node come from its file.
+  const inputDesc = inputsOfNode(requireNodeType(consumerType), params)[socket];
   if (!inputDesc) {
     throw new OpError(`${door}: ${consumerType} has no input socket '${socket}'`, op);
   }
@@ -586,7 +593,7 @@ function requireWire(
   held: readonly NodeRef[],
 ): OutputDescriptor {
   const producer = getNode(state, ref.node);
-  const outputDesc = requireNodeType(producer.type).outputs[ref.socket];
+  const outputDesc = outputsOfNode(requireNodeType(producer.type), producer.params)[ref.socket];
   if (!outputDesc) {
     throw new OpError(`${door}: ${producer.type} has no output socket '${ref.socket}'`, op);
   }
@@ -700,7 +707,7 @@ function applyConnect(
   // The producer is looked up before the socket, as it always was: a wire from a node that is
   // not in the graph says so first.
   getNode(state, op.from.node);
-  const inputDesc = requireInput('connect', op, consumer.type, op.to.socket);
+  const inputDesc = requireInput('connect', op, consumer.type, op.to.socket, consumer.params);
   const ref: NodeRef = { node: op.from.node, socket: op.from.socket };
   const prior = consumer.inputs[op.to.socket];
   const held = Array.isArray(prior) ? prior : prior ? [prior] : [];
@@ -810,7 +817,11 @@ function applyDisconnect(
 ): ApplyResult {
   const consumer = getNode(state, op.to.node);
   const def = requireNodeType(consumer.type);
-  const inputDesc = def.inputs[op.to.socket];
+  // #1715 — a broken wire (on a socket the node's file no longer gives) can still be removed:
+  // it is held, so it can be let go.
+  const inputDesc =
+    inputsOfNode(def, consumer.params)[op.to.socket] ??
+    (def.instanceSockets && consumer.inputs[op.to.socket] !== undefined ? true : undefined);
   if (!inputDesc) {
     throw new OpError(`disconnect: ${consumer.type} has no input socket '${op.to.socket}'`, op);
   }
