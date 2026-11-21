@@ -179,6 +179,8 @@ export interface GenerateShotsResult {
 export async function generateShotWorkflows(
   ids: readonly NodeId[],
   deps?: RegenerateDeps,
+  /** Run each of `ids` even when it is current (Regenerate on one clip). */
+  opts: { always?: boolean } = {},
 ): Promise<GenerateShotsResult> {
   const run = useShotClipRunStore.getState();
   if (run.current !== null) return { ran: [], failed: { at: run.current, message: 'busy' } };
@@ -189,7 +191,10 @@ export async function generateShotWorkflows(
     while (queue.length > 0) {
       const id = queue.shift()!;
       useShotClipRunStore.getState().set({ current: id, queued: [...queue], phase: null });
-      if (madeStateOf(useDagStore.getState().state, id, createEvaluatorCache()) === 'current')
+      if (
+        !opts.always &&
+        madeStateOf(useDagStore.getState().state, id, createEvaluatorCache()) === 'current'
+      )
         continue;
       const result = await regenerateWorkflow(id, d);
       ran.push(...result.ran);
@@ -216,4 +221,10 @@ export function generateStaleShots(compId: NodeId, deps?: RegenerateDeps) {
     shotsToGenerate(useDagStore.getState().state, compId, createEvaluatorCache()),
     deps,
   );
+}
+
+/** Regenerate on one shot clip: its passes rendered and its workflow run, current or not, with
+ *  anything stale it depends on first. */
+export function regenerateShotClip(workflowId: NodeId, deps?: RegenerateDeps) {
+  return generateShotWorkflows([workflowId], deps, { always: true });
 }

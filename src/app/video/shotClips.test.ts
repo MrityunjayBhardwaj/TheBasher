@@ -21,6 +21,7 @@ import { shotsOf } from '../shots';
 import { useRenderJobsStore } from '../stores/renderJobsStore';
 import { buildNewCompositionOps } from './newComposition';
 import { generateShotWorkflows, generateStaleShots, useShotClipRunStore } from './shotClipActions';
+import { seedOf } from './ShotClipPanel';
 import { makeShotClipsPlan, shotClipsOf, shotClipState, shotsToGenerate } from './shotClips';
 
 beforeEach(() => {
@@ -256,5 +257,26 @@ describe('#1717 — Generate stale shots', () => {
     const result = await generateStaleShots('comp', deps);
     expect(result.ran).toEqual([]);
     expect(capability.submissions).toHaveLength(0);
+  });
+});
+
+describe('#1717 — the seed a shot clip runs with', () => {
+  it("the built-in stylized workflow's seed is a literal in the file: locked", () => {
+    const s = film();
+    const after = apply(s, makeShotClipsPlan(s, 'comp').ops);
+    const id = shotClipsOf(after, 'comp')[0].workflowId!;
+    expect(seedOf(after.nodes[id].params as Parameters<typeof seedOf>[0])).toEqual({
+      value: 0,
+      locked: true,
+      where: 'KSamplerSeedSet 1',
+    });
+  });
+
+  it('a seed input is a control, not locked', () => {
+    expect(seedOf({ graph: { apiJson: STILL_FILE, meta: FIXTURE_META } })).toEqual({
+      value: 7,
+      locked: false,
+      where: 'the seed input',
+    });
   });
 });
