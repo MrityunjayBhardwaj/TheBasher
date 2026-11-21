@@ -127,7 +127,8 @@ export async function cookMotionGenerations(
   );
 
   const beforeBake = useDagStore.getState().state;
-  const ops = bakeGeneratedClipOps(beforeBake);
+  // #1942 — the bake takes the same scope as the generation: a scoped cook lands its own clip only.
+  const ops = bakeGeneratedClipOps(beforeBake, producerId);
   const baked = ops.filter((o) => o.type === 'setParam' && o.paramPath === 'sourceHash').length;
   if (ops.length > 0) {
     useDagStore

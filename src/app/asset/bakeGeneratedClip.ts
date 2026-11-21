@@ -185,15 +185,26 @@ export function clipBakeStates(state: DagState, cache?: EvaluatorCache): ClipBak
  * `failed`, which is the whole of lock/freeze: a clip whose producer cannot
  * currently answer keeps the motion it last had.
  */
-export function bakeGeneratedClipOps(state: DagState): Op[] {
+export function bakeGeneratedClipOps(
+  state: DagState,
+  /**
+   * #1942 — bake only this producer's clip. Omit to bake every answerable clip.
+   *
+   * A scoped cook generates for one producer, and a bake that still walked the whole graph
+   * also wrote any OTHER stale clip whose take happened to be cached: no paid call, but that
+   * clip's motion changed and its stale mark cleared without its own button being pressed.
+   */
+  producerId?: string,
+): Op[] {
   const ops: Op[] = [];
-  for (const { clipId, producerId, stale, status } of clipBakeStates(state)) {
+  for (const { clipId, producerId: rowProducer, stale, status } of clipBakeStates(state)) {
+    if (producerId !== undefined && rowProducer !== producerId) continue;
     // BOTH conditions. `stale` says the params are behind the request; `ready`
     // says there is an answer to write. A pending producer is stale and has
     // nothing to bake, and writing its empty result is exactly the blanking that
     // lock/freeze exists to prevent.
     if (!stale || status !== 'ready') continue;
-    const value = evaluate(state, producerId).value as AnimationClipValue;
+    const value = evaluate(state, rowProducer).value as AnimationClipValue;
     // #1227 — the params are the value's own poses (bones by name, quaternions), so what lands is
     // exactly what the producer evaluated to, with nothing converted on the way.
 

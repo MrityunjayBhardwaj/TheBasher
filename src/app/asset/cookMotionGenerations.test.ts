@@ -157,6 +157,45 @@ describe('cookMotionGenerations (#935)', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('#1942 — a scoped re-cook bakes only its own clip, never another stale one whose take is cached', async () => {
+    const mintNamed = (prompt: string) => {
+      const r = mintMotionGenerateOps(useDagStore.getState().state, {
+        prompt,
+        seed: 7,
+        model: 'kimodo-base',
+      });
+      useDagStore.getState().dispatchAtomic(r.ops as Op[], 'user', 'mint');
+      return r;
+    };
+    const setSeed = (id: string, value: number) =>
+      useDagStore
+        .getState()
+        .dispatchAtomic(
+          [{ type: 'setParam', nodeId: id, paramPath: 'seed', value }] as Op[],
+          'user',
+          'seed',
+        );
+    const a = mintNamed('walk A');
+    const b = mintNamed('run B');
+    await cookMotionGenerations();
+    // B's seed-7 take stays in the cache after B moves to 99 and back: B is stale AND answerable.
+    setSeed(b.producerId, 99);
+    await cookMotionGenerations(b.producerId);
+    setSeed(b.producerId, 7);
+    const bPlaying = clipParams(b.clipId).sourceHash;
+    const offerB = () => motionCookOffer(useDagStore.getState().state, b.producerId);
+    expect(offerB().stale).toBe(true);
+
+    setSeed(a.producerId, 42);
+    calls.length = 0;
+    await cookMotionGenerations(a.producerId);
+
+    expect(calls).toEqual(['walk A']);
+    // B was not pressed: its clip keeps playing what it played, and still says so.
+    expect(clipParams(b.clipId).sourceHash).toBe(bPlaying);
+    expect(offerB().stale).toBe(true);
+  });
+
   it('hasStaleGenerations is false in a project with no producers at all', () => {
     expect(hasStaleGenerations()).toBe(false);
   });
