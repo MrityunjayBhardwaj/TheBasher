@@ -218,15 +218,20 @@ test('the view flag shows that node’s result in the viewport', async ({ page }
     });
     dag.dispatchAtomic(add!.ops, 'user', 'add array');
   });
-  const width = () =>
-    page.evaluate(() => (window as unknown as W).__basher_mesh_world_bounds('n_box')![0]);
+  const widthOf = (id: string) =>
+    page.evaluate((id) => (window as unknown as W).__basher_mesh_world_bounds(id)?.[0] ?? null, id);
+  const width = () => widthOf('n_box');
   await expect.poll(width).toBeGreaterThan(4);
-  const final = await width();
+  const final = (await width())!;
   await openNodes(page);
   await graph(page).getByTestId('graph-view-flag-n_box_data').click();
-  await expect.poll(width).toBeLessThan(final / 2);
+  // #1955 — the viewport draws the step through a viewport-only stand-in (one box); the object
+  // keeps its finished three for every render, hidden from the viewport while the step shows.
+  await expect.poll(() => widthOf('n_box~viewing')).toBeLessThan(final / 2);
+  expect(await width()).toBeCloseTo(final, 3);
   await page.screenshot({ path: `${SHOTS}/p1953-viewing.png` });
-  // Back to the scene: the final result again.
+  // Back to the scene: no stand-in, the final result again.
   await graph(page).getByTestId('graph-view-flag-n_box_data').click();
+  await expect.poll(() => widthOf('n_box~viewing')).toBeNull();
   await expect.poll(width).toBeCloseTo(final, 3);
 });

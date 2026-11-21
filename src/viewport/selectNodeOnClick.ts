@@ -15,6 +15,7 @@
 
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
+import { pickTargetOf } from '../app/viewFlag';
 
 /** The minimal click-event shape both R3F's ThreeEvent and a plain handler give. */
 export interface SelectClickLike {
@@ -39,9 +40,11 @@ export function selectNode(pickId: string | null, e: SelectClickLike): void {
   if (!pickId) return;
   if (useLightBrushStore.getState().active) return;
   e.stopPropagation();
+  // #1955 — the stand-in drawing a viewed step (Nodes tab view flag) picks its object.
+  const id = pickTargetOf(pickId);
   const sel = useSelectionStore.getState();
-  if (e.shiftKey) sel.selectAdditive(pickId);
-  else sel.select(pickId);
+  if (e.shiftKey) sel.selectAdditive(id);
+  else sel.select(id);
 }
 
 /** A ready-made onClick handler for the simple pickers (light / camera helpers). */

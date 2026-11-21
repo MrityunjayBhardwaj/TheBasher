@@ -66,4 +66,13 @@ describe('selectNodeOnClick', () => {
     expect(useSelectionStore.getState().primaryNodeId).toBe('n_armature');
     expect(e.stopPropagation).toHaveBeenCalledTimes(1);
   });
+
+  it('#1955 — a click on a viewed step’s stand-in selects its object', () => {
+    selectNode('n_box~viewing', fakeEvent());
+    expect(useSelectionStore.getState().primaryNodeId).toBe('n_box');
+    selectNode('n_light', fakeEvent());
+    selectNode('n_box~viewing', fakeEvent(true));
+    expect(useSelectionStore.getState().selectedNodeIds.has('n_box')).toBe(true);
+    expect(useSelectionStore.getState().selectedNodeIds.has('n_box~viewing')).toBe(false);
+  });
 });

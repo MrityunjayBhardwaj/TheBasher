@@ -7,7 +7,9 @@ import { applyOps } from '../core/dag/ops';
 import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import { buildAddModifierOps } from './operatorStack';
-import { viewedObjectOf, viewedState, viewFlagOf } from './viewFlag';
+import { hiddenNodes } from './collections';
+import { renderVisibilityStamps } from './renderVisibility';
+import { pickTargetOf, viewedObjectOf, viewedState, viewFlagOf, VIEWING_SUFFIX } from './viewFlag';
 
 beforeAll(() => registerAllNodes());
 
@@ -55,18 +57,46 @@ describe('viewedState — what the viewport draws while a node is flagged', () =
     expect(viewedState(state, 'n_light_aim')).toBe(state);
   });
 
-  it('a step: the object wears that step’s result, and the real graph is untouched', () => {
+  it('a step: the viewport draws a stand-in wearing it; the object keeps its finished result', () => {
     const { state, arrayId } = withArray();
-    const before = JSON.stringify(state.nodes.n_box.inputs);
+    const before = JSON.stringify(state.nodes);
     expect(viewedObjectOf(state, 'n_box_data')).toBe('n_box');
     expect(drawn(state, 'n_box')).toBe('ModifiedData:array×4');
     const viewed = viewedState(state, 'n_box_data');
-    expect(viewed.nodes.n_box.inputs.data).toEqual({ node: 'n_box_data', socket: 'out' });
-    // Viewing the box: the object wears the plain box, not the four the Array makes.
-    expect(drawn(viewed, 'n_box')).toBe('MeshData:box');
-    expect(drawn(viewed, 'n_box')).not.toContain('array');
-    // Viewing the Array itself is the final result (nothing sits above it).
-    expect(drawn(viewedState(state, arrayId), 'n_box')).toBe('ModifiedData:array×4');
-    expect(JSON.stringify(state.nodes.n_box.inputs)).toBe(before);
+    const standIn = `n_box${VIEWING_SUFFIX}`;
+    // The stand-in wears the plain box, not the four the Array makes.
+    expect(drawn(viewed, standIn)).toBe('MeshData:box');
+    // #1955 — the object itself still wears the finished result.
+    expect(drawn(viewed, 'n_box')).toBe('ModifiedData:array×4');
+    // Viewing the Array itself is the final result (nothing sits above it): a stand-in again.
+    expect(drawn(viewedState(state, arrayId), `n_box${VIEWING_SUFFIX}`)).toBe(
+      'ModifiedData:array×4',
+    );
+    expect(JSON.stringify(state.nodes)).toBe(before);
+  });
+
+  it('#1955 — the flag is visibility: the object renders, the stand-in only shows in the viewport', () => {
+    const { state } = withArray();
+    const viewed = viewedState(state, 'n_box_data');
+    const standIn = `n_box${VIEWING_SUFFIX}`;
+    const stamps = renderVisibilityStamps(
+      hiddenNodes(viewed, 'viewport'),
+      hiddenNodes(viewed, 'render'),
+    );
+    expect(stamps.get('n_box')).toBe('render-only');
+    expect(stamps.get(standIn)).toBe('viewport-only');
+    // Drawn where the object is drawn: the scene lists it beside the object.
+    const kids = viewed.nodes.n_scene.inputs.children as { node: string }[];
+    expect(kids.map((k) => k.node)).toContain(standIn);
+    expect(kids.map((k) => k.node)).toContain('n_box');
+    // Nothing flagged: no stamps at all.
+    expect(
+      renderVisibilityStamps(hiddenNodes(state, 'viewport'), hiddenNodes(state, 'render')).size,
+    ).toBe(0);
+  });
+
+  it('a pick on the stand-in selects its object', () => {
+    expect(pickTargetOf(`n_box${VIEWING_SUFFIX}`)).toBe('n_box');
+    expect(pickTargetOf('n_box')).toBe('n_box');
   });
 });
