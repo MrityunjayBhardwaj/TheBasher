@@ -333,7 +333,51 @@ export interface InputDescriptor {
    * the other way round. Read through `worldChildrenOf` (`core/dag/worldChildren.ts`).
    */
   gathersChildren?: true;
+  /**
+   * #1716 — what an Image input does with time: `'still'` reads one image, `'frames'` steps
+   * through a run of them. Absent: the input takes whatever arrives and passes it on (an effect).
+   * A function when the node's own params decide (a ComfyUI workflow node is a still or a
+   * video workflow by how it is set up). Allowed on an input that accepts `Image` only.
+   *
+   * The value says which it carries ({@link ImageExtent}); the evaluator reconciles the two where
+   * the value enters the input, read through `imageTakeOf` (`imageExtent.ts`):
+   *  - a still into `'frames'` holds for the whole range. Nothing to do: a still's value does
+   *    not change with time, which every still producer keeps (it reads no time).
+   *  - frames into `'still'` picks a frame: the first of the run. The producer is evaluated at
+   *    that frame and the value arrives as a still that names the frame it was picked from.
+   */
+  takes?: ImageTake | ((params: unknown) => ImageTake);
 }
+
+/** #1716 — see {@link InputDescriptor.takes}. */
+export type ImageTake = 'still' | 'frames';
+
+/**
+ * #1716 — the frames a run of images covers, inclusive, at `fps` (so a frame turns into a time).
+ * In the producer's own frames: a video file's are its source frames, a ComfyUI workflow's are
+ * the timeline frames it renders.
+ */
+export interface ImageFrameRange {
+  readonly start: number;
+  readonly end: number;
+  readonly fps: number;
+}
+
+/**
+ * #1716 — whether an Image value is one picture or a run of frames. Lives on the value
+ * (`ImageValue.extent`, `src/nodes/types.ts`) because the socket is one type for both: the
+ * producer knows, the wire does not.
+ *
+ *  - `still`: one image, the same at every time. `pickedFrame` is set when the still was picked
+ *    out of a run of frames on its way into a still input, and names that frame.
+ *  - `frames`: the value at time t is the frame at t. `range` is the run it covers, or null when
+ *    the producer renders whatever time it is asked for (a render pass) and has no end of its own.
+ *
+ * Read it through `matchImageExtent` so a new arm is a compile error at every reader.
+ */
+export type ImageExtent =
+  | { readonly kind: 'still'; readonly pickedFrame?: number }
+  | { readonly kind: 'frames'; readonly range: ImageFrameRange | null };
 
 /**
  * #1548 — one NAMED input of a sub-network, declared by the node that owns it (the Solver's

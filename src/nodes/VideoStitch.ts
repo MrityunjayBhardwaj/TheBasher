@@ -46,7 +46,7 @@ export const VideoStitchNode: NodeDefinition<VideoStitchParams, VideoValue> = {
      *  carries both raw passes AND stylized output AND VideoStitch
      *  input. Per-kind closure BFS isolation (H22) keeps siblings
      *  apart. */
-    'pass-input': { type: 'Image', cardinality: 'list' },
+    'pass-input': { type: 'Image', cardinality: 'list', takes: 'frames' },
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'Video', cardinality: 'single' } },

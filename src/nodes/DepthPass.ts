@@ -22,7 +22,7 @@ import {
   type SceneValue,
   type TimeValue,
 } from './types';
-import { buildPassSourceHash } from './passes/passHash';
+import { buildPassSourceHash, RENDER_PASS_EXTENT } from './passes/passHash';
 import { recomposeCameraObject } from './cameraRecompose';
 
 export const DepthPassParams = z.object({
@@ -71,6 +71,7 @@ export const DepthPassNode: NodeDefinition<DepthPassParams, ImageValue> = {
         camera,
         time,
       }),
+      extent: RENDER_PASS_EXTENT,
     };
   },
 };

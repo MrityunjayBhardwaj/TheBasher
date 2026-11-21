@@ -18,7 +18,7 @@
 import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';
 import type { NodeDefinition } from '../core/dag/types';
-import type { EvalCtx } from '../core/dag/types';
+import type { EvalCtx, ImageExtent } from '../core/dag/types';
 import { DEFAULT_IMAGE_DESCRIPTOR, type ImageValue } from './types';
 import { nameParam, widget } from './paramWidget';
 
@@ -49,6 +49,16 @@ export function mediaClipFrameAt(params: MediaClipParams, seconds: number): numb
   const frames = params.srcFrames ?? 1;
   const idx = Math.round(seconds * fps);
   return Math.max(0, Math.min(frames - 1, idx));
+}
+
+/** #1716 — a still image is a still; a video is a run of its source frames, 0..srcFrames-1 at
+ *  srcFps (the same frames `mediaClipFrameAt` clamps to). */
+export function mediaClipExtent(params: MediaClipParams): ImageExtent {
+  if ((params.mediaKind ?? 'video') === 'image') return { kind: 'still' };
+  return {
+    kind: 'frames',
+    range: { start: 0, end: Math.max(1, params.srcFrames ?? 1) - 1, fps: params.srcFps ?? 30 },
+  };
 }
 
 export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
@@ -86,6 +96,7 @@ export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
         mediaKind: params.mediaKind ?? 'video',
         frameIndex,
       }),
+      extent: mediaClipExtent(params),
     };
   },
 };

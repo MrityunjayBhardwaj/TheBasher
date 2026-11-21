@@ -27,7 +27,7 @@
 // isolation, here under live D-01 stylized output reuse).
 
 import type { ComfyUICapability } from '../core/comfy';
-import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate, evaluateInputRef } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
@@ -140,7 +140,11 @@ export async function runComfyUIWorkflow(
       cache,
     }).value as PromptValue;
     const passes = passRefs.map(
-      (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket, cache }).value as ImageValue,
+      // #1716 — through the input, not straight off the producer: a still workflow wired
+      // to a run of frames is handed the picked frame, as the evaluator would hand it.
+      (ref) =>
+        evaluateInputRef(state, workflowNodeId, 'pass-input', ref, { ctx, cache })
+          .value as ImageValue,
     );
 
     // Prev-frame plumbing: frame N consumes frame N-1's stylized output

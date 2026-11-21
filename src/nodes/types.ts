@@ -11,6 +11,7 @@
 // types (`Camera` / `Light` / `Mesh`) carry richer variants without the DAG
 // type system needing to grow.
 
+import type { ImageExtent } from '../core/dag/types';
 import type { OverriddenSet } from '../core/override/overrideSet';
 import type { ScopeDomain } from './attributes';
 import type { ClipLoop } from './clipLoop';
@@ -2958,6 +2959,12 @@ export interface ImageValue {
    * can describe a pass result by this handle (frame N, kind K, hash H).
    */
   readonly sourceHash: string;
+  /**
+   * #1716 — one picture, or a run of frames (and which run). The socket is the same for both,
+   * so the value has to say. Required: a producer that does not know which it makes does not
+   * compile. See {@link ImageExtent}.
+   */
+  readonly extent: ImageExtent;
 }
 
 /** Default Image descriptor for fresh pass nodes. 1280x720 rgba8 (P4 §43). */

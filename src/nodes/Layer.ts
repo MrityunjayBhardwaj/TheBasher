@@ -60,7 +60,8 @@ export const LayerNode: NodeDefinition<LayerParams, LayerValue> = {
   paramSchema: LayerParams,
   mainInput: 'source',
   inputs: {
-    source: { type: 'Image', cardinality: 'single' },
+    /** #1716 — a layer plays its source over time; a still source holds for the layer's span. */
+    source: { type: 'Image', cardinality: 'single', takes: 'frames' },
   },
   outputs: { out: { type: 'Layer', cardinality: 'single' } },
   inspectorSections: ['layout', 'animate'],

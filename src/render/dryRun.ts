@@ -19,7 +19,7 @@
 // REF: project_p5_context D-06; THESIS §28, §44, §51; vyapti V6 + V8.
 
 import type { ComfyInputs, ComfyUICapability, ComfyWorkflowJson } from '../core/comfy';
-import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate, evaluateInputRef } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
@@ -143,7 +143,11 @@ export async function dryRun(
   const passRefs =
     passBinding === undefined ? [] : Array.isArray(passBinding) ? passBinding : [passBinding];
   const passes = passRefs.map(
-    (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket, cache }).value as ImageValue,
+    // #1716 — through the input, not straight off the producer: a still workflow wired
+    // to a run of frames is handed the picked frame, as the evaluator would hand it.
+    (ref) =>
+      evaluateInputRef(state, workflowNodeId, 'pass-input', ref, { ctx, cache })
+        .value as ImageValue,
   );
 
   // Compile + submit. The compiler is injectable so Wave C wires the real

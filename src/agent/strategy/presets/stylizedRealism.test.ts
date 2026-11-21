@@ -28,6 +28,7 @@ function imageMeta(passKind: ImageValue['passKind']): ImageValue {
     passKind,
     descriptor: { width: 1280, height: 720, format: 'rgba8' },
     sourceHash: `${passKind}_hash`,
+    extent: { kind: 'frames', range: null },
   };
 }
 

@@ -21,7 +21,7 @@ import {
   type SceneValue,
   type TimeValue,
 } from './types';
-import { buildPassSourceHash } from './passes/passHash';
+import { buildPassSourceHash, RENDER_PASS_EXTENT } from './passes/passHash';
 import { recomposeCameraObject } from './cameraRecompose';
 
 export const NormalPassParams = z.object({
@@ -70,6 +70,7 @@ export const NormalPassNode: NodeDefinition<NormalPassParams, ImageValue> = {
         camera,
         time,
       }),
+      extent: RENDER_PASS_EXTENT,
     };
   },
 };

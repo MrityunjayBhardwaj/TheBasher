@@ -15,7 +15,16 @@
 // pass is unchanged' reasoning").
 
 import { hashValue } from '../../core/dag/hash';
+import type { ImageExtent } from '../../core/dag/types';
 import type { CameraValue, ImagePassKind, SceneValue, TimeValue } from '../types';
+
+/**
+ * #1716 — what a render pass makes: a run of frames with no end of its own. A pass renders the
+ * scene at whatever time it is asked for (its `time` socket), so the value at t is the frame at t
+ * and the range is the consumer's to choose (a RenderJob's frameStart..frameEnd). A still input
+ * fed a pass picks frame 0.
+ */
+export const RENDER_PASS_EXTENT: ImageExtent = { kind: 'frames', range: null };
 
 export interface PassHashInputs {
   readonly passKind: ImagePassKind;

@@ -358,6 +358,10 @@ const TAKERS: string[] = [
   'drawnChannels@src/app/resolveWorldTransform.ts',
   'driverChannelValuesForTarget@src/app/paramDrivers.ts',
   'evaluate@src/core/dag/evaluator.ts',
+  // #1716 — what a producer delivers into an input, for the ComfyUI runners that walk frames on
+  // their own; and the frame pick both it and the evaluator apply. Both forward the caller's cache.
+  'evaluateInputRef@src/core/dag/evaluator.ts',
+  'pickedArrival@src/core/dag/evaluator.ts',
   'foldOverlays@src/app/cookState.ts',
   'gltfNodeWorldPosition@src/app/gltfNodeWorld.ts',
   // #1337 — solving a placed bone back through a pose layer stack reads the pose under the layer;

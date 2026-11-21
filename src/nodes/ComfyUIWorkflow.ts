@@ -31,7 +31,7 @@
 
 import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
+import type { ImageExtent, ImageTake, NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import {
   DEFAULT_IMAGE_DESCRIPTOR,
   type ImageValue,
@@ -117,6 +117,33 @@ export const ComfyUIWorkflowParams = z.object({
 });
 export type ComfyUIWorkflowParams = z.infer<typeof ComfyUIWorkflowParams>;
 
+/**
+ * #1716 — whether this node is a still workflow or a video one, read off how it is set up:
+ *
+ *  - an IMPORTED graph (`graph` set) is run once and shown as one picture: the compositor decodes
+ *    it as a single still (`compositeDecode.ts`, `srcFrames: 1`, "STATIC"), and a coherent clip is
+ *    a separate render that lands as a video MediaClip. So it takes a still and makes a still.
+ *  - the PRESET path (`graph` null) renders frameStart..frameEnd one frame at a time
+ *    (`runComfyUIWorkflow`), each frame from that frame's passes: frames in, frames out.
+ *
+ * `graph.meta.frames` is deliberately NOT the signal: an import always writes 1 and the built-in
+ * SD1.5 text-to-image starter writes 24, so it says nothing about what the workflow makes.
+ */
+export function comfyWorkflowTakes(params: unknown): ImageTake {
+  const graph = (params as Partial<ComfyUIWorkflowParams> | null)?.graph;
+  return graph ? 'still' : 'frames';
+}
+
+/** What the workflow's output is ({@link comfyWorkflowTakes}): a still, or the preset path's
+ *  frameStart..frameEnd at the project's 30 fps (the cadence `runComfyUIWorkflow` renders at). */
+export function comfyWorkflowExtent(params: Partial<ComfyUIWorkflowParams>): ImageExtent {
+  if (comfyWorkflowTakes(params) === 'still') return { kind: 'still' };
+  return {
+    kind: 'frames',
+    range: { start: params.frameStart ?? 0, end: params.frameEnd ?? 60, fps: 30 },
+  };
+}
+
 export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageValue> = {
   type: 'ComfyUIWorkflow',
   version: 1,
@@ -129,7 +156,7 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
     /** Raw pass results consumed as ControlNet / img2img inputs. Socket
      *  name MUST equal the EdgeKind literal so per-kind closure BFS
      *  isolates pass siblings (H22). */
-    'pass-input': { type: 'Image', cardinality: 'list' },
+    'pass-input': { type: 'Image', cardinality: 'list', takes: comfyWorkflowTakes },
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
@@ -177,12 +204,16 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
           passKind: p.passKind,
           sourceHash: p.sourceHash,
         })),
-        time: time ?? null,
+        // #1716 — a still workflow is run once, so the time does not pick its picture: hashing
+        // it would make one still a different image at every frame, and a frames input it feeds
+        // would not hold it. The preset path renders each frame from that frame's time.
+        time: comfyWorkflowTakes(params) === 'still' ? null : (time ?? null),
         // frameRange + lastGoodFrame intentionally NOT in the hash:
         // they describe a dispatch plan, not the per-frame value. Frame
         // identity is carried by the time socket; resume state is a
         // bookkeeping field on params, not a content discriminator.
       }),
+      extent: comfyWorkflowExtent(params),
     };
   },
 };
