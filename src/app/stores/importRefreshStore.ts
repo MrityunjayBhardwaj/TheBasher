@@ -1,8 +1,8 @@
 // My-Imports freshness signal — Phase 7.9 Wave A (issue #110).
 //
 // A minimal counter store. Bumped by the shared glTF import core
-// (`importGltf.ts`) on every successful import; the AssetLibrary's
-// "My Imports" section (LeftSidebar "Assets" tab — UX backlog #6)
+// (`importGltf.ts`) on every successful import; the library's
+// "your imports" (the drawer's Library tab — #1707, `useLibraryEntries`)
 // consumes the counter as a useEffect dep so it re-enumerates
 // `user-imports/` immediately, without depending on the tab being
 // re-opened. This converts the post-import freshness from

@@ -14,7 +14,7 @@
 //   tools     → editorStore.setActiveTool (translate/rotate/scale propagate
 //               to gizmoStore.mode per editorStore:55-58; V19 single writer).
 //   Add       → addMenuStore.openAt (Blender-style Add menu; clamps to viewport).
-//   Assets    → assetsPopoverStore (sample-asset / My-Imports popover).
+//   Assets    → opens the bottom drawer on its Library tab (#1707).
 //   space     → editorStore.setSpace (3D View ↔ UV Editor).
 //   play      → timeStore.toggle (transport; the re-home for `run` mode, D-06).
 //   home      → frameSelected() with frameAll() fallback.
@@ -36,7 +36,7 @@
 //
 // File-rooted V8: src/app/. Reads + mutates UI projection stores only
 // (editorStore, viewportStore, chromeStore, timeStore, selectionStore via
-// framing, addMenuStore, assetsPopoverStore). Never the DAG.
+// framing, addMenuStore, timelineDockStore). Never the DAG.
 //
 // REF: docs/UI-SPEC.md §5.7, §5.3; .planning/phases/v06.4-director-ux/PLAN.md
 // (W1-T3 — the single-pill inventory); memory/project_p6_w7_plan.md C1.
@@ -57,7 +57,8 @@ import { useEditorStore, type ActiveTool, type SpaceType } from './stores/editor
 import { useGizmoStore } from './stores/gizmoStore';
 import { centerSurfaceBox } from './layoutIslands';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
-import { useLeftSidebarStore } from './stores/leftSidebarStore';
+import { useTimelineDockStore } from './stores/timelineDockStore';
+import { openDrawerTab } from './openDrawerTab';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 
@@ -222,6 +223,7 @@ function BarButton({
       onClick={onClick}
       disabled={disabled}
       data-testid={testId}
+      data-active={active || undefined}
       title={title}
       aria-label={ariaLabel}
       aria-busy={disabled || undefined}
@@ -298,19 +300,16 @@ export function FloatingViewportToolbar(): ReactNode {
   const primaryIsArmature = usePrimaryIsArmature();
   const armatureMode = useArmatureMode();
 
-  // The asset Library lives in the LeftSidebar's "Assets" tab (UX backlog #6,
-  // one home — V34). The toolbar button selects that tab and expands the
-  // sidebar if it was collapsed.
-  const leftTab = useLeftSidebarStore((s) => s.activeTab);
-  const setLeftTab = useLeftSidebarStore((s) => s.setActiveTab);
+  // The asset library lives in the bottom drawer's Library tab (#1707 — one home, V34). The
+  // toolbar button opens the drawer on it.
+  const libraryTabUp = useTimelineDockStore((s) => s.activeTab === 'library');
+  const assetsActive = timelineDrawerOpen && libraryTabUp;
   const leftCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const inspectorCollapsed = useChromeStore((s) => s.inspectorCollapsed);
-  const setLeftCollapsed = useChromeStore((s) => s.setLeftSidebarCollapsed);
   // UX #2 follow-up 2 — narrow layout: the side panels are off-canvas drawers,
   // so the pill can span the full width (minus edge gaps) instead of reserving
   // for the islands.
   const isNarrow = useIsNarrowLayout();
-  const assetsActive = leftTab === 'assets' && !leftCollapsed;
 
   // Present-mode chrome-hide: the pill vanishes when presentMode is on.
   // Self-gated rather than Layout.tsx-gated because the pill is a viewport
@@ -364,14 +363,9 @@ export function FloatingViewportToolbar(): ReactNode {
       </BarButton>
       <BarButton
         testId="top-toolbar-assets"
-        title="Asset library (left panel)"
+        title="Asset library (bottom drawer)"
         active={assetsActive}
-        onClick={() => {
-          // Reveal the asset Library: expand the sidebar (if folded) and switch
-          // to its Assets tab. One library home (#6) — no floating popover.
-          setLeftCollapsed(false);
-          setLeftTab('assets');
-        }}
+        onClick={() => openDrawerTab('library')}
       >
         <span aria-hidden>📦</span>
         <span>Assets</span>

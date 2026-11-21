@@ -8,6 +8,7 @@
 // REF: docs/UI-SPEC.md §5.1, §5.5, §5.10, §11.
 
 import { expect, test } from './_fixtures';
+import { openDrawerTab } from './_drawer';
 import { seedCubeObjectId } from './_seedNodes';
 
 test.beforeEach(async ({ page }) => {
@@ -47,20 +48,19 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('P6.W3#1 left panel: header + Outliner|Assets tabs; Outliner has search + Scenes + tree (UX #6)', async ({
+test('P6.W3#1 left panel: header + the outliner only — search + Scenes + tree (UX #6, #1707)', async ({
   page,
 }) => {
-  // UX backlog #6: the left panel is a two-tab surface (Outliner | Assets).
-  // The Outliner tab (default) holds search + Scenes label + the tree; the
-  // old footer (Library/Import/Help) is gone — Library is the Assets tab,
-  // Import is the Assets-tab button, Help & Feedback was dropped.
+  // The left panel holds search + Scenes label + the tree. The old footer
+  // (Library/Import/Help) is gone — the library and Import live in the bottom
+  // drawer's Library tab (#1707), Help & Feedback was dropped.
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('left-sidebar-header')).toBeVisible();
-  // Tab strip.
-  await expect(page.getByTestId('left-sidebar-tabstrip')).toBeVisible();
-  await expect(page.getByTestId('left-sidebar-tab-outliner')).toBeVisible();
-  await expect(page.getByTestId('left-sidebar-tab-assets')).toBeVisible();
-  // Outliner tab content (default).
+  // #1707 — the panel is the outliner only: the Assets tab moved to the bottom
+  // drawer's Library tab, and with one view left there is no tab strip.
+  await expect(page.getByTestId('left-sidebar-tabstrip')).toHaveCount(0);
+  await expect(page.getByTestId('left-sidebar-tab-assets')).toHaveCount(0);
+  // Outliner content.
   await expect(page.getByTestId('left-sidebar-search')).toBeVisible();
   await expect(page.getByTestId('left-sidebar-scenes-label')).toBeVisible();
   await expect(page.getByTestId('scene-tree')).toBeVisible();
@@ -73,11 +73,16 @@ test('P6.W3#1 left panel: header + Outliner|Assets tabs; Outliner has search + S
   await expect(page.getByTestId('left-sidebar-tab-agent')).toHaveCount(0);
 });
 
-test('P6.W3#1b the Assets tab hosts the library + Import (UX #6)', async ({ page }) => {
-  await page.getByTestId('left-sidebar-tab-assets').click();
-  await expect(page.getByTestId('left-sidebar-assets-panel')).toBeVisible();
-  await expect(page.getByTestId('left-sidebar-import')).toBeVisible();
-  await expect(page.getByTestId('library-popover')).toBeVisible();
+test("P6.W3#1b the drawer's Library tab hosts the library + Import (#1707, was the Assets tab)", async ({
+  page,
+}) => {
+  await openDrawerTab(page, 'library');
+  const library = page.getByTestId('library-pane');
+  await expect(library.getByTestId('library-import')).toBeVisible();
+  await expect(library.getByTestId('library-popover')).toBeVisible();
+  // Nothing of the library is left in the left panel.
+  await expect(page.getByTestId('left-sidebar').getByTestId('library-popover')).toHaveCount(0);
+  await expect(page.getByTestId('left-sidebar-assets-panel')).toHaveCount(0);
 });
 
 test('P6.W3#2 outliner search filters the tree (Wave B)', async ({ page }) => {

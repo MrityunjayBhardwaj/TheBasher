@@ -44,7 +44,7 @@
 //      `src/app/boot.ts:283-297` (the new ingest seam);
 //      `src/app/asset/importGltf.ts` (ingestGltfFolder + importGltfFromOpfs);
 //      `tests/e2e/_importedMesh.ts` (the drawn-mesh reader, #1071);
-//      `src/app/AssetLibrary.tsx` (the `library-popover-my-imports` list).
+//      `src/app/library/LibraryPane.tsx` (the `library-popover-my-imports` list).
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importedMeshes, type DrawnImportMesh } from './_importedMesh';
@@ -327,11 +327,10 @@ test('P7.9 (b) — My Imports refresh: entry appears in an already-open popover 
   page,
 }) => {
   // 1. Open the popover BEFORE the ingest. The freshness contract (C3 +
-  //    AssetLibrary.tsx) says the `[open, tick]` effect re-runs
+  //    library/useLibraryEntries.ts) says the `[tick]` effect re-runs
   //    on every bump from importGltfFromOpfs — so the entry must appear
   //    without a manual close/reopen.
-  // The popover trigger lives in TopToolbar; click it to anchor + open.
-  // (data-testid mirrors `top-toolbar-assets` in TopToolbar.tsx:111.)
+  // The toolbar's Assets button opens the drawer's Library tab (#1707).
   const trigger = page.getByTestId('top-toolbar-assets');
   await trigger.click();
   const popover = page.getByTestId('library-popover');

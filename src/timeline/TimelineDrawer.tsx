@@ -8,9 +8,9 @@
 //
 // #1703 — the decided tab set is Shots · Dopesheet · NLA · Curves · Nodes ·
 // Library (see TABS). Nodes hosts the node view (GraphView, formerly a whole
-// editor space) and mounts only while its tab is up; Library is a placeholder
-// until the asset library moves in. Each tab keeps its own height, set by the
-// handle on the drawer's top edge.
+// editor space) and mounts only while its tab is up; Library hosts the asset
+// library (#1707 — moved from the left panel's Assets tab). Each tab keeps its
+// own height, set by the handle on the drawer's top edge.
 //
 // Drawer open/closed lives in viewportStore (timelineDrawerOpen).
 // Default closed — preserves P0/P2 acceptance pixel-diff baselines.
@@ -61,6 +61,7 @@ import { NlaLanePane } from './NlaLanePane';
 import { ControllersDockPane } from './ControllersDockPane';
 import { ShotsPanel } from '../app/ShotsPanel';
 import { GraphView } from '../app/GraphView';
+import { LibraryPane } from '../app/library/LibraryPane';
 import { SimplifyPopover } from './SimplifyPopover';
 import { rowFlag, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { parseLayerRowId } from './layerChannelRows';
@@ -130,6 +131,9 @@ export function TimelineDrawer() {
     setActiveTab(tab);
     useAgentContextStore.getState().markPane(PANE_OF_TAB[tab]);
   };
+  // #1707 — the Library pane mounts on its first visit and then stays (see its pane below).
+  const [libraryVisited, setLibraryVisited] = useState(false);
+  if (open && activeTab === 'library' && !libraryVisited) setLibraryVisited(true);
   const windowHeight = useWindowHeight();
   // While a drag is live the height is local; it is written to the store once, on release.
   const [dragHeight, setDragHeight] = useState<number | null>(null);
@@ -231,13 +235,12 @@ export function TimelineDrawer() {
               data-testid="library-pane"
               {...focus.library}
               data-active={activeTab === 'library'}
-              className="absolute inset-0 items-center justify-center p-6 text-center text-xs text-fg-dim"
+              className="absolute inset-0"
               style={{ display: activeTab === 'library' ? 'flex' : 'none' }}
             >
-              <span>
-                The asset library arrives here. Until it does, browse and import assets from the
-                Assets tab in the left panel.
-              </span>
+              {/* #1707 — the asset library. Mounted from the first visit on, so a generation started
+                  from its form keeps its progress across a tab switch. */}
+              {libraryVisited ? <LibraryPane /> : null}
             </div>
             <div
               data-testid="controllers-pane"

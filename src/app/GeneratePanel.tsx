@@ -13,8 +13,8 @@
 // `model.generate`); a person could not. The claim "a generated asset is
 // indistinguishable from an imported one" needs someone able to ask for one.
 //
-// 🔑 IT LIVES BESIDE `Import…`, AND THE PLACEMENT IS THE CLAIM. The Assets tab
-// already carries the file road; this is the prompt road. Import takes a
+// 🔑 IT LIVES BESIDE `Import…`, AND THE PLACEMENT IS THE CLAIM. The library (the
+// drawer's Library tab since #1707) already carries the file road; this is the prompt road. Import takes a
 // filename and Generate takes a sentence, and both end in the same library, the
 // same OPFS folder and the same Ops. A separate "AI" panel would have said the
 // opposite — that generated assets are a different kind of thing — which is the
@@ -44,7 +44,7 @@
 //
 // REF: src/app/asset/generateMotionAsNode.ts, src/app/asset/generateModel.ts,
 //      src/app/asset/generateRiggedCharacter.ts (the three surfaces);
-//      src/app/LeftSidebar.tsx (the Assets tab that mounts it);
+//      src/app/library/LibraryPane.tsx (the Library tab that mounts it);
 //      ref/architecture/ai-track.md phases A1 and A4.
 
 import { useRef, useState, type ReactNode } from 'react';

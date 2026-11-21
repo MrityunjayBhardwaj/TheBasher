@@ -2,14 +2,15 @@
 //
 // Falsifiable acceptance for the always-on Spline-style outliner: the panel
 // boots expanded (no chevron-only collapse), rows select with a blue tint, the
-// footer Library button opens the EXISTING AssetsPopover (V34 — one path, not a
-// second library), and the §196 guardrail holds (the agent surface + Add/Assets
+// library has one home (V34 — since #1707 the bottom drawer's Library tab), and
+// the §196 guardrail holds (the agent surface + Add/Assets
 // create paths survive the redesign).
 //
 // REF: docs/UI-SPEC.md §5.5; vyapti V34 (one pipeline), V35 (reveal reachable);
 // THESIS §196 (agent stays first-class).
 
 import { expect, test } from './_fixtures';
+import { openDrawerTab } from './_drawer';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -41,14 +42,17 @@ test('WB#2 clicking a row selects it with the blue-tint marker', async ({ page }
   await expect(row).toHaveAttribute('data-selected', 'true');
 });
 
-test('WB#3 the asset Library is a left-panel tab (UX #6 — one home, V34)', async ({ page }) => {
-  // Default tab is Outliner → the library is not yet rendered.
+test("WB#3 the asset Library is the bottom drawer's Library tab (#1707 — one home, V34)", async ({
+  page,
+}) => {
+  // Drawer closed → the library is not yet rendered.
   await expect(page.getByTestId('library-popover')).toHaveCount(0);
-  // Switching to the Assets tab reveals the library in the left panel
-  // (re-homed from the dropped footer + floating popover).
-  await page.getByTestId('left-sidebar-tab-assets').click();
-  await expect(page.getByTestId('left-sidebar-assets-panel')).toBeVisible();
-  await expect(page.getByTestId('library-popover')).toBeVisible();
+  // The Library tab reveals it in the drawer (re-homed from the left panel's
+  // Assets tab, which had re-homed it from the footer + floating popover).
+  await openDrawerTab(page, 'library');
+  await expect(page.getByTestId('library-pane').getByTestId('library-popover')).toBeVisible();
+  // One home: nothing of it in the left panel.
+  await expect(page.getByTestId('left-sidebar-tab-assets')).toHaveCount(0);
 });
 
 test('WB#4 §196 — agent surface + Add/Assets create paths survive the redesign', async ({

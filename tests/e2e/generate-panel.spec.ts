@@ -61,7 +61,11 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
 
   // The prompt road sits with the file road, not in a home of its own — the
   // placement is the phase's claim, so it is asserted rather than assumed.
-  await expect(page.getByTestId('left-sidebar-import')).toBeVisible();
+  // #1707 — both live in the drawer's Library tab, beside the library itself.
+  const library = page.getByTestId('library-pane');
+  await expect(library.getByTestId('generate-panel')).toBeVisible();
+  await expect(library.getByTestId('library-import')).toBeVisible();
+  await expect(library.getByTestId('library-popover')).toBeVisible();
 
   // Affordance: nothing to submit yet. The schemas in core/motiongen are the
   // enforcement; this is only the button agreeing with them.

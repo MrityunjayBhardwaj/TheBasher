@@ -11,8 +11,8 @@
 // nobody thought about.
 
 import { describe, it, expect } from 'vitest';
-import { formatBadge } from './AssetLibrary';
-import { ASSET_CATALOG } from './asset/catalog';
+import { formatBadge } from './libraryEntries';
+import { ASSET_CATALOG } from '../asset/catalog';
 
 describe('formatBadge', () => {
   it('reads the extension, lowercased, with no dot', () => {

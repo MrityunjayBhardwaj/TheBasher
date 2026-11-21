@@ -1,7 +1,7 @@
 // #1703 — the bottom drawer's decided tab set: Shots · Dopesheet · NLA · Curves · Nodes · Library
 // (Controllers stays after them until its fate is decided). Shots left the left panel for the
-// drawer, the node view left the space switcher for the Nodes tab, and Library is an honest
-// placeholder until the asset library moves in. Nodes opens taller than the others.
+// drawer, the node view left the space switcher for the Nodes tab, and Library holds the asset
+// library (#1707). Nodes opens taller than the others.
 import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
 
@@ -69,11 +69,12 @@ test('Nodes opens taller than the other tabs', async ({ page }) => {
   expect(nodes).toBeGreaterThan(dope + 40);
 });
 
-test('Library is a placeholder that says what arrives there', async ({ page }) => {
+test('Library holds the asset library (#1707 — no longer a placeholder)', async ({ page }) => {
   await openDrawerTab(page, 'library');
   const pane = page.getByTestId('library-pane');
   await expect(pane).toBeVisible();
-  await expect(pane).toContainText(/asset library/i);
+  await expect(pane.getByTestId('library-popover')).toBeVisible();
+  await expect(pane.getByTestId('library-import')).toBeVisible();
 });
 
 // Keys pressed over a tab that is not a time editor keep the meaning they had in that tab's old

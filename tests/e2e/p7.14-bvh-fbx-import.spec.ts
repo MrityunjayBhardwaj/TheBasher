@@ -23,7 +23,7 @@
 // REF: PLAN 7.14 Wave A (A4); CONTEXT D-02/D-05; issue #111;
 //      src/app/boot.ts (the __basher_ingestBvh/FbxFile seams);
 //      src/app/asset/importBvhFbx.ts (importBvh/FbxFromOpfs + dispatcher);
-//      src/app/AssetLibrary.tsx (the library-popover-my-imports list).
+//      src/app/library/LibraryPane.tsx (the library-popover-my-imports list).
 
 import { test, expect } from './_fixtures';
 

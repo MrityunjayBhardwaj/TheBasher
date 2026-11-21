@@ -99,7 +99,6 @@ test('a re-cook keeps the name the director gave the clip, and the Object keeps 
   const clipName = page.getByTestId(`inspector-text-${clip}-name`);
   await clipName.fill('my take');
   await clipName.press('Enter');
-  await page.getByTestId('left-sidebar-tab-outliner').click();
   const row = page.getByTestId(`scene-tree-row-${object}`);
   await expect(row).toHaveText('my take');
 

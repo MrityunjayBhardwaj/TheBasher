@@ -116,7 +116,6 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
     'the generation stood no Object — every read below would be vacuous',
   ).toBeTruthy();
   expect(ids.clip, 'no clip found for the Object’s skeleton').toBeTruthy();
-  await page.getByTestId('left-sidebar-tab-outliner').click();
   const row = page.getByTestId(`scene-tree-row-${ids.object}`);
   await expect(row).toHaveText('a figure walks forward', { timeout: 5_000 });
 

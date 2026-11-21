@@ -56,8 +56,9 @@ function isTimelineTab(value: unknown): value is TimelineTab {
 export const MIN_DRAWER_HEIGHT_PX = 120;
 export const MAX_DRAWER_HEIGHT_PX = 2000;
 export const DEFAULT_DRAWER_HEIGHT_PX = 240;
-// A node graph needs room for boxes and wires, so Nodes opens taller than the time editors.
-const DEFAULT_TAB_HEIGHTS: Partial<Record<TimelineTab, number>> = { nodes: 480 };
+// A node graph needs room for boxes and wires, so Nodes opens taller than the time editors; the
+// Library (#1707) needs a row of tiles plus the Generate form beside them.
+const DEFAULT_TAB_HEIGHTS: Partial<Record<TimelineTab, number>> = { nodes: 480, library: 340 };
 
 /** The height a tab opens at when it has never been resized. */
 export function defaultDrawerHeight(tab: TimelineTab): number {

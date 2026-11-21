@@ -17,7 +17,7 @@
 // BVH/FBX leave no ref.
 //
 // REF: PLAN 7.14 Wave B (B4); CONTEXT D-03/D-05/D-06; issues #112, #1074, #1054;
-//      src/app/AssetLibrary.tsx (the ︙ menu + rename input + delete banner);
+//      src/app/library/LibraryPane.tsx (the ︙ menu + rename input + delete banner);
 //      src/app/asset/importCommon.ts (rename/delete helpers);
 //      tests/e2e/_importedMesh.ts (import roots + drawn reader, both roads).
 
