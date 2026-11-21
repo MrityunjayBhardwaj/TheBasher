@@ -22,7 +22,12 @@ import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx } from '../core/dag/types';
 import { usePlayheadFor } from './animate/usePlayheadFor';
-import { objectLayerSurface, type LaneGroup, type SurfaceRow } from './objectLayerSurface';
+import {
+  objectLayerSurface,
+  type LaneGroup,
+  type LaneName,
+  type SurfaceRow,
+} from './objectLayerSurface';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 /**
@@ -32,7 +37,8 @@ import { uiEvaluatorCache } from './uiEvaluatorCache';
  * `paramPath` is set on value rows (the animated param) and null on structural rows (route by node).
  */
 export interface LayerRowPick {
-  readonly lane: 'channel' | 'strip' | 'driver' | 'modifier' | 'constraint' | 'pose';
+  /** The row's own lane group — the SAME closed union the surface emits (never a bare string). */
+  readonly lane: LaneName;
   readonly objectId: string;
   readonly rowNodeId: string | null;
   readonly paramPath: string | null;
@@ -61,7 +67,7 @@ const LANE_LABEL: Readonly<Record<string, string>> = {
 /** The pick a click on `row` emits: lane = the row's own group, paramPath only on value rows. */
 function pickOf(group: LaneGroup, row: SurfaceRow, objectId: string): LayerRowPick {
   return {
-    lane: group.lane as LayerRowPick['lane'],
+    lane: group.lane,
     objectId,
     rowNodeId: row.nodeId,
     paramPath: VALUE_LANES.has(group.lane) ? row.tag : null,

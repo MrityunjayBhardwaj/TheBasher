@@ -61,6 +61,7 @@ import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, SocketTypeName } from '../core/dag/types';
 import { driverBandsForTarget } from './driverStack';
+import { isImportedChildMaterialPath } from './importedChild';
 import { formatValue, layerView, type RowView } from './layerView';
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { channelEntriesFromNodes, directChannelNodesForTarget } from './nodeChannels';
@@ -84,14 +85,17 @@ export type SurfaceRow = RowView & {
   readonly nodeId: string | null;
 };
 
+/**
+ * The pipeline group a lane is. Value lanes (what SETS each param) come first — `channel`, `strip`,
+ * `driver`; structural lanes (what CONSUMES them) follow — `modifier`, `constraint`, `pose`. A closed
+ * union, not `string`: a surface row pick carries this exact set, so adding a lane is a COMPILE error
+ * at every producer until the pick union is widened too (no silent out-of-union lane).
+ */
+export type LaneName = 'channel' | 'strip' | 'driver' | 'modifier' | 'constraint' | 'pose';
+
 /** One lane's worth of rows, with the group label and its count. */
 export interface LaneGroup {
-  /**
-   * The pipeline group this lane is. Value lanes (what SETS each param) come first:
-   * `channel`, `strip`, `driver`. Structural lanes (what CONSUMES them) follow:
-   * `modifier`, `constraint`, `pose`.
-   */
-  readonly lane: string;
+  readonly lane: LaneName;
   readonly rows: readonly SurfaceRow[];
   readonly count: number;
 }
@@ -111,7 +115,7 @@ export interface ObjectSurface {
  * kind switch (G3). `ObjectData` is the modifier lane, `Matrix4` the constraint lane, `PosedSkeleton`
  * the pose lane (all three are `LAYER_LANES` keys). The VALUE lanes prepend this list in T0b.
  */
-const STRUCTURAL_LANES: readonly { readonly lane: SocketTypeName; readonly group: string }[] = [
+const STRUCTURAL_LANES: readonly { readonly lane: SocketTypeName; readonly group: LaneName }[] = [
   { lane: 'ObjectData', group: 'modifier' },
   { lane: 'Matrix4', group: 'constraint' },
   { lane: 'PosedSkeleton', group: 'pose' },
@@ -124,16 +128,22 @@ const STATIC_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 /**
  * Whether the RENDER road for `paramPath` applies only the BASE value, not the folded one (#1928).
  * Two param kinds fold on the READ side yet are not applied on the render side today:
- *   - material params (`material.*`) — the applied material (`resolveMeshMaterial`) reads the base;
+ *   - material params — the applied material (`resolveMeshMaterial`) reads the base. A material param
+ *     is spelled TWO ways a channel can carry: `material.<lobe>.<field>` (single) AND
+ *     `materialSlots.<slot>.<lobe>.<field>` (multi-slot imported). We delegate to the ONE canonical
+ *     predicate, `isImportedChildMaterialPath`, rather than re-spell `startsWith('material.')` —
+ *     that narrow copy silently misses `materialSlots.`, which reads as "no animated materials"
+ *     (the exact bug that helper was centralised to prevent) and is a silent read≠render on the
+ *     multi-material imported object #1928 calls out.
  *   - glTF-child transforms — DEFERRED, ON PURPOSE. There is no cheap runtime predicate for "this
  *     node is an imported glTF child", and a loose detector would MISLABEL honest rows (worse than a
- *     named gap). So this covers only the material case; a glTF-child TRS row is a KNOWN, documented
- *     gap until a child detector lands, guarded by a test that reds the day it becomes detectable
- *     (V208 — a decision you cannot take yet is a test that reds when it becomes takeable).
+ *     named gap). So a glTF-child TRS row is a KNOWN, documented gap until a child detector lands,
+ *     guarded by a test that reds the day it becomes detectable (a decision you cannot take yet is a
+ *     test that reds when it becomes takeable).
  * Flips to all-false when #1928 wires these render roads to fold.
  */
 function rendersBaseOnly(paramPath: string): boolean {
-  return paramPath.startsWith('material.');
+  return isImportedChildMaterialPath(paramPath);
 }
 
 /** One uniform value-lane row: its contributor's label, the lane word, the folded param value read
@@ -168,6 +178,16 @@ function valueRow(
  * edge walk), and every row's `influence` is the FOLDED param value — `resolveEvaluatedParam` with
  * the forwarded `cache`, the render's own read (read == render). A lane with no contributor yields
  * no group (no empty group). No kind is named: the three enumerators are the dispatch (G3).
+ *
+ * KNOWN LIMITATION (#425, the object↔data split — out of this surface's scope): the three value
+ * enumerators key off the EXACT `objectId` (`directChannelNodesForTarget`, `driverBandsForTarget`,
+ * `stripChannelValuesForTarget`), while the FOLDED value reads via `resolveEvaluatedParam`, which
+ * DOES reach through the split (it folds a data-half channel into render). So on a SPLIT object
+ * (imported glTF child, an explicit object↔data split) a channel/driver authored against the DATA
+ * half renders but produces NO row here — "what changes this object" is INCOMPLETE for that object,
+ * not wrong on a shown row. The fix is the both-halves form (`bareChannelValuesForSubject` + the
+ * data id, `nodeChannels.ts:294`) and its driver/strip counterparts; it belongs with #425, not here,
+ * so it is a named gap, not a silent one.
  */
 function valueLaneGroups(
   state: DagState,

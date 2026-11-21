@@ -464,6 +464,28 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
     expect(channel!.rows[0].rendersBaseOnly).toBe(true);
   });
 
+  it('a MULTI-SLOT material channel (`materialSlots.*`) is flagged too — the second spelling #1928 hits', () => {
+    // The imported multi-material spelling a channel can carry; it renders base-only exactly like
+    // `material.*` (#1928). A narrow `startsWith('material.')` would MISS it and ship a silent
+    // read≠render row — this case reds that mistake, so it is the real mutation-proof of the predicate.
+    const state = applyOps(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'ch_slot',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'slotMetal',
+          target: BOX_ID,
+          paramPath: 'materialSlots.0.base.metalness',
+          keyframes: [{ time: 0, value: 0.4, easing: 'linear' }],
+        },
+      },
+    ] as Op[]).next;
+    const channel = groupNamed(objectLayerSurface(state, BOX_ID, ctxAt(0)).groups, 'channel');
+    expect(channel!.rows[0].tag).toBe('materialSlots.0.base.metalness');
+    expect(channel!.rows[0].rendersBaseOnly).toBe(true);
+  });
+
   it('a non-material (transform) channel row is NOT flagged — the transform road folds', () => {
     const channel = groupNamed(
       objectLayerSurface(boxWithTransformChannel(), BOX_ID, ctxAt(0)).groups,
@@ -473,8 +495,10 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
     expect(channel!.rows[0].tag).toBe('position');
     expect(channel!.rows[0].rendersBaseOnly).toBe(false);
   });
-  // The two cases above together MUTATION-PROVE the predicate: a constant-true reds the transform
-  // case, a constant-false reds the material case. Neither can pass a gamed predicate.
+  // These three cases MUTATION-PROVE the predicate in both directions AND against an incomplete
+  // prefix: a constant-true reds the transform case, a constant-false reds either material case, and
+  // a narrow `startsWith('material.')` (the original bug) reds the `materialSlots.` case. None passes
+  // a gamed or partial predicate.
 
   it('structural rows (modifier/constraint/pose) are never base-only — they render folded', () => {
     const { state, objectId } = crateWithPose();
