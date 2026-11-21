@@ -15,6 +15,9 @@ import type { Page } from '@playwright/test';
 import { importRoots } from './_importedMesh';
 import { wrapImportInOverride } from './_importOverride';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface BasherWindow {
   __basher_dag?: unknown;
   __basher_three?: unknown;

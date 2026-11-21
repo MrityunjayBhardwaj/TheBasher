@@ -17,6 +17,9 @@ import { test, expect, settleViewFit } from './_fixtures';
 import { openLightStudio } from './_rightPanel';
 import { splitLightOps } from './_splitLight';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   params: Record<string, unknown>;

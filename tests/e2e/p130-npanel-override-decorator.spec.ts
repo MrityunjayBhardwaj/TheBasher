@@ -30,6 +30,9 @@ import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
 import { wrapImportInOverride } from './_importOverride';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;

@@ -5,6 +5,9 @@
 import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface DagWindow {
   __basher_dag: { getState: () => { state: { nodes: Record<string, unknown> } } };
   __basher_selection: {

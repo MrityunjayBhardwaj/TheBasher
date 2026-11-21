@@ -12,6 +12,9 @@
 import { expect, test } from './_fixtures';
 import { openLightStudio } from './_rightPanel';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface PanelWindow {
   __basher_dag: { getState: () => { state: { outputs: { scene?: { node: string } } } } };
 }

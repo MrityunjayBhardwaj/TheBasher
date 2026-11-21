@@ -10,6 +10,9 @@
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, { type: string }> } } };
   __basher_time?: { getState: () => { pause: () => void; setTime: (s: number) => void } };

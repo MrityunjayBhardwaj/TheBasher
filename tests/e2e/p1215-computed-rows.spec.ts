@@ -8,6 +8,9 @@
 // poses, 0.5 s apart) bound onto it and NOT baked.
 import { test, expect } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   params: Record<string, unknown>;

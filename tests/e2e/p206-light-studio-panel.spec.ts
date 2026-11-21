@@ -23,6 +23,9 @@ import {
 import { panelXYToFraction } from '../../src/timeline/studioPanelGeometry';
 import { splitLightOps } from './_splitLight';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Op {
   type: string;
   [k: string]: unknown;

@@ -52,6 +52,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GLB = 'public/fixtures/rig/standin-character.glb';
 const ASSET_REF = 'fixtures/rig/standin-character.glb';

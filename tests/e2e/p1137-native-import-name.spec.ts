@@ -12,6 +12,9 @@ import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { importRoots, importedMeshes } from './_importedMesh';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_ingestGltfFolder?: (
     files: ReadonlyArray<{ relativePath: string; bytes: Uint8Array }>,

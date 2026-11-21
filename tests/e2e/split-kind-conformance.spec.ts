@@ -86,6 +86,9 @@ import {
 import { OLD_IMPORT_NODE_TYPES } from '../../src/core/project/oldImports';
 import { splitSphereOps } from './_splitSphere';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface DispatchResult {
   ok: boolean;
   reason?: string;

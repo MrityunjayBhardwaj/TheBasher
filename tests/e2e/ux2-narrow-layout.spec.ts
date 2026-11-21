@@ -13,6 +13,9 @@
 
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test.describe('narrow layout (<1024px)', () => {
   test.use({ viewport: { width: 900, height: 820 } });
 

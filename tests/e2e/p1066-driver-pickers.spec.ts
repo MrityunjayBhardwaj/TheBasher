@@ -8,6 +8,9 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_dag: {
     getState(): { dispatch: (op: unknown, src: string, d: string) => void };

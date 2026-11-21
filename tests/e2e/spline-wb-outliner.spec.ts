@@ -1,7 +1,7 @@
 // Spline redesign Wave B — left scene outliner.
 //
-// Falsifiable acceptance for the always-on Spline-style outliner: the panel
-// boots expanded (no chevron-only collapse), rows select with a blue tint, the
+// Falsifiable acceptance for the Spline-style outliner: since #1952 the panel boots as a rail
+// ("the viewport is the film") and its icon opens it; rows select with a blue tint, the
 // library has one home (V34 — since #1707 the bottom drawer's Library tab), and
 // the §196 guardrail holds (the agent surface + Add/Assets
 // create paths survive the redesign).
@@ -14,7 +14,7 @@ import { openDrawerTab } from './_drawer';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  // Fresh persistence so the always-on default (chromeStore boot) applies.
+  // Fresh persistence so the first-start default (chromeStore boot: a rail, #1952) applies.
   await page.evaluate(() => {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('basher.chrome.v1');
@@ -25,14 +25,18 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible();
 });
 
-test('WB#1 outliner boots expanded by default (always-on, no manual expand)', async ({ page }) => {
-  // No dev-seam expand call here — this asserts the BOOT default is expanded.
+test('WB#1 / #1952 outliner boots as a rail; its icon opens the tree', async ({ page }) => {
+  // No dev-seam expand call here — this asserts the BOOT default.
+  await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'true');
+  await expect(page.getByTestId('scene-tree')).toHaveCount(0);
+  await page.getByTestId('left-sidebar-expand-toggle').click();
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
   await expect(page.getByTestId('scene-tree')).toBeVisible();
   await expect(page.getByTestId('tree-slot')).toBeVisible();
 });
 
 test('WB#2 clicking a row selects it with the blue-tint marker', async ({ page }) => {
+  await page.getByTestId('left-sidebar-expand-toggle').click();
   const row = page.getByTestId('scene-tree-row-n_box');
   await expect(row).toBeVisible();
   // Unselected initially.

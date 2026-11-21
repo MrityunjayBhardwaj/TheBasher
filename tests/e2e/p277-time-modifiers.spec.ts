@@ -9,6 +9,9 @@
 // "+ limits" button + max-X enable clamp the render.
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_dag: {
     getState: () => {

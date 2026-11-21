@@ -7,6 +7,9 @@ import { expect, test } from './_fixtures';
 import { splitCubeOps } from './_splitCube';
 import type { Page } from '@playwright/test';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface DupWindow {
   __basher_dag: {
     getState: () => {

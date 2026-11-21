@@ -4,6 +4,9 @@
 import { expect, test } from './_fixtures';
 import { openInspector, openLightStudio } from './_rightPanel';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('menu-file-button')).toBeVisible();

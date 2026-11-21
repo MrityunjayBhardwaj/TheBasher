@@ -11,6 +11,9 @@
 // tip is (0.2·cosθ − sinθ, 1 + 0.2·sinθ + cosθ, 0). Through the product's native reader, dispatched directly, as p1244.
 import { test, expect } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   inputs: Record<string, unknown>;

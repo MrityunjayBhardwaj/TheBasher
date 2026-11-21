@@ -8,6 +8,9 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_render_png?: () => Promise<{ width: number; height: number; dataUrl: string } | null>;
   __basher_mesh_world_position: (id: string) => [number, number, number] | null;

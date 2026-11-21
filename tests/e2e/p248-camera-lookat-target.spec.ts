@@ -11,6 +11,9 @@ import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { expect, test } from './_fixtures';
 import { dataNodeIdOf } from './_seedNodes';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   inputs: Record<string, unknown>;

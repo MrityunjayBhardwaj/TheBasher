@@ -13,6 +13,9 @@
 import { expect, test } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     const proto = FileSystemDirectoryHandle.prototype as unknown as {

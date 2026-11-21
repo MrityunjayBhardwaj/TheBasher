@@ -18,6 +18,9 @@ import {
 import { test, expect } from './_fixtures';
 import { objectPosing } from './_seedNodes';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface StubComfyWindow {
   __basher_useStubComfy?: () => void;
   __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;

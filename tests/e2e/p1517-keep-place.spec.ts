@@ -5,6 +5,9 @@ import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { dragRowOnto } from './_treeDrag';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface O3 {
   name?: string;
   isMesh?: boolean;

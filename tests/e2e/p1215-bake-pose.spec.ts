@@ -8,6 +8,9 @@
 // or that the chain did not read, would draw it elsewhere.
 import { test, expect } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   params: Record<string, unknown>;

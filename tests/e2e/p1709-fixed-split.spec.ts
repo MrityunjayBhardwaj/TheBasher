@@ -18,6 +18,9 @@ import type { Page } from '@playwright/test';
 import { expect, settleViewFit, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test.setTimeout(120_000);
 
 interface V3 {

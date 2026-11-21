@@ -19,6 +19,9 @@
 
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const OBJ = 'n_nativeObject_843e4bd5';
 const OVR = 'p1394_ovr';
 

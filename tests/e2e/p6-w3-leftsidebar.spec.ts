@@ -11,6 +11,9 @@ import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
 import { seedCubeObjectId } from './_seedNodes';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   // Clean persistence so first-visit defaults apply per test (D-01).

@@ -13,6 +13,9 @@
 
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface UiWindow {
   __basher_selection: { getState: () => { select: (id: string) => void } };
   __basher_dag: { getState: () => { dispatch: (op: unknown) => void } };

@@ -16,6 +16,9 @@ import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   inputs: Record<string, unknown>;

@@ -11,6 +11,9 @@ import { expect, test } from './_fixtures';
 import { dragRowOnto } from './_treeDrag';
 import type { Page } from '@playwright/test';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_dag: {
     getState: () => {

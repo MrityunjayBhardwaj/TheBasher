@@ -5,6 +5,9 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 type Box = { x: number; y: number; width: number; height: number };
 
 async function box(page: Page, testId: string): Promise<Box> {

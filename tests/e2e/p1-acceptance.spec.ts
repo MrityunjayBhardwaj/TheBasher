@@ -12,6 +12,9 @@ import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 import { splitSphereOps } from './_splitSphere';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 /**
  * Open the asset library (since #1707 the bottom drawer's Library tab, which
  * the toolbar's Assets button opens). The asset tiles render only while it is

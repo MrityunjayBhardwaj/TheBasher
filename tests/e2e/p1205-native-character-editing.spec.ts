@@ -14,6 +14,9 @@ import { readFileSync } from 'node:fs';
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 type Vec3 = [number, number, number];
 interface Node {
   type: string;

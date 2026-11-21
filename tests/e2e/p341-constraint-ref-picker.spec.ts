@@ -18,6 +18,9 @@
 import { expect, test } from './_fixtures';
 import { splitCurveOps } from './_splitCurve';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface CurveSample {
   point: [number, number, number];
 }

@@ -18,6 +18,9 @@ import {
   synthesiseBvh,
 } from '../../src/core/motiongen/StubMotionGenerationCapability';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const SHOTS =
   '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad';
 

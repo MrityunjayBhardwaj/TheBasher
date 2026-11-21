@@ -8,8 +8,11 @@
 // while the camera aimed somewhere else. Verified: with this spec's fix reverted, the
 // dropdown reads 'n_aimA' while the camera obeys 'n_aimB'.
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from './_fixtures';
 import { dataNodeIdOf } from './_seedNodes';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface W {
   __basher_dag: {

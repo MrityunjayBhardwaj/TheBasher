@@ -18,6 +18,9 @@
 
 import { test, expect, type Page } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface DagNode {
   type: string;
   inputs: Record<string, unknown>;

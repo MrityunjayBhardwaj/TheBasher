@@ -17,6 +17,9 @@
 import { test, expect } from './_fixtures';
 import { dataNodeIdOf } from './_seedNodes';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_selection?: { getState: () => { select: (id: string) => void } };
   __basher_dag?: {

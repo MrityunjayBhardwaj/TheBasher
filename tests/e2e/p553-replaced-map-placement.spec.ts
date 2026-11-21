@@ -39,6 +39,9 @@ import { test, expect, type Page } from './_fixtures';
 import { firstMaterialMesh, importRoots } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 /** A 1×1 red PNG — the replacement, chosen so its DIMENSIONS identify it. */
 const RED_PNG_1PX =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';

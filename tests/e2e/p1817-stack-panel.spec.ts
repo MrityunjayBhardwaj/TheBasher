@@ -4,6 +4,9 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 type V3 = [number, number, number];
 interface W {
   __basher_dag: {

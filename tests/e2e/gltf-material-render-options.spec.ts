@@ -14,6 +14,9 @@ import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const FRONT_SIDE = 0;
 const DOUBLE_SIDE = 2; // THREE.FrontSide / THREE.DoubleSide
 

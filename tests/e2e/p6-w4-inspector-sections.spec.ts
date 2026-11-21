@@ -13,6 +13,9 @@
 
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   // Wipe persistence so first-visit defaults apply per test.

@@ -27,6 +27,9 @@ import { test, expect } from './_fixtures';
 import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Bundle {
   assets?: Record<string, string>;
 }

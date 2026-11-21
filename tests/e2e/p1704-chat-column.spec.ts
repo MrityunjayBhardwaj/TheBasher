@@ -17,6 +17,9 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const BASE = 'http://fake-llm.test/v1';
 const REPLY = 'Hello from the column.';
 
