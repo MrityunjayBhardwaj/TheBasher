@@ -16,7 +16,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId } from '../core/dag/types';
-import { workflowMadeState, type WorkflowMadeState } from '../nodes/comfyWorkflowMade';
+import type { WorkflowMadeState } from '../nodes/comfyWorkflowMade';
+import { madeStateOf } from './render/workflowMadeFrom';
 import { getStorage } from './boot';
 import {
   firstFrameOps,
@@ -148,7 +149,7 @@ export function GeneratedView(): ReactNode {
       ? store.stillId
       : (stills[0]?.id ?? null);
   const still = stillId ? stillWorkflowOf(state, stillId) : null;
-  const madeState = (id: NodeId) => workflowMadeState(state, id, uiEvaluatorCache);
+  const madeState = (id: NodeId) => madeStateOf(state, id, uiEvaluatorCache);
   const nameOf = (id: NodeId) => nodeDisplayName(state.nodes, id);
 
   const savedPrompt = still?.promptInput ? String(still.promptInput.defaultValue ?? '') : '';

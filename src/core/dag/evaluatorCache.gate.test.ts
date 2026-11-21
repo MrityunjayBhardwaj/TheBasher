@@ -58,22 +58,22 @@ interface Origin {
 const ORIGINS: Record<string, Origin> = {
   // #1718 — Regenerate reads the graph between runs, and each run moves it, so each read starts
   // its own cache: once to order the runs, once per run to record what it landed from.
-  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → regenerateOrder': {
+  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → regenerateOrderOf': {
     count: 1,
     frequency: 'per-action',
     why: 'The Regenerate click.',
   },
-  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → workflowSourceHash': {
+  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → workflowMadeFrom': {
     count: 1,
     frequency: 'per-action',
     why: 'Once per workflow a Regenerate click runs.',
   },
-  'src/app/generated/generatedStill.ts · keepVariantPlan → workflowSourceHash': {
+  'src/app/generated/generatedStill.ts · keepVariantPlan → workflowMadeFrom': {
     count: 1,
     frequency: 'per-action',
     why: 'The Keep click on a still variant: one read of the state the keep will make.',
   },
-  'src/app/generated/generatedStill.ts · runStillVariants → workflowSourceHash': {
+  'src/app/generated/generatedStill.ts · runStillVariants → workflowMadeFrom': {
     count: 1,
     frequency: 'per-action',
     why: 'Once per variant of a Generate click; each variant is a state of its own (its seed).',
@@ -356,6 +356,13 @@ const TAKERS: string[] = [
   'regenerateOrder@src/nodes/comfyWorkflowMade.ts',
   'workflowMadeState@src/nodes/comfyWorkflowMade.ts',
   'workflowSourceHash@src/nodes/comfyWorkflowMade.ts',
+  // #1717 — the same, over every frame a workflow makes (the hash the app's made states compare);
+  // the views hand them the shared UI cache, the regenerate road a fresh one per state it reads.
+  'computeWorkflowMadeFrom@src/app/render/workflowMadeFrom.ts',
+  'madeStateOf@src/app/render/workflowMadeFrom.ts',
+  'passReader@src/app/render/workflowMadeFrom.ts',
+  'regenerateOrderOf@src/app/render/workflowMadeFrom.ts',
+  'workflowMadeFrom@src/app/render/workflowMadeFrom.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   // #1556 — the Spreadsheet's read of the selected mesh; the view hands it the shared UI cache.
   'attributeSheetOf@src/app/attributeSheet.ts',

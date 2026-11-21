@@ -14,12 +14,13 @@
 //
 // V8: app layer — it dispatches; src/render/ never does.
 //
-// REF: src/nodes/comfyWorkflowMade.ts (the order, the hash); src/app/render/runWorkflow.ts.
+// REF: src/nodes/comfyWorkflowMade.ts (the order); src/app/render/workflowMadeFrom.ts (the hash, over
+//      every frame the workflow makes, #1717); src/app/render/runWorkflow.ts.
 
 import { createEvaluatorCache } from '../../core/dag/evaluator';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
-import { regenerateOrder, workflowSourceHash } from '../../nodes/comfyWorkflowMade';
+import { regenerateOrderOf, workflowMadeFrom } from './workflowMadeFrom';
 import { runWorkflow, type RunWorkflowDeps } from './runWorkflow';
 
 export type RegenerateResult =
@@ -43,7 +44,7 @@ export async function regenerateWorkflow(
 ): Promise<RegenerateResult> {
   // A fresh cache per state read: the state moves between runs, and one read evaluates every
   // upstream workflow (shared inputs once).
-  const order = regenerateOrder(useDagStore.getState().state, id, createEvaluatorCache());
+  const order = regenerateOrderOf(useDagStore.getState().state, id, createEvaluatorCache());
   const ran: NodeId[] = [];
   for (const nodeId of order) {
     const params = useDagStore.getState().state.nodes[nodeId]?.params as
@@ -53,11 +54,7 @@ export async function regenerateWorkflow(
       setRenderParam(nodeId, 'lastGoodFrame', -1, 'regenerate: start over');
     }
     // Read in the same tick `runWorkflow` reads the state it runs.
-    const madeFrom = workflowSourceHash(
-      useDagStore.getState().state,
-      nodeId,
-      createEvaluatorCache(),
-    );
+    const madeFrom = workflowMadeFrom(useDagStore.getState().state, nodeId, createEvaluatorCache());
     const result = await runWorkflow(nodeId, deps);
     if (result.status !== 'completed') {
       return {

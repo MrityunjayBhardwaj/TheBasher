@@ -102,11 +102,13 @@ export const ComfyUIWorkflowParams = z.object({
    */
   lastGoodFrame: z.number().int().default(-1),
   /**
-   * #1718 — the source hash of the node's first output, as it was when the node's pictures last
-   * landed (written by the app's run road, never here). Null until a run lands. A node whose
-   * current hash differs is stale (`workflowMadeState`): the hash takes in the file, its keyed
-   * values' defaults and every wired input's hash, so an edit upstream (a still's prompt) reaches
-   * every workflow it feeds by the wire alone. Defaulted, so an older project loads as never made.
+   * #1718 — what the node's pictures were made from when they last landed (written by the app's
+   * run road, never here). Null until a run lands. A node whose current hash differs is stale
+   * (`workflowMadeState`). Since #1717 the hash is the app's `workflowMadeFrom`: the file, the
+   * image bindings and every input over EVERY frame the node makes, with render passes read as the
+   * render draws them, so an edit upstream (a still's prompt) reaches every workflow it feeds by
+   * the wire alone, and a camera move mid-shot reaches the shot. Defaulted, so an older project
+   * loads as never made.
    */
   madeFrom: z.string().nullable().default(null),
   /**

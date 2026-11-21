@@ -9,7 +9,7 @@ import type { ComfyApiJson } from '../../core/comfy/comfyGraph';
 import { __resetRegistryForTests } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
 import { MemoryStorage } from '../../core/storage';
-import { workflowMadeState } from '../../nodes/comfyWorkflowMade';
+import { madeStateOf as workflowMadeState } from './workflowMadeFrom';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { compileWorkflowFrame } from '../../render/compileWorkflowFrame';
 import { FIXTURE_META, STILL_FILE, stillAndShots } from '../../test-utils/stillAndShots';

@@ -40,7 +40,7 @@ import type { DagState } from '../../core/dag/state';
 import type { NodeId, NodeRef, Op } from '../../core/dag/types';
 import type { StorageCapability } from '../../core/storage';
 import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../../nodes/ComfyUIWorkflow';
-import { workflowSourceHash } from '../../nodes/comfyWorkflowMade';
+import { workflowMadeFrom } from '../render/workflowMadeFrom';
 import type { CompileWorkflowFn, ControllerValueAt } from '../../render/dryRun';
 import { runComfyUIWorkflow } from '../../render/runComfyUIWorkflow';
 import type { Shot } from '../shots';
@@ -352,7 +352,7 @@ export async function runStillVariants(
         seedInput && marker === seedInput.nodeId ? seed : base?.(marker, frame),
       onFrameComplete: () => {},
     });
-    variants.push({ seed, path: report.outputs[0], madeFrom: workflowSourceHash(s, stillId) });
+    variants.push({ seed, path: report.outputs[0], madeFrom: workflowMadeFrom(s, stillId) });
   }
   return variants;
 }
@@ -382,7 +382,7 @@ export function keepVariantPlan(state: DagState, stillId: NodeId, variant: Still
     ops.push(op);
     s = applyOp(s, op).next;
   }
-  const madeFrom = workflowSourceHash(s, stillId);
+  const madeFrom = workflowMadeFrom(s, stillId);
   if (variant.madeFrom === null || variant.madeFrom !== madeFrom) {
     return {
       ok: false,

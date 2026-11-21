@@ -10,7 +10,7 @@ import { __resetRegistryForTests, applyOp } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
 import type { NodeRef, Op } from '../../core/dag/types';
 import { MemoryStorage } from '../../core/storage';
-import { workflowMadeState } from '../../nodes/comfyWorkflowMade';
+import { madeStateOf as workflowMadeState } from '../render/workflowMadeFrom';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { compileWorkflowFrame } from '../../render/compileWorkflowFrame';
 import { VIDEO_FILE, stillAndShots } from '../../test-utils/stillAndShots';

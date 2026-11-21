@@ -12,10 +12,12 @@
 // hash, which changes the hash of every workflow its still is wired into. A shot goes stale when
 // the still it starts from does, with no rule here that knows about stills or shots.
 //
-// What this does not see: a run of frames from a render pass enters at the run's first frame
-// only (the hash is read there), so a change later in a shot's frames is not stale yet. Keyed
-// values (on `controller:<nodeId>`) live off the graph and are not in the hash either. Both are
-// the Video space's question (#1717).
+// What `workflowSourceHash` does not see: a run of frames from a render pass enters at the run's
+// first frame only (the hash is read there), and the graph is evaluated without its keyframe
+// channels, so the camera a render pass films with is the camera switch's authored one at every
+// frame. #1717 answers both in the app (`src/app/render/workflowMadeFrom.ts`, which reads every
+// frame the way the render draws it), and the app passes that hash here (`hashOf`). Every reader
+// that records or compares `madeFrom` must use the same one.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // REGENERATING RUNS WHAT IT DEPENDS ON FIRST
@@ -33,6 +35,10 @@ import type { DagState } from '../core/dag/state';
 import type { NodeId } from '../core/dag/types';
 import { workflowSocketsOf, type ComfyUIWorkflowParams } from './ComfyUIWorkflow';
 import type { ImageValue } from './types';
+
+/** The hash a workflow's pictures are made from (null: it cannot run). `workflowSourceHash` here;
+ *  the app's `workflowMadeFrom` (#1717), which covers every frame. */
+export type WorkflowHashFn = (state: DagState, id: NodeId, cache?: EvaluatorCache) => string | null;
 
 /** `unmade`: never landed. `current`: made from what it would make now. `stale`: an input
  *  moved since. `cannot-run`: no workflow file, or a file with no Basher output. */
@@ -71,8 +77,9 @@ export function workflowMadeState(
   state: DagState,
   id: NodeId,
   cache?: EvaluatorCache,
+  hashOf: WorkflowHashFn = workflowSourceHash,
 ): WorkflowMadeState {
-  const now = workflowSourceHash(state, id, cache);
+  const now = hashOf(state, id, cache);
   if (now === null) return 'cannot-run';
   const made = (state.nodes[id]!.params as Partial<ComfyUIWorkflowParams>).madeFrom ?? null;
   if (made === null) return 'unmade';
@@ -83,9 +90,16 @@ export function workflowMadeState(
  * The workflows regenerating `id` runs, in the order to run them: every workflow upstream of it
  * that is not current (dependencies first), then `id` itself. Each appears once.
  */
-export function regenerateOrder(state: DagState, id: NodeId, cache?: EvaluatorCache): NodeId[] {
+export function regenerateOrder(
+  state: DagState,
+  id: NodeId,
+  cache?: EvaluatorCache,
+  hashOf: WorkflowHashFn = workflowSourceHash,
+): NodeId[] {
   if (!isWorkflow(state, id)) return [];
   return topoSort(state, id).filter(
-    (n) => n === id || (isWorkflow(state, n) && workflowMadeState(state, n, cache) !== 'current'),
+    (n) =>
+      n === id ||
+      (isWorkflow(state, n) && workflowMadeState(state, n, cache, hashOf) !== 'current'),
   );
 }

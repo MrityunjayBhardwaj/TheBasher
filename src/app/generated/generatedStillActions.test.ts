@@ -7,7 +7,7 @@ import { StubComfyUICapability } from '../../core/comfy';
 import { __resetRegistryForTests } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
 import { MemoryStorage } from '../../core/storage';
-import { workflowMadeState } from '../../nodes/comfyWorkflowMade';
+import { madeStateOf as workflowMadeState } from '../render/workflowMadeFrom';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { compileWorkflowFrame } from '../../render/compileWorkflowFrame';
 import { stillAndShots } from '../../test-utils/stillAndShots';
