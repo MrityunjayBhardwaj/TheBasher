@@ -29,6 +29,11 @@
 // its own hash (a still workflow's edit reaches the shots it feeds by the wire, as in #1718), a
 // number or text by its value, and the workflow file and image bindings whole.
 //
+// #1948 — and an unwired number or text input by its KEYED value at each frame, read through the
+// run's own reader (`controllerValueReader`, `controller:<marker>`): the keys live off the graph,
+// so the node's own hash never saw them. A key edit marks the workflow stale, putting it back marks
+// it current, and a key on another node is not read. An un-keyed edit is written into the file.
+//
 // WHAT IT DOES NOT SEE YET: animation that reaches the scene through NLA strips or drivers rather
 // than keyframe channels, and channels on nodes the scene is not built from.
 //
@@ -63,6 +68,7 @@ import { runFrameEnd } from '../../render/dryRun';
 import { resolveCameraPoseAt, selectActiveCameraNode } from '../activeCamera';
 import { cameraDataOf, cameraLensParams, isCameraNode } from '../cameraNode';
 import { keyframeChannelsTargeting } from '../nodeChannels';
+import { controllerValueReader } from './controllerValue';
 
 /** The runner's cadence (`runComfyUIWorkflow`). */
 const FPS = 30;
@@ -179,12 +185,23 @@ function computeWorkflowMadeFrom(
     return r;
   };
 
+  // #1948 — the keyed values of its own inputs, read as the run reads them (`controller:<marker>`).
+  const keyedValue = controllerValueReader(state, id);
+
   const frames: unknown[] = [];
   for (let frame = first; frame <= last; frame++) {
     const ctx = ctxAt(frame);
     const inputs = sockets.inputs.map((input) => {
       const ref = refOf(node.inputs[input.socket]);
-      if (!ref || !inputAvailable(def, node.params, input.socket)) return [input.socket, null];
+      if (!ref || !inputAvailable(def, node.params, input.socket)) {
+        // #1948 — an unwired number or text input is sent its keyed value at this frame (the run's
+        // own reader), else the file's default, which is in the hash with the file.
+        const keyed =
+          input.type === 'number' || input.type === 'text'
+            ? keyedValue(input.nodeId, frame)
+            : undefined;
+        return [input.socket, keyed === undefined ? null : { keyed }];
+      }
       const value = evaluateInputRef(state, id, input.socket, ref, { ctx, cache }).value;
       if (input.type === 'number') return [input.socket, value ?? null];
       if (input.type === 'text') return [input.socket, textOf(value)];

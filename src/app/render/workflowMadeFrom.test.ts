@@ -7,6 +7,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, type DagState } from '../../core/dag';
 import type { Op } from '../../core/dag/types';
+import { comfyControllerPath } from '../../core/comfy/basherControllers';
 import {
   STYLIZED_REALISM_META,
   STYLIZED_REALISM_WORKFLOW,
@@ -251,5 +252,50 @@ describe('#1717 — what a shot was made from covers every frame of the shot', (
     );
     expect(hash).toEqual(expect.any(String));
     expect(memoised).toBeLessThan(1);
+  });
+});
+
+describe('#1948 — a keyed input of the workflow is part of what it was made from', () => {
+  /** A key on the stylized file's `prompt` input (marker node 20) of workflow `id`. */
+  const promptKey = (id: string, text: string, nodeId = `${id}_prompt_key`): Op => ({
+    type: 'addNode',
+    nodeId,
+    nodeType: 'KeyframeChannelText',
+    params: {
+      name: 'prompt',
+      target: id,
+      paramPath: comfyControllerPath('20'),
+      keyframes: [{ time: 1.2, value: text, easing: 'constant' }],
+    },
+  });
+  const setKey = (nodeId: string, text: string): Op => ({
+    type: 'setParam',
+    nodeId,
+    paramPath: 'keyframes',
+    value: [{ time: 1.2, value: text, easing: 'constant' }],
+  });
+
+  it("changing a key on a workflow's prompt marks it stale, and changing it back marks it current", () => {
+    const { state, shots } = film();
+    const made = allMade(apply(state, [promptKey('shot2', 'a castle at dusk')]), shots);
+    expect(states(made, shots)).toEqual(['current', 'current', 'current']);
+    const edited = apply(made, [setKey('shot2_prompt_key', 'a castle in rain')]);
+    expect(states(edited, shots)).toEqual(['current', 'stale', 'current']);
+    const back = apply(edited, [setKey('shot2_prompt_key', 'a castle at dusk')]);
+    expect(states(back, shots)).toEqual(['current', 'current', 'current']);
+  });
+
+  it('a first key on the prompt marks the workflow stale (the keyed value replaces the default)', () => {
+    const { state, shots } = film();
+    const made = allMade(state, shots);
+    const keyed = apply(made, [promptKey('shot2', 'a castle in rain')]);
+    expect(states(keyed, shots)).toEqual(['current', 'stale', 'current']);
+  });
+
+  it("keys on another workflow's prompt do not touch this one", () => {
+    const { state, shots } = film();
+    const made = allMade(apply(state, [promptKey('shot3', 'night')]), shots);
+    const edited = apply(made, [setKey('shot3_prompt_key', 'dawn')]);
+    expect(states(edited, shots)).toEqual(['current', 'current', 'stale']);
   });
 });
