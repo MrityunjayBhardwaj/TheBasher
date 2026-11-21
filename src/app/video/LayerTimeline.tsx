@@ -1,7 +1,7 @@
 // LayerTimeline — the Compositor's layer timeline (spine 1c.3a): an AE-style
 // outline column (one row per layer: twirl, name, visibility/solo/lock) beside a
 // track area (each layer's time bar on a frame ruler, with the playhead). Rows
-// render FRONT-on-top (the `layers` list is back→front; AE shows front first).
+// render FRONT-on-top (the layer stack reads back→front; AE shows front first).
 //
 // Bars are draggable (3b): the left/right handles trim inPoint/outPoint, the body
 // slides startFrame, a locked layer ignores the gesture, and rows reorder by drag.
@@ -447,7 +447,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     };
   }, [onRowWindowMove, onRowWindowUp]);
 
-  // Front-on-top: the layers list is back→front; reverse for display. A twirl-open
+  // Front-on-top: the layer stack reads back→front; reverse for display. A twirl-open
   // layer expands into its property rows (the dopesheet folding in). `visualRows`
   // is the ONE ordered list both columns render, so outline + track stay aligned.
   const display = [...rows].reverse();
@@ -721,7 +721,7 @@ function OutlineRow({
         label="Toggle visibility"
         active={row.enabled}
         glyph={row.enabled ? '◉' : '◌'}
-        onToggle={() => setLayerParam(row.id, 'enabled', !row.enabled, 'toggle layer visibility')}
+        onToggle={() => setLayerParam(row.id, 'muted', row.enabled, 'toggle layer visibility')}
       />
       <ToggleButton
         testId={`layer-solo-${row.id}`}

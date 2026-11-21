@@ -211,8 +211,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   KeyframeChannelVec3:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) sourceClipId=(unrouted) sourceHash=(unrouted) keyframes=channel',
   Lag: '[] factor=(unrouted) seedFrame=(unrouted) sourceTransform=(unrouted)',
+  // #1879 — `enabled` became `muted` (the stack mute); routed the same way, nowhere.
   Layer:
-    '[layout,animate] name=layout enabled=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
+    '[layout,animate] name=layout muted=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
   LightData:
     '[light] lightKind=light intensity=light color=light distance=light decay=light angle=light penumbra=light width=light height=light tex=light',
   LightProfileSelect: '[layout] selectedProfile=(unrouted)',

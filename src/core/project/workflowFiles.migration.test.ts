@@ -110,8 +110,9 @@ async function loaded() {
 }
 
 describe('v30 → v31: a preset node holds the preset’s workflow file (#1715)', () => {
-  it('is the step that reaches the current format', () => {
-    expect(PROJECT_FORMAT_VERSION).toBe(WORKFLOW_FILES_FORMAT);
+  it('is a step on the way to the current format', () => {
+    // #1879's layer chains (v32) landed after it, so it is no longer the last step.
+    expect(PROJECT_FORMAT_VERSION).toBeGreaterThanOrEqual(WORKFLOW_FILES_FORMAT);
   });
 
   it('the stylizedRealism preset becomes the generic node with its file, and no preset', async () => {

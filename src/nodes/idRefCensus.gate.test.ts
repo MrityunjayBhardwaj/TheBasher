@@ -378,6 +378,7 @@ describe('#1560 — every input socket says what it owns, or is listed as owning
         "Group.children:always",
         "InvertTransform.transform:always",
         "Lag.in:always",
+        "Layer.below:stack",
         "MakeVec3.x:always",
         "MakeVec3.y:always",
         "MakeVec3.z:always",

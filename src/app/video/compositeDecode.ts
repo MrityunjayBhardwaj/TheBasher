@@ -214,7 +214,8 @@ export function collectCompositeInputs(
 
     inputs.push({
       layerId,
-      enabled: p.enabled !== false,
+      // #1879 — shown unless muted (the stack mute that bypasses the layer).
+      enabled: p.muted !== true,
       solo: p.solo === true,
       startFrame: num(p.startFrame, 0),
       inPoint: num(p.inPoint, 0),

@@ -70,6 +70,10 @@ export const CAMERA_LENS_STRIP_FORMAT = CONSTRAINT_CHAINS_FORMAT + 1;
  *  preset enum is gone. */
 export const WORKFLOW_FILES_FORMAT = CAMERA_LENS_STRIP_FORMAT + 1;
 
+/** #1879 — the format version the layer-list-to-chain conversion produces. It landed after
+ *  #1715's workflow files, so it numbers from there. */
+export const LAYER_CHAINS_FORMAT = WORKFLOW_FILES_FORMAT + 1;
+
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
   // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
@@ -201,6 +205,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // node holding the preset's workflow file, its pass wires on the sockets of the same names and
   // its output wires on the file's output.
   [WORKFLOW_FILES_FORMAT - 1]: migratePresetsToWorkflowFiles,
+  // v31 → v32 (#1879): a composition's layer list becomes a chain on the Image lane. Each layer
+  // reads the one behind it on `below`, the comp reads the front layer on `in`, and a layer's
+  // `enabled` becomes `muted` (inverted), the stack mute that bypasses it.
+  [LAYER_CHAINS_FORMAT - 1]: migrateLayerListsToChains,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -3336,4 +3344,108 @@ export function migratePresetsToWorkflowFiles(raw: unknown): unknown {
     state: { ...proj.state, nodes: out, ...(outputs ? { outputs } : {}) },
     formatVersion: WORKFLOW_FILES_FORMAT,
   };
+}
+
+// ── v31 → v32: a composition's layers become a chain (#1879) ─────────────────
+// Before, `Composition.layers` was a list (0 = back) the comp composited itself. Now each Layer
+// is an Image-lane operator: it reads everything behind it on `below`, and the comp reads the
+// front layer on `in`. The order is kept exactly. A ref to a missing node, or to a node that is
+// not a Layer, was skipped by every reader, so it is dropped. A layer listed twice, or in two
+// comps, can only stand in one place on a chain: its first appearance (comps in node-table
+// order) is kept and the rest are dropped. Both are reported, never silent (V38).
+//
+// `enabled` (true = shown) becomes `muted` (true = hidden). A key or driver on a layer's
+// `enabled` is moved to `muted`, its boolean or 0/1 key values inverted.
+
+const LAYER_MUTE_PATH = 'muted';
+
+function invertShown(v: unknown): unknown {
+  if (typeof v === 'boolean') return !v;
+  if (typeof v === 'number') return 1 - v;
+  return v;
+}
+
+export function migrateLayerListsToChains(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: LAYER_CHAINS_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const placed = new Set<string>();
+  const dropped: string[] = [];
+  const reused: string[] = [];
+
+  for (const [compId, comp] of Object.entries(nodes)) {
+    if (comp?.type !== 'Composition' || !comp.inputs || !('layers' in comp.inputs)) continue;
+    const order: RawRef[] = [];
+    for (const r of asRefs(comp.inputs.layers)) {
+      const id = r.node;
+      if (!id || out[id]?.type !== 'Layer') {
+        dropped.push(`${compId}→${id ?? '?'}`);
+        continue;
+      }
+      if (placed.has(id)) {
+        reused.push(`${compId}→${id}`);
+        continue;
+      }
+      placed.add(id);
+      order.push({ node: id, socket: r.socket ?? 'out' });
+    }
+    const { layers: _layers, ...compInputs } = comp.inputs;
+    void _layers;
+    const top = order[order.length - 1];
+    out[compId] = { ...comp, inputs: top ? { ...compInputs, in: top } : compInputs };
+    for (let i = 0; i < order.length; i++) {
+      const id = order[i].node!;
+      const layer = out[id]!;
+      const { below: _below, ...layerInputs } = layer.inputs ?? {};
+      void _below;
+      out[id] = {
+        ...layer,
+        inputs: i > 0 ? { ...layerInputs, below: order[i - 1] } : layerInputs,
+      };
+    }
+  }
+
+  // Every Layer, placed or not: `enabled` → `muted`.
+  let renamed = 0;
+  for (const [id, n] of Object.entries(out)) {
+    if (n?.type !== 'Layer' || !n.params || !('enabled' in n.params)) continue;
+    const { enabled, ...rest } = n.params;
+    out[id] = { ...n, params: { ...rest, muted: enabled === false } };
+    renamed++;
+  }
+  let movedKeys = 0;
+  for (const [id, n] of Object.entries(out)) {
+    const q = n?.params;
+    if (q?.paramPath !== 'enabled' || typeof q.target !== 'string') continue;
+    if (out[q.target]?.type !== 'Layer') continue;
+    const isChannel = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+    if (!isChannel && n.type !== 'ParamDriver') continue;
+    const keyframes = Array.isArray(q.keyframes)
+      ? (q.keyframes as Record<string, unknown>[]).map((k) => ({
+          ...k,
+          value: invertShown(k.value),
+        }))
+      : q.keyframes;
+    out[id] = {
+      ...n,
+      params: { ...q, paramPath: LAYER_MUTE_PATH, ...(isChannel ? { keyframes } : {}) },
+    };
+    movedKeys++;
+  }
+
+  if (dropped.length > 0 || reused.length > 0) {
+    console.warn(
+      `[migrateLayerListsToChains] dropped ${dropped.length} layer ref(s) to a missing or non-Layer ` +
+        `node (${dropped.join(', ')}) and ${reused.length} repeat appearance(s) of a layer already ` +
+        `placed (${reused.join(', ')}) (#1879).`,
+    );
+  }
+  if (movedKeys > 0) {
+    console.warn(
+      `[migrateLayerListsToChains] ${movedKeys} key/driver node(s) on a layer's enabled moved to ` +
+        `muted, values inverted; ${renamed} layer(s) converted (#1879).`,
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: LAYER_CHAINS_FORMAT };
 }

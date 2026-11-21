@@ -1,8 +1,16 @@
 // videoLayers — verify collectLayerRows reads ordered layer rows + source length
 // from a raw DAG state.
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { DagState } from '../../core/dag/state';
+import { emptyDagState } from '../../core/dag';
+import type { Op } from '../../core/dag/types';
+import { applyOp } from '../../test-utils/committedApplyOp';
+import { registerAllNodes } from '../../nodes/registerAll';
+import { buildMediaClipOps } from '../asset/importMediaClip';
+import { buildDeleteNodesOps } from '../sceneNodeActions';
+import { buildNewCompositionOps } from './newComposition';
+import { buildAddLayerOps } from './addLayer';
 import {
   buildReorderLayerOps,
   collectChannelKeyframes,
@@ -14,8 +22,36 @@ import {
 } from './videoLayers';
 import { collectCompositeInputs } from './compositeDecode';
 
+// #1879 — the stack is walked through each node's DECLARED chain socket, so the registry is needed.
+beforeAll(() => registerAllNodes());
+
 function state(nodes: Record<string, unknown>): DagState {
   return { nodes } as unknown as DagState;
+}
+
+function apply(s: DagState, ops: readonly Op[]): DagState {
+  for (const op of ops) s = applyOp(s, op).next;
+  return s;
+}
+
+const STILL = {
+  mediaKind: 'image' as const,
+  srcFps: 1,
+  srcFrames: 1,
+  durationSeconds: 0,
+  width: 64,
+  height: 64,
+};
+
+/** A comp holding one layer per name, back → front, each over its own MediaClip, built by the
+ *  real New Composition and Add Layer ops. */
+function realStack(names: readonly string[]): DagState {
+  let s = apply(emptyDagState(), buildNewCompositionOps('comp', 'C'));
+  for (const n of names) {
+    s = apply(s, buildMediaClipOps(`clip_${n}`, n, `media/${n}.png`, STILL));
+    s = apply(s, buildAddLayerOps(s, n, 'comp', `clip_${n}`, n));
+  }
+  return s;
 }
 
 describe('collectLayerRows', () => {
@@ -25,12 +61,7 @@ describe('collectLayerRows', () => {
         id: 'comp',
         type: 'Composition',
         params: { name: 'C' },
-        inputs: {
-          layers: [
-            { node: 'l_bg', socket: 'out' },
-            { node: 'l_fg', socket: 'out' },
-          ],
-        },
+        inputs: { in: { node: 'l_fg', socket: 'out' } },
       },
       l_bg: {
         id: 'l_bg',
@@ -41,8 +72,11 @@ describe('collectLayerRows', () => {
       l_fg: {
         id: 'l_fg',
         type: 'Layer',
-        params: { name: 'fg', enabled: false, solo: true, locked: true, startFrame: 12 },
-        inputs: { source: { node: 'clip', socket: 'out' } },
+        params: { name: 'fg', muted: true, solo: true, locked: true, startFrame: 12 },
+        inputs: {
+          below: { node: 'l_bg', socket: 'out' },
+          source: { node: 'clip', socket: 'out' },
+        },
       },
       clip: { id: 'clip', type: 'MediaClip', params: { srcFrames: 48 }, inputs: {} },
     });
@@ -59,14 +93,15 @@ describe('collectLayerRows', () => {
         id: 'comp',
         type: 'Composition',
         params: {},
-        inputs: {
-          layers: [
-            { node: 'ghost', socket: 'out' },
-            { node: 'l1', socket: 'out' },
-          ],
-        },
+        inputs: { in: { node: 'l1', socket: 'out' } },
       },
-      l1: { id: 'l1', type: 'Layer', params: { name: 'solo' }, inputs: {} },
+      // The layer behind it is missing: the walk stops there instead of inventing a row.
+      l1: {
+        id: 'l1',
+        type: 'Layer',
+        params: { name: 'solo' },
+        inputs: { below: { node: 'ghost', socket: 'out' } },
+      },
     });
     const rows = collectLayerRows(s, 'comp');
     expect(rows).toHaveLength(1);
@@ -79,46 +114,51 @@ describe('collectLayerRows', () => {
 });
 
 describe('buildReorderLayerOps', () => {
-  const comp = (layerIds: string[]) =>
-    state({
-      comp: {
-        id: 'comp',
-        type: 'Composition',
-        params: {},
-        inputs: { layers: layerIds.map((node) => ({ node, socket: 'out' })) },
-      },
-    });
+  // #1879 — asserted on what the ops DO to a real stack (the order read back), not on their shape.
+  const reordered = (names: string[], layer: string, to: number) => {
+    const s = realStack(names);
+    return compositionLayerIds(apply(s, buildReorderLayerOps(s, 'comp', layer, to)), 'comp');
+  };
 
-  it('moves a layer to a new index via disconnect + connect-with-index', () => {
-    // [a,b,c]; move a (index 0) to index 2 → [b,c,a].
-    const ops = buildReorderLayerOps(comp(['a', 'b', 'c']), 'comp', 'a', 2);
-    expect(ops).toEqual([
-      {
-        type: 'disconnect',
-        from: { node: 'a', socket: 'out' },
-        to: { node: 'comp', socket: 'layers' },
-      },
-      {
-        type: 'connect',
-        from: { node: 'a', socket: 'out' },
-        to: { node: 'comp', socket: 'layers' },
-        index: 2,
-      },
-    ]);
+  it('moves a layer to a new index: back to front', () => {
+    expect(reordered(['a', 'b', 'c'], 'a', 2)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('moves a layer to a new index: front to back, and into the middle', () => {
+    expect(reordered(['a', 'b', 'c'], 'c', 0)).toEqual(['c', 'a', 'b']);
+    expect(reordered(['a', 'b', 'c'], 'a', 1)).toEqual(['b', 'a', 'c']);
   });
 
   it('clamps an out-of-range target to the last index', () => {
-    const ops = buildReorderLayerOps(comp(['a', 'b', 'c']), 'comp', 'a', 99);
-    expect((ops[1] as { index: number }).index).toBe(2);
+    expect(reordered(['a', 'b', 'c'], 'a', 99)).toEqual(['b', 'c', 'a']);
   });
 
   it('is a no-op when the target equals the current index', () => {
-    expect(buildReorderLayerOps(comp(['a', 'b', 'c']), 'comp', 'b', 1)).toEqual([]);
+    const s = realStack(['a', 'b', 'c']);
+    expect(buildReorderLayerOps(s, 'comp', 'b', 1)).toEqual([]);
   });
 
   it('is a no-op for a missing comp or unknown layer', () => {
-    expect(buildReorderLayerOps(comp(['a']), 'nope', 'a', 0)).toEqual([]);
-    expect(buildReorderLayerOps(comp(['a']), 'comp', 'ghost', 0)).toEqual([]);
+    const s = realStack(['a']);
+    expect(buildReorderLayerOps(s, 'nope', 'a', 0)).toEqual([]);
+    expect(buildReorderLayerOps(s, 'comp', 'ghost', 0)).toEqual([]);
+  });
+
+  it('refuses while something other than a layer stands on the stack', () => {
+    // Where an adjustment between layers goes when a layer moves past it is #1879 step 4's
+    // question; until then a reorder declines rather than answer it by accident.
+    let s = realStack(['a', 'b']);
+    s = apply(s, [
+      { type: 'addNode', nodeId: 'cc', nodeType: 'ColorCorrect', params: {} },
+      {
+        type: 'disconnect',
+        from: { node: 'a', socket: 'out' },
+        to: { node: 'b', socket: 'below' },
+      },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 'cc', socket: 'target' } },
+      { type: 'connect', from: { node: 'cc', socket: 'out' }, to: { node: 'b', socket: 'below' } },
+    ]);
+    expect(buildReorderLayerOps(s, 'comp', 'a', 1)).toEqual([]);
   });
 });
 
@@ -254,49 +294,64 @@ describe('collectComfySourceChannelRows', () => {
   });
 });
 
-// #1879 — one reader of a composition's layer stack. The fixture's list holds a real layer, a
-// ref to a missing node and a ref to a node that is not a Layer: every reader must see the same
-// one layer. Before, the Video header counted all three.
+// #1879 — one reader of a composition's layer stack: the chain under `Composition.in`, walked
+// through each node's declared chain socket. Every reader (the rows, the composite, the header's
+// count) goes through it.
 describe('compositionLayerIds — the one read of a layer stack (#1879)', () => {
-  const s = state({
-    comp: {
-      id: 'comp',
-      type: 'Composition',
-      params: {},
-      inputs: {
-        layers: [
-          { node: 'gone', socket: 'out' },
-          { node: 'l_real', socket: 'out' },
-          { node: 'clip', socket: 'out' },
-        ],
-      },
-    },
-    l_real: { id: 'l_real', type: 'Layer', params: { name: 'real' }, inputs: {} },
-    clip: { id: 'clip', type: 'MediaClip', params: { srcFrames: 4 }, inputs: {} },
-  });
-
-  it('keeps only Layer nodes, back to front', () => {
-    expect(compositionLayerIds(s, 'comp')).toEqual(['l_real']);
-  });
-
-  it('the rows and the composite read the same layers', () => {
-    expect(collectLayerRows(s, 'comp').map((r) => r.id)).toEqual(['l_real']);
-    expect(collectCompositeInputs(s, 'comp', { time: 0 }).map((i) => i.layerId)).toEqual([
-      'l_real',
+  it('reads a stack built by Add Layer, back to front', () => {
+    expect(compositionLayerIds(realStack(['bg', 'mid', 'fg']), 'comp')).toEqual([
+      'bg',
+      'mid',
+      'fg',
     ]);
   });
 
-  it('is empty for a missing comp', () => {
-    expect(compositionLayerIds(s, 'nope')).toEqual([]);
+  it('walks through a step that is not a layer, and does not list it', () => {
+    let s = realStack(['a', 'b']);
+    s = apply(s, [
+      { type: 'addNode', nodeId: 'cc', nodeType: 'ColorCorrect', params: {} },
+      {
+        type: 'disconnect',
+        from: { node: 'a', socket: 'out' },
+        to: { node: 'b', socket: 'below' },
+      },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 'cc', socket: 'target' } },
+      { type: 'connect', from: { node: 'cc', socket: 'out' }, to: { node: 'b', socket: 'below' } },
+    ]);
+    expect(compositionLayerIds(s, 'comp')).toEqual(['a', 'b']);
   });
 
-  it('a layer stacked on top becomes the last (front) entry', () => {
-    expect(stackLayerOnTopOps('comp', 'l_new')).toEqual([
-      {
-        type: 'connect',
-        from: { node: 'l_new', socket: 'out' },
-        to: { node: 'comp', socket: 'layers' },
-      },
+  it('the rows and the composite read the same layers', () => {
+    const s = realStack(['a', 'b']);
+    expect(collectLayerRows(s, 'comp').map((r) => r.id)).toEqual(['a', 'b']);
+    expect(
+      collectCompositeInputs(s, 'comp', { time: { frame: 0, seconds: 0, normalized: 0 } }).map(
+        (i) => i.layerId,
+      ),
+    ).toEqual(['a', 'b']);
+  });
+
+  it('is empty for a missing comp, and for a comp with no layers', () => {
+    expect(compositionLayerIds(realStack([]), 'nope')).toEqual([]);
+    expect(compositionLayerIds(realStack([]), 'comp')).toEqual([]);
+  });
+
+  it('a layer stacked on top becomes the front, and the old front moves under it', () => {
+    const s = realStack(['a']);
+    const next = apply(s, [
+      { type: 'addNode', nodeId: 'b', nodeType: 'Layer', params: {} },
+      ...stackLayerOnTopOps(s, 'comp', 'b'),
+    ]);
+    expect(compositionLayerIds(next, 'comp')).toEqual(['a', 'b']);
+  });
+
+  it('deleting a middle layer splices the stack closed', () => {
+    // The generic delete splices any chain node out (#432), so the layers behind a deleted one
+    // stay in the comp instead of falling off with it.
+    const s = realStack(['a', 'b', 'c']);
+    expect(compositionLayerIds(apply(s, buildDeleteNodesOps(s, ['b'])), 'comp')).toEqual([
+      'a',
+      'c',
     ]);
   });
 });

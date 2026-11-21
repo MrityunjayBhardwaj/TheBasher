@@ -4,11 +4,15 @@
 // the generic image-source affordance (COMPOSITOR §7.1) — proven GPU-free + server-
 // free, the testable core of "the 3D/asset world drives the generation."
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { BitmapLRU, collectCompositeInputs } from './compositeDecode';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx } from '../../core/dag/types';
 import type { ComfyApiJson } from '../../core/comfy/comfyGraph';
+
+// #1879 — the layer stack is walked through each node's declared chain socket.
+beforeAll(() => registerAllNodes());
 
 const CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
@@ -31,13 +35,13 @@ function stateWithBinding(imageBindings: Record<string, string>): DagState {
         type: 'Composition',
         version: 1,
         params: { fps: 30, durationFrames: 150, width: 512, height: 512 },
-        inputs: { layers: [{ node: 'layer', socket: 'out' }] },
+        inputs: { in: { node: 'layer', socket: 'out' } },
       },
       layer: {
         id: 'layer',
         type: 'Layer',
         version: 1,
-        params: { enabled: true, name: 'gen' },
+        params: { muted: false, name: 'gen' },
         inputs: { source: [{ node: 'comfy', socket: 'out' }] },
       },
       comfy: {

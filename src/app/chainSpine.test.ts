@@ -160,7 +160,7 @@ describe('#396 — the chain spine is declared, not named', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the set of chain nodes is EXACTLY the twelve operators, across all three lanes', () => {
+  it('the set of chain nodes is EXACTLY the fourteen operators, across all three lanes', () => {
     // An EXACT set, not a floor: this population grows, and the failure mode of a new
     // operator is that it registers without a spine and every stack surface goes blind
     // to it — silently, because a node with no spine simply is not a chain node. Making
@@ -174,6 +174,7 @@ describe('#396 — the chain spine is declared, not named', () => {
       'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
+      'Layer', // image lane — a composition's layer stack (#1879, the first with a SIDE picture)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material

@@ -45,20 +45,16 @@ test('Add Layer ▸ Media File wraps a clip as a Layer in the active comp', asyn
   });
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 
-  // DAG wiring: Composition.layers → Layer.source → MediaClip.
+  // DAG wiring: Composition.in → Layer (the top of its stack, #1879), Layer.source → MediaClip.
   const nodes = await dagNodes(page);
   const comp = nodes.find((n) => n.type === 'Composition');
   const layer = nodes.find((n) => n.type === 'Layer');
   const media = nodes.find((n) => n.type === 'MediaClip');
   expect(comp && layer && media).toBeTruthy();
 
-  const layersBinding = comp!.inputs?.layers;
-  const layerRefs = Array.isArray(layersBinding)
-    ? layersBinding
-    : layersBinding
-      ? [layersBinding]
-      : [];
-  expect(layerRefs.map((r) => r.node)).toContain(layer!.id);
+  const topBinding = comp!.inputs?.in;
+  const topRef = Array.isArray(topBinding) ? topBinding[0] : topBinding;
+  expect(topRef?.node).toBe(layer!.id);
 
   const sourceBinding = layer!.inputs?.source;
   const sourceRef = Array.isArray(sourceBinding) ? sourceBinding[0] : sourceBinding;

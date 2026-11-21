@@ -4,7 +4,7 @@
 // pixel draw touches a canvas:
 //   - planComposite(): PURE. Given the comp + the resolved layer inputs (authored
 //     params already overlaid with their evaluated [[V57]] channel values) + the
-//     comp playhead frame, decide which layers are visible (enabled / solo / trim)
+//     comp playhead frame, decide which layers are visible (muted / solo / trim)
 //     and which source frame each shows. The ONE place the composite's visibility +
 //     time-remap rules live, so the live viewer and the export (1e) can't drift
 //     ([[V37]] render==viewport).

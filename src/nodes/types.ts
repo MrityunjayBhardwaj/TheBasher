@@ -2871,32 +2871,6 @@ export interface Layer2DTransform {
   readonly rotation: number;
 }
 
-export interface LayerValue {
-  readonly kind: 'Layer';
-  readonly name: string;
-  readonly enabled: boolean;
-  /** Solo (AE): when any layer in a comp is solo, only solo layers composite. */
-  readonly solo: boolean;
-  /** Lock: protects the layer from timeline edits (trim/slide/reorder). */
-  readonly locked: boolean;
-  /** Position of the layer's in-point on the comp timeline, in comp frames. */
-  readonly startFrame: number;
-  /** Trim of the SOURCE, in source-local frames. */
-  readonly inPoint: number;
-  readonly outPoint: number;
-  readonly blendMode: LayerBlendMode;
-  /** 0..1, keyframeable (V57 channel paramPath 'opacity'). */
-  readonly opacity: number;
-  readonly transform: Layer2DTransform;
-  /**
-   * The source Image as evaluated at the incoming ctx. The compositor RE-EVALUATES
-   * the source node at a time-shifted ctx (comp playhead → source-local time via
-   * startFrame/inPoint) to fetch the actual frame — this field is the structural
-   * handle, not the final composited pixels (the remap is a 1d/runtime concern).
-   */
-  readonly source: ImageValue | null;
-}
-
 export interface CompositionValue {
   readonly kind: 'Composition';
   readonly name: string;
@@ -2906,9 +2880,9 @@ export interface CompositionValue {
   readonly durationFrames: number;
   /** Solid background colour (hex) painted under all layers. */
   readonly background: string;
-  /** Composite z-order: index 0 = BACK, last = FRONT (renderer composites
-   *  bottom→top). The outline UI displays front-on-top by reversing for view. */
-  readonly layers: readonly LayerValue[];
+  /** #1879 — the top of the layer stack: a handle on the image every layer, back to front, makes
+   *  (null when the comp has no layers). Pixels are composited at runtime by walking the chain. */
+  readonly image: ImageValue | null;
 }
 
 // ---------------------------------------------------------------------------

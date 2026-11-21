@@ -189,7 +189,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(importsOf('src/core/dag/socketMembership.ts')).toEqual(['./types']);
   });
 
-  it('THE LANE MAP: all twelve chain declarers land on a lane, none unreadable', () => {
+  it('THE LANE MAP: all fourteen chain declarers land on a lane, none unreadable', () => {
     // Stated as a literal rather than derived a second way. Two derivations checked against
     // each other agree when BOTH are wrong; a literal is the row that cannot.
     expect(laneMap()).toEqual({
@@ -207,6 +207,9 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       // #1027 — the sixth geometry modifier. Like the bevel above it lands on the data lane
       // by having the sockets, which stays a different question from which stack offers it.
       ComponentGroupOp: 'ObjectData',
+      // #1879 — a composition's layer: the stack below flows through on `below`, and its own
+      // picture is a side input of the same type, so the lane is the spine's, as for a modifier.
+      Layer: 'Image',
       MaskModifier: 'ObjectData',
       MaterialOverride: 'SceneObject',
       MaterialOverrideOp: 'ObjectData',
@@ -253,7 +256,8 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'UVProjectModifier',
     ]);
     expect(laneMembers('SceneObject')).toEqual(['MaterialOverride', 'Transform']);
-    expect(laneMembers('Image')).toEqual(['ColorCorrect']);
+    // #1879 — two on the image lane, in two sections: an effect adjusts, a layer composites.
+    expect(laneMembers('Image')).toEqual(['ColorCorrect', 'Layer']);
   });
 
   it('THE DERIVED SET FOLLOWS THE REGISTRY; THE HAND-MAINTAINED LIST DOES NOT', () => {

@@ -185,7 +185,8 @@ test('the example evaluates its retarget once, not every frame', async ({ page }
     {
       type: 'connect',
       from: { node: 'layer_1389', socket: 'out' },
-      to: { node: compId, socket: 'layers' },
+      // #1879 — the comp reads the top of its layer stack on `in`; a new comp has none yet.
+      to: { node: compId, socket: 'in' },
     },
     cameraYawDriver('drv_1389_layer', 'layer_1389', 'opacity'),
   ]);

@@ -114,7 +114,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v31 (#1715): a ComfyUI workflow node holds its workflow file and the preset enum is gone — a
 // preset node gets the preset's file, its pass wires on the sockets named after each pass. See
 // migrations.ts `migratePresetsToWorkflowFiles` (`WORKFLOW_FILES_FORMAT`).
-export const PROJECT_FORMAT_VERSION = 31;
+// v32 (#1879): a composition's layer list is a chain of layers on the Image lane, and a layer's
+// `enabled` is `muted`. See migrations.ts `migrateLayerListsToChains` (`LAYER_CHAINS_FORMAT`).
+export const PROJECT_FORMAT_VERSION = 32;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

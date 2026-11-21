@@ -573,8 +573,11 @@ export type BypassKind =
  * declare a spine and a stack walks past them) and belong to no offered stack. Giving one
  * of them a section that a stack actually reads would make that stack offer a member it
  * does not have — a lying label with a one-commit fuse.
+ *
+ * `'layer'` (#1879): a composition's layer stack, on the Image lane. Its door is Add Layer, which
+ * wraps a source as a layer, so no "+ Add" menu lists the bare type.
  */
-export type OperatorSection = 'modifier' | 'material' | 'effect' | 'none';
+export type OperatorSection = 'modifier' | 'material' | 'effect' | 'layer' | 'none';
 
 /**
  * Everything that is true of a node BECAUSE it is an operator, declared once.

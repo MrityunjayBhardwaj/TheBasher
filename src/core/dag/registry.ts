@@ -95,6 +95,7 @@ const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> =
   modifier: 'ObjectData',
   material: 'ObjectData',
   effect: 'Image',
+  layer: 'Image',
 };
 
 function assertChainDeclaration(def: NodeDefinition): void {

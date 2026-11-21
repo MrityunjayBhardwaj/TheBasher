@@ -315,7 +315,8 @@ export const SHARED_WIRES: readonly string[] = [
   'Collection.members',
   // #1715 — every other input of a workflow node comes from its file and owns nothing.
   'ComfyUIWorkflow.time',
-  'Composition.layers',
+  // #1879 — the top of a layer stack: deleting the comp leaves its layers, as the old list did.
+  'Composition.in',
   'DepthPass.camera',
   'DepthPass.scene',
   'DepthPass.time',

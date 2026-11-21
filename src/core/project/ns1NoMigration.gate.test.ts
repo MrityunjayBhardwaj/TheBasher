@@ -167,7 +167,10 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // on such a file, so only a later pass can finish it.
     // #1715 is the TWENTY-SECOND: the ComfyUI preset enum is gone, and a preset node holds the
     // preset's workflow file (formatMigrations[30]).
-    const MIGRATIONS_SINCE_FREEZE = 22; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824, #1812, #1856, #1715
+    // #1879 is the TWENTY-THIRD: a composition's layer list becomes a chain on the Image lane, and a
+    // layer's `enabled` becomes `muted` (formatMigrations[31]). The list was a socket the comp held,
+    // and only a pass over the saved wires can hand each layer the one behind it.
+    const MIGRATIONS_SINCE_FREEZE = 23; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824, #1812, #1856, #1715, #1879
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

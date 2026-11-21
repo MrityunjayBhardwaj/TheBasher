@@ -806,7 +806,8 @@ describe('a param declares its control on its schema (#872)', () => {
         width: 64,
         height: 64,
       }),
-      ...buildAddLayerOps('layer', 'comp', 'clip', 'Layer 1'),
+      // The comp is created in this same batch, so the state before it is the one to stack on.
+      ...buildAddLayerOps(s, 'layer', 'comp', 'clip', 'Layer 1'),
     ]);
 
     const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };

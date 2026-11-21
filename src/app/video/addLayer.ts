@@ -14,6 +14,7 @@
 
 import { workflowSocketsOf } from '../../nodes/ComfyUIWorkflow';
 import type { NodeId, Op } from '../../core/dag/types';
+import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import { buildMediaClipOps, freshMediaClipId, ingestMediaClipFile } from '../asset/importMediaClip';
 import { pickMediaFiles, pickWorkflowJsonFile } from '../asset/importPicker';
@@ -25,11 +26,12 @@ import { stackLayerOnTopOps } from './videoLayers';
 
 /**
  * Build the ops wrapping `sourceNodeId` (an Image producer) as a new Layer in the
- * Composition `compId`: addNode(Layer) → connect(source.out → Layer.source) →
- * connect(Layer.out → Composition.layers). Pure; the caller mints `layerId`.
- * Appends to the `layers` list (no `index`) → the new layer lands on top (front).
+ * Composition `compId`: addNode(Layer) → connect(source.out → Layer.source) → stack it on top
+ * of the comp (#1879: the old top moves onto its `below`). Pure over `state`, which must be the
+ * state the ops are dispatched against; the caller mints `layerId`.
  */
 export function buildAddLayerOps(
+  state: DagState,
   layerId: NodeId,
   compId: NodeId,
   sourceNodeId: NodeId,
@@ -45,7 +47,7 @@ export function buildAddLayerOps(
       from: { node: sourceNodeId, socket: sourceSocket },
       to: { node: layerId, socket: 'source' },
     },
-    ...stackLayerOnTopOps(compId, layerId),
+    ...stackLayerOnTopOps(state, compId, layerId),
   ];
 }
 
@@ -87,7 +89,7 @@ export async function importMediaClipAsLayer(
 
   const ops: Op[] = [
     ...buildMediaClipOps(mediaId, ingested.name, ingested.opfsPath, ingested.probe),
-    ...buildAddLayerOps(layerId, compId, mediaId, ingested.name, extraParams),
+    ...buildAddLayerOps(dag.state, layerId, compId, mediaId, ingested.name, extraParams),
   ];
   dag.dispatchAtomic(ops, 'user', `add media layer: ${ingested.name}`);
   return layerId;
@@ -137,6 +139,7 @@ export function addComfyWorkflowLayerFromGraph(
   const ops: Op[] = [
     { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: { graph } },
     ...buildAddLayerOps(
+      dag.state,
       layerId,
       compId,
       comfyId,

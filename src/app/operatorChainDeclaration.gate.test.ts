@@ -86,7 +86,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all twelve operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all fourteen operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArmatureModifier', // data lane — geometry (#393, the first that DEFORMS over time)
       'ArrayModifier', // data lane — geometry
@@ -94,6 +94,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
+      'Layer', // image lane — a composition's layer stack (#1879)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
@@ -137,7 +138,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // Not a choice: the spine value has no components at all.
     expect(
       where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'no-component-domain'),
-    ).toEqual(['ColorCorrect', 'MaterialOverride', 'Transform']);
+    ).toEqual(['ColorCorrect', 'Layer', 'MaterialOverride', 'Transform']);
 
     // 🔴 THIS ASSERTED THE EMPTY SET UNTIL ns-2 STEP 17, AND THE ROW DID EXACTLY WHAT IT
     // WAS WRITTEN FOR. `declined` means "could be scoped, is not, YET", and the comment
@@ -234,6 +235,10 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     ]);
     expect(where((c) => c.section === 'material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(where((c) => c.section === 'effect')).toEqual(['ColorCorrect']);
+    // #1879 — a composition's layer stack offers layers (its door is Add Layer). Declared
+    // 'none' at first, a layer broke the symmetry below: it has a bypass (hiding it), so it
+    // belongs to a stack. That was the question this row exists to raise.
+    expect(where((c) => c.section === 'layer')).toEqual(['Layer']);
     expect(where((c) => c.section === 'none')).toEqual(['MaterialOverride', 'Transform']);
 
     // THE SYMMETRY IS THE EVIDENCE THE BOUNDARY IS DRAWN RIGHT, and it is worth asserting
