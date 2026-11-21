@@ -246,3 +246,100 @@ test('cameras draw in their shot colour; the live one is solid with its path das
   // The Shots list wears the same colours.
   await expect(page.getByTestId('shot-color-1')).toHaveAttribute('data-color', `#${AMBER}`);
 });
+
+interface PreviewSeam {
+  drawn: boolean;
+  renders: number;
+  cameraId: string | null;
+}
+const previewSeam = (page: Page) =>
+  page.evaluate(async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+    return (window as unknown as { __basher_live_preview?: PreviewSeam }).__basher_live_preview!;
+  });
+
+/** Pixel statistics of the preview image as the page draws it (a screenshot of its box): how many
+ *  distinct colours (quantised), and the mean luminance. */
+async function previewPixels(page: Page): Promise<{ distinct: number; mean: number }> {
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))),
+  );
+  const png = await page.getByTestId('live-preview-image').screenshot();
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    await new Promise((r) => {
+      img.onload = r;
+      img.src = `data:image/png;base64,${b64}`;
+    });
+    const cv = document.createElement('canvas');
+    cv.width = img.width;
+    cv.height = img.height;
+    const ctx = cv.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    // Inset by 3 px so the frame's own border is not counted.
+    const d = ctx.getImageData(3, 3, img.width - 6, img.height - 6).data;
+    const seen = new Set<number>();
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      seen.add(((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3));
+      sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    }
+    return { distinct: seen.size, mean: sum / (d.length / 4) };
+  }, png.toString('base64'));
+}
+
+test('a live preview shows what the live camera sees, captioned, and collapses to its caption', async ({
+  page,
+}) => {
+  await boot(page);
+  const preview = page.getByTestId('live-preview');
+  const caption = page.getByTestId('live-preview-caption');
+  await expect(preview).toBeVisible();
+  await expect(caption).toContainText(/^Shot 1 · .+ · 0\.00$/);
+
+  // Shot 1 is the seed camera framing the box: an image, not a blank.
+  await expect.poll(async () => (await previewSeam(page)).drawn).toBe(true);
+  expect((await previewSeam(page)).cameraId).toBe('n_camera');
+  const shot1 = await previewPixels(page);
+  // Shot 3 is CAM2, aimed at x = 20 where only the edge of the floor grid lies: the preview is a
+  // render, so the editor grid (chrome) is not in it and the frame is the bare background.
+  await setPlayhead(page, 4.5);
+  await expect(caption).toContainText(/^Shot 3 · .+ · 4\.50$/);
+  await expect.poll(async () => (await previewSeam(page)).cameraId).toBe(CAM2);
+  const shot3 = await previewPixels(page);
+  console.log(`p1708 preview pixels shot1 ${JSON.stringify(shot1)} shot3 ${JSON.stringify(shot3)}`);
+  // The flat-lit box is a handful of shades over the background; an empty frame is one.
+  expect(shot1.distinct, 'shot 1 shows the box').toBeGreaterThanOrEqual(4);
+  expect(shot3.distinct, 'no editor grid in the preview').toBeLessThanOrEqual(2);
+
+  // Collapsing leaves the caption and stops drawing; the choice survives a reload.
+  await page.getByTestId('live-preview-toggle').click();
+  await expect(page.getByTestId('live-preview-image')).toHaveCount(0);
+  await expect(caption).toBeVisible();
+  await expect.poll(async () => (await previewSeam(page)).drawn).toBe(false);
+  await page.reload();
+  await expect(page.getByTestId('live-preview-caption')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('live-preview-image')).toHaveCount(0);
+  await page.getByTestId('live-preview-toggle').click();
+  await expect(page.getByTestId('live-preview-image')).toBeVisible();
+
+  // Pointless while looking through; hidden in present mode.
+  await page.keyboard.press('0');
+  await expect(preview).toBeHidden();
+  await page.keyboard.press('0');
+  await expect(preview).toBeVisible();
+  await page.evaluate(() =>
+    (
+      window as unknown as {
+        __basher_chrome: { getState: () => { setPresentMode: (on: boolean) => void } };
+      }
+    ).__basher_chrome
+      .getState()
+      .setPresentMode(true),
+  );
+  await expect(preview).toBeHidden();
+
+  expect(await page.getByTestId('viewport').locator('canvas').count(), 'one viewport canvas').toBe(
+    1,
+  );
+});

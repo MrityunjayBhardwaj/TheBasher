@@ -20,6 +20,7 @@ import { CurvePointHandles } from '../app/CurvePointHandles';
 import { BoneGizmo } from '../app/BoneGizmo';
 import { useCurveSelectionStore } from '../app/stores/curveSelectionStore';
 import { ProjectionToggle } from '../app/ProjectionToggle';
+import { LivePreview } from '../app/LivePreview';
 import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -33,6 +34,7 @@ import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { GeometryLifetime } from './GeometryLifetime';
 import { EditorLights } from './EditorLights';
 import { EditorViewCamera } from './EditorViewCamera';
+import { LivePreviewPass } from './LivePreviewPass';
 import { BoxSelect } from './BoxSelectController';
 import { BoxSelectOverlay } from './BoxSelectOverlay';
 import { useBoxSelectStore } from '../app/stores/boxSelectStore';
@@ -366,12 +368,17 @@ export function Viewport() {
               <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
             </GizmoHelper>
           ) : null}
+          {/* #1708 — the live camera's view, drawn into the preview box after the main pass and
+              the axis gizmo (priority 3). Inside this Canvas: never a second one. */}
+          <LivePreviewPass />
         </Suspense>
       </Canvas>
       {/* Bottom-right ortho|persp pill, by the axis-ball nav gizmo (Spline).
           Hidden in the narrow layout (its corner is taken by the full-width
           bottom stack); `M` still toggles projection. */}
       {!isNarrow ? <ProjectionToggle /> : null}
+      {/* #1708 — the live preview's frame and caption; its picture is LivePreviewPass's. */}
+      <LivePreview />
       {/* #226 — box-select marquee overlay (DOM). Mounts only while box mode is
           armed; covers the viewport, captures the drag, draws the marquee. */}
       <BoxSelectOverlay />

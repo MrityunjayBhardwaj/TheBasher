@@ -39,9 +39,13 @@ export function shotColorOfCamera(state: DagState, cameraId: string): string | n
   return shotCameraColors(shotsOf(state, sceneEndSeconds(state)).shots).get(cameraId) ?? null;
 }
 
-/** The shot on screen at `filmSeconds` (the last one at or past the film's end), or null when the
- *  film has no shot. */
-export function liveShotAt(state: DagState, filmSeconds: number): Shot | null {
-  const shots = shotsOf(state, sceneEndSeconds(state)).shots;
+/** The shot on screen at `filmSeconds` among `shots` (the last one at or past the film's end), or
+ *  null when there is none. */
+export function liveShotIn(shots: readonly Shot[], filmSeconds: number): Shot | null {
   return shots.find((s) => filmSeconds >= s.start && filmSeconds < s.end) ?? shots.at(-1) ?? null;
+}
+
+/** The shot on screen at `filmSeconds`, or null when the film has no shot. */
+export function liveShotAt(state: DagState, filmSeconds: number): Shot | null {
+  return liveShotIn(shotsOf(state, sceneEndSeconds(state)).shots, filmSeconds);
 }
