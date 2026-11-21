@@ -54,7 +54,10 @@ export function mediaClipFrameAt(params: MediaClipParams, seconds: number): numb
 export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
   type: 'MediaClip',
   version: 1,
-  pure: true,
+  // #1939 — NOT pure: evaluate reads `ctx.time` to pick the source frame, and the evaluator keys
+  // a pure node on params and inputs only, so a pure clip read through one cache repeated the
+  // first frame it cached at every later time. TimeSource's rule: time enters an impure node.
+  pure: false,
   cost: 'cheap',
   paramSchema: MediaClipParams,
   inputs: {},
