@@ -44,6 +44,7 @@ import { FloatingViewportToolbar } from './FloatingViewportToolbar';
 import { ChatColumn } from './ChatColumn';
 import { useChatInspectorFold } from './chatInspectorFold';
 import { useSplitOutlinerFold } from './splitOutlinerFold';
+import { useNodesInspectorFold } from './nodesInspectorFold';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
@@ -129,6 +130,8 @@ export function Layout() {
   useChatInspectorFold();
   // #1709 — while the 2D View shows the 3D view beside it, the outliner folds to its rail.
   useSplitOutlinerFold();
+  // #1953 — the Nodes tab's own panel folds the inspector while it shows (board 8b).
+  useNodesInspectorFold();
   const narrowLeftDrawerOpen = useChromeStore((s) => s.narrowLeftDrawerOpen);
   const narrowRightDrawerOpen = useChromeStore((s) => s.narrowRightDrawerOpen);
   const toggleSideDrawer = useChromeStore((s) => s.toggleNarrowDrawer);

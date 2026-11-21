@@ -235,3 +235,35 @@ test('the view flag shows that node’s result in the viewport', async ({ page }
   await expect.poll(() => widthOf('n_box~viewing')).toBeNull();
   await expect.poll(width).toBeCloseTo(final, 3);
 });
+
+test('the Nodes panel folds an open inspector to its rail, and gives it back when it goes', async ({
+  page,
+}) => {
+  await boot(page);
+  const inspector = page.getByTestId('inspector');
+  await page.getByTestId('inspector-expand-toggle').click();
+  await expect(inspector).toHaveAttribute('data-collapsed', 'false');
+  await openNodes(page);
+  // The board: the inspector is a rail while Nodes owns its panel, so a node's settings (and its
+  // rename field) are drawn once.
+  await expect(inspector).toHaveAttribute('data-collapsed', 'true');
+  await graph(page)
+    .locator('[data-graph-node="n_light_data"] rect')
+    .first()
+    .click({ force: true, position: { x: 30, y: 12 } });
+  await expect(page.getByTestId('inspector-node-name')).toHaveCount(1);
+  // Folding the panel with N gives the inspector back; N again takes it.
+  await page.keyboard.press('n');
+  await expect(inspector).toHaveAttribute('data-collapsed', 'false');
+  await page.keyboard.press('n');
+  await expect(inspector).toHaveAttribute('data-collapsed', 'true');
+  // Closing the drawer gives it back too.
+  await page.getByTestId('timeline-drawer-toggle').click();
+  await expect(inspector).toHaveAttribute('data-collapsed', 'false');
+  // Opened by the director while the panel shows, it is theirs: it stays open after.
+  await openNodes(page);
+  await expect(inspector).toHaveAttribute('data-collapsed', 'true');
+  await page.getByTestId('inspector-expand-toggle').click();
+  await page.getByTestId('timeline-drawer-toggle').click();
+  await expect(inspector).toHaveAttribute('data-collapsed', 'false');
+});
