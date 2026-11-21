@@ -36,6 +36,9 @@ export interface Preset {
   readonly placeholders: readonly string[];
   /** Pinned format version — bump when ComfyUI workflow JSON changes. */
   readonly version: string;
+  /** #1722 — the model files the workflow loads (checkpoints, ControlNets, LoRAs), DERIVED from
+   *  its template by `comfyModelNames` so the licence check reads what the graph really names. */
+  readonly models: readonly string[];
   /** Factory: bind to the runtime storage capability + return a
    *  CompileWorkflowFn that reads raw pass bytes from storage and
    *  substitutes them into the workflow JSON. */

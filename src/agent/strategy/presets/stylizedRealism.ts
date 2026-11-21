@@ -31,6 +31,7 @@
 // (strategy resource lazy-fetched, not in system prompt).
 
 import type { ComfyInputs, ComfyWorkflowJson } from '../../../core/comfy';
+import { comfyModelNames } from '../../../core/comfy/comfyModels';
 import type { ImageValue } from '../../../nodes/types';
 import { framePath as stylizedFramePath } from '../../../render/dryRun';
 import type { Preset, PresetCompileDeps } from './types';
@@ -302,6 +303,7 @@ export const stylizedRealismPreset: Preset = {
   requiredPasses: ['beauty', 'depth', 'normal'] as const,
   placeholders: STYLIZED_REALISM_PLACEHOLDERS,
   version: STYLIZED_REALISM_VERSION,
+  models: comfyModelNames(STYLIZED_REALISM_TEMPLATE),
   compile({ storage }: PresetCompileDeps) {
     return async ({ prompt, frame, prevFrameStylizedPath, workflowOutputPath, passes }) => {
       // Validate required passes are wired (defense-in-depth — addAIPass
