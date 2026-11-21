@@ -11,6 +11,9 @@
 //                  2D side's share (not "the left pane's") so a swap keeps each side's size.
 //   - collapsed  → the 3D side folded to its slim strip.
 //   - swapped    → the 3D side on the left instead of the right.
+//   - outlinerFoldedBySplit → the split folded the outliner and nobody has touched it since, so
+//                  the split going away restores it (splitOutlinerFold.ts). Saved with the rest, so
+//                  a reload while the split is open still restores it afterwards.
 //
 // One localStorage key. K11 boot lifecycle (init → hydrate → coerce → persist). V18 safeGet/safeSet
 // wrappers. Mirrors timelineDockStore. No DAG mutation — layout state only.
@@ -38,6 +41,7 @@ export interface SplitViewState {
   twoDShare: number;
   collapsed: boolean;
   swapped: boolean;
+  outlinerFoldedBySplit: boolean;
 }
 
 export interface SplitViewStore extends SplitViewState {
@@ -45,6 +49,7 @@ export interface SplitViewStore extends SplitViewState {
   setTwoDShare: (share: number) => void;
   setCollapsed: (collapsed: boolean) => void;
   toggleSwapped: () => void;
+  setOutlinerFoldedBySplit: (folded: boolean) => void;
 }
 
 export const DEFAULT_SPLIT_STATE: SplitViewState = {
@@ -52,6 +57,7 @@ export const DEFAULT_SPLIT_STATE: SplitViewState = {
   twoDShare: DEFAULT_SPLIT_SHARE,
   collapsed: false,
   swapped: false,
+  outlinerFoldedBySplit: false,
 };
 
 function safeGetItem(key: string): string | null {
@@ -88,6 +94,10 @@ export function coerceSplitState(value: unknown): SplitViewState {
         : DEFAULT_SPLIT_STATE.twoDShare,
     collapsed: typeof v.collapsed === 'boolean' ? v.collapsed : DEFAULT_SPLIT_STATE.collapsed,
     swapped: typeof v.swapped === 'boolean' ? v.swapped : DEFAULT_SPLIT_STATE.swapped,
+    outlinerFoldedBySplit:
+      typeof v.outlinerFoldedBySplit === 'boolean'
+        ? v.outlinerFoldedBySplit
+        : DEFAULT_SPLIT_STATE.outlinerFoldedBySplit,
   };
 }
 
@@ -102,7 +112,13 @@ function readPersisted(): SplitViewState {
 }
 
 function pick(s: SplitViewState): SplitViewState {
-  return { split: s.split, twoDShare: s.twoDShare, collapsed: s.collapsed, swapped: s.swapped };
+  return {
+    split: s.split,
+    twoDShare: s.twoDShare,
+    collapsed: s.collapsed,
+    swapped: s.swapped,
+    outlinerFoldedBySplit: s.outlinerFoldedBySplit,
+  };
 }
 
 export const useSplitViewStore = create<SplitViewStore>((set, get) => {
@@ -125,6 +141,10 @@ export const useSplitViewStore = create<SplitViewStore>((set, get) => {
     },
     toggleSwapped() {
       update({ swapped: !get().swapped });
+    },
+    setOutlinerFoldedBySplit(folded) {
+      if (get().outlinerFoldedBySplit === folded) return;
+      update({ outlinerFoldedBySplit: folded });
     },
   };
 });

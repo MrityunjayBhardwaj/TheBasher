@@ -1,13 +1,32 @@
 // #1709 — the split/outliner fold rule: the split showing folds the outliner; the split going
 // away restores it only if the rule folded it and the director has not touched it since.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { installSplitOutlinerFold, splitShowing } from './splitOutlinerFold';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
-import { DEFAULT_SPLIT_STATE, useSplitViewStore } from './stores/splitViewStore';
+import { coerceSplitState, DEFAULT_SPLIT_STATE, useSplitViewStore } from './stores/splitViewStore';
 import { useTwoDViewStore } from './stores/twoDViewStore';
+
+// The saved split record is what a reload reads back, so the stores need a working Storage (the
+// test environment's is a partial stub); the stores call it lazily, so installing it here is in time.
+beforeAll(() => {
+  const mem = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, String(v)),
+      removeItem: (k: string) => void mem.delete(k),
+      clear: () => mem.clear(),
+      key: (i: number) => Array.from(mem.keys())[i] ?? null,
+      get length() {
+        return mem.size;
+      },
+    },
+  });
+});
 
 let width = 1440;
 let off: () => void = () => {};
@@ -90,5 +109,41 @@ describe('installSplitOutlinerFold', () => {
     width = 900;
     space('uv');
     expect(folded()).toBe(false);
+  });
+
+  // A reload: the rule unmounts, the split store comes back from its saved bytes (coerced), the
+  // editor opens again, the rule mounts again.
+  const reload = (spaceAfter: 'view3d' | 'uv') => {
+    off();
+    const saved = localStorage.getItem('basher.splitView.v1');
+    useSplitViewStore.setState(coerceSplitState(saved ? JSON.parse(saved) : null));
+    useEditorStore.setState({ space: spaceAfter });
+    off = installSplitOutlinerFold(() => width);
+  };
+
+  it('remembers across a reload during the split: closing the split afterwards restores it', () => {
+    space('uv');
+    expect(folded()).toBe(true);
+    reload('uv');
+    expect(folded()).toBe(true);
+    useSplitViewStore.getState().setSplit('uv', false);
+    expect(folded(), 'restored after the reload').toBe(false);
+  });
+
+  it('a reload that lands outside the split restores it at once', () => {
+    space('uv');
+    reload('view3d');
+    expect(folded()).toBe(false);
+    expect(useSplitViewStore.getState().outlinerFoldedBySplit).toBe(false);
+  });
+
+  it('a reload after the director took the outliner over leaves it as they set it', () => {
+    space('uv');
+    useChromeStore.getState().toggleLeftSidebar();
+    useChromeStore.getState().toggleLeftSidebar();
+    expect(folded()).toBe(true);
+    reload('uv');
+    useSplitViewStore.getState().setSplit('uv', false);
+    expect(folded()).toBe(true);
   });
 });

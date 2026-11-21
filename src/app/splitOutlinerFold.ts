@@ -33,8 +33,10 @@ export function splitShowing(
 
 /** Subscribe the rule; returns the unsubscribe. `windowWidth` is read at each transition. */
 export function installSplitOutlinerFold(windowWidth: () => number): () => void {
-  // We folded it and the director has not touched it since: ours to restore.
-  let foldedBySplit = false;
+  // "We folded it and the director has not touched it since: ours to restore" lives in the split
+  // store, saved with the split, so a reload while the split is open does not forget it.
+  const folded = () => useSplitViewStore.getState().outlinerFoldedBySplit;
+  const setFolded = (v: boolean) => useSplitViewStore.getState().setOutlinerFoldedBySplit(v);
   let ownWrite = false;
   const setOutliner = (collapsed: boolean) => {
     ownWrite = true;
@@ -52,6 +54,12 @@ export function installSplitOutlinerFold(windowWidth: () => number): () => void 
       useSplitViewStore.getState(),
     );
   let showing = now();
+  // A reload lands outside the split (the editor opens in 3D): the split this memory was kept for
+  // is gone, so restore now rather than wait for a close that will not come.
+  if (!showing && folded()) {
+    setFolded(false);
+    if (useChromeStore.getState().leftSidebarCollapsed) setOutliner(false);
+  }
 
   const react = () => {
     const next = now();
@@ -60,10 +68,10 @@ export function installSplitOutlinerFold(windowWidth: () => number): () => void 
     if (next) {
       if (windowWidth() >= LAYOUT_NARROW_MAX && !useChromeStore.getState().leftSidebarCollapsed) {
         setOutliner(true);
-        foldedBySplit = true;
+        setFolded(true);
       }
-    } else if (foldedBySplit) {
-      foldedBySplit = false;
+    } else if (folded()) {
+      setFolded(false);
       if (useChromeStore.getState().leftSidebarCollapsed) setOutliner(false);
     }
   };
@@ -72,7 +80,9 @@ export function installSplitOutlinerFold(windowWidth: () => number): () => void 
   const offMode = useTwoDViewStore.subscribe(react);
   const offSplit = useSplitViewStore.subscribe(react);
   const offChrome = useChromeStore.subscribe((s, prev) => {
-    if (s.leftSidebarCollapsed !== prev.leftSidebarCollapsed && !ownWrite) foldedBySplit = false;
+    if (s.leftSidebarCollapsed !== prev.leftSidebarCollapsed && !ownWrite && folded()) {
+      setFolded(false);
+    }
   });
   return () => {
     offEditor();

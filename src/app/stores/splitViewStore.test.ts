@@ -50,6 +50,7 @@ describe('splitViewStore', () => {
       twoDShare: 0.33,
       collapsed: true,
       swapped: true,
+      outlinerFoldedBySplit: false,
     });
     const again = (await freshStore()).getState();
     expect(again.split).toEqual({ uv: true, render: true });
@@ -75,6 +76,11 @@ describe('splitViewStore', () => {
     expect(s.twoDShare).toBe(0.8);
     expect(s.collapsed).toBe(false);
     expect(s.swapped).toBe(false);
+    expect(s.outlinerFoldedBySplit).toBe(false);
+    mem.set(KEY, JSON.stringify({ outlinerFoldedBySplit: true }));
+    expect((await freshStore()).getState().outlinerFoldedBySplit).toBe(true);
+    mem.set(KEY, JSON.stringify({ outlinerFoldedBySplit: 'yes' }));
+    expect((await freshStore()).getState().outlinerFoldedBySplit).toBe(false);
     mem.set(KEY, '{not json');
     expect((await freshStore()).getState().split).toEqual({ uv: true, render: false });
   });
