@@ -476,6 +476,10 @@ const TAKERS: string[] = [
   // for every structural row; forwarding makes it a taker, and the forward keeps it off the
   // cold-origin census (it opens no `resolveEvaluatedParam` walk of its own).
   'objectLayerSurface@src/app/objectLayerSurface.ts',
+  // #1940 T0b — the value-lane enumerator forwards the same optional cache to `resolveEvaluatedParam`
+  // for each channel/strip/driver row's folded read; forwarding makes it a taker too, and keeps the
+  // value read off the cold-origin census (it opens no walk of its own either).
+  'valueLaneGroups@src/app/objectLayerSurface.ts',
   'resolveEvaluatedTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveFollowedWorldPosition@src/app/nodeConstraints.ts',
   'resolveOwnTransform@src/app/resolveEvaluatedTransform.ts',

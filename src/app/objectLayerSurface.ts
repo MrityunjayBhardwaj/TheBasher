@@ -26,27 +26,56 @@
 // the constraint carriers read `rowLaneOfType === null` and drop out; the influence-value internals
 // read the `Number` lane and are not structural, so they drop out too.
 //
-// SEAM FOR T0b (#1940): the VALUE lanes (channel / strip / driver) are NOT nodes in this walk —
-// they are folds inside `resolveEvaluatedParam`, enumerated by their own adapters. When T0b lands,
-// its value group PREPENDS the structural groups here (value lanes set each param; modifiers,
-// constraints and pose consume those params downstream). The structural order below is the tail of
-// that pipeline; T0b adds the head. No value-lane code lives here yet.
+// THE VALUE LANES (T0b, #1940): channel / strip / driver are NOT nodes in the `stackOf` walk —
+// they are folds inside `resolveEvaluatedParam` (`:98-156`, base → channels → strips → drivers →
+// mute, render-identical), each enumerated by its OWN function off the object id, not by walking
+// edges. So they need a per-lane ADAPTER rather than `layerView`: `directChannelValuesForTarget`,
+// `stripChannelValuesForTarget` and `driverBandsForTarget` each yield that lane's contributors, and
+// the adapter maps each to the SAME `RowView` the structural lanes use. A value row's displayed
+// amount is the FOLDED param value — `resolveEvaluatedParam(state, objectId, paramPath, ctx, cache)`,
+// the render's own read — so read == render holds through each lane's native read, not one call.
 //
-// REF: issue #1940 (plan scratchpad/stage3-PLAN.md, slice T0a); #1894 S4; src/app/layerView.ts;
-//      src/app/stackTree.ts (`stackOf`); src/app/operatorStack.ts (`resolveStackObject`);
-//      src/app/operatorChain.ts (`rowLaneOfType`).
+// They PREPEND the structural groups, in the fold order channels → strips → drivers (the order
+// `resolveEvaluatedParam` composes them, `:101-152`): value lanes SET each param; modifiers,
+// constraints and pose CONSUME those params downstream. The structural order below is the tail of
+// that pipeline; the value lanes are the head.
+//
+// #1928 BOUNDARY (not handled here): T0b enumerates ALL contributors, including those on material
+// params / glTF-child transforms whose render road is base-only today. The honest caveat that a
+// material/glTF row renders base only is T1's job; nothing MOUNTS this surface between T0b and T1
+// (T2 does), so no read≠render row ships in the interim.
+//
+// read == render, cache-forwarded: the value adapters call `resolveEvaluatedParam` with the SAME
+// forwarded cache (`cache`), opening no cold eval origin of their own (#1386) — the surface stays a
+// FORWARDER, as it is for the structural lanes through `layerView`.
+//
+// REF: issue #1940 (plan scratchpad/stage3-PLAN.md, slices T0a/T0b); #1894 S4; #1928 (honesty);
+//      src/app/layerView.ts; src/app/stackTree.ts (`stackOf`); src/app/operatorStack.ts
+//      (`resolveStackObject`); src/app/operatorChain.ts (`rowLaneOfType`);
+//      src/app/resolveEvaluatedParam.ts (the value fold); src/app/driverStack.ts
+//      (`driverBandsForTarget`); src/app/layeredChannels.ts (`stripChannelValuesForTarget`);
+//      src/app/nodeChannels.ts (`directChannelValuesForTarget`).
 
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, SocketTypeName } from '../core/dag/types';
-import { layerView, type RowView } from './layerView';
+import { driverBandsForTarget } from './driverStack';
+import { formatValue, layerView, type RowView } from './layerView';
+import { stripChannelValuesForTarget } from './layeredChannels';
+import { directChannelValuesForTarget } from './nodeChannels';
 import { rowLaneOfType } from './operatorChain';
 import { resolveStackObject } from './operatorStack';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { stackOf, type StackNodeRow, type StackRow } from './stackTree';
+import { stripTargetsOf } from './stripTargetIndex';
 
 /** One lane's worth of rows, with the group label and its count. */
 export interface LaneGroup {
-  /** The pipeline group this lane is: `modifier`, `constraint` or `pose`. */
+  /**
+   * The pipeline group this lane is. Value lanes (what SETS each param) come first:
+   * `channel`, `strip`, `driver`. Structural lanes (what CONSUMES them) follow:
+   * `modifier`, `constraint`, `pose`.
+   */
   readonly lane: string;
   readonly rows: readonly RowView[];
   readonly count: number;
@@ -70,6 +99,88 @@ const STRUCTURAL_LANES: readonly { readonly lane: SocketTypeName; readonly group
   { lane: 'Matrix4', group: 'constraint' },
   { lane: 'PosedSkeleton', group: 'pose' },
 ];
+
+/** The playhead a value row is read at when the caller gives none: scene time zero, as `layerView`
+ *  defaults to. `resolveEvaluatedParam` needs a ctx; this supplies it for the pure, cache-less read. */
+const STATIC_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
+
+/** One uniform value-lane row: its contributor's label, the lane word, the folded param value read
+ *  == render, and the contributor's mute. `tag` carries the param path the lane writes; a value row
+ *  is not a structural stack node, so it exposes/overrides nothing and holds no pose vocabulary. */
+function valueRow(
+  lane: string,
+  name: string,
+  paramPath: string,
+  muted: boolean,
+  influence: string | null,
+): RowView {
+  return {
+    name,
+    type: lane,
+    tag: paramPath,
+    overridden: [],
+    exposed: [],
+    influence,
+    muted,
+    pose: null,
+  };
+}
+
+/**
+ * The VALUE lanes layering onto `objectId`, as uniform `RowView` groups in the fold order
+ * channels → strips → drivers. Each lane enumerates its OWN contributors off the object id (not an
+ * edge walk), and every row's `influence` is the FOLDED param value — `resolveEvaluatedParam` with
+ * the forwarded `cache`, the render's own read (read == render). A lane with no contributor yields
+ * no group (no empty group). No kind is named: the three enumerators are the dispatch (G3).
+ */
+function valueLaneGroups(
+  state: DagState,
+  objectId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): LaneGroup[] {
+  // The render-identical read for one param of this object, folded through the SAME resolver the
+  // renderer uses, with the cache forwarded (no cold origin, #1386). null ⇒ nothing overrides ⇒
+  // the row shows no amount (the caller's base), as `layerView` does for an un-overridden influence.
+  const folded = (paramPath: string): string | null => {
+    const resolved = resolveEvaluatedParam(state, objectId, paramPath, ctx, cache);
+    return resolved ? formatValue(resolved.value) : null;
+  };
+
+  // channel — every KEYED KeyframeChannel targeting the object, normalized to its declared value
+  // (name, param path and mute read off `KeyframeChannelValue`, never an inline cast of raw params),
+  // one row per channel. A channel with no keyframes contributes nothing, so it is no contributor.
+  // Symmetric with the strip path below — both read the normalized value the fold consumes.
+  const channelRows = directChannelValuesForTarget(state.nodes, objectId).map((v) =>
+    valueRow('channel', v.name, v.paramPath, v.mute === true, folded(v.paramPath)),
+  );
+
+  // strip — the synthetic channels a placed Strip emits (one per strip·param), the SAME enumerator
+  // the fold consumes; asked only of a node some strip targets (`stripTargetsOf`), else skipped.
+  const stripRows = stripTargetsOf(state.nodes).has(objectId)
+    ? stripChannelValuesForTarget(state.nodes, objectId).map((v) =>
+        valueRow('strip', v.name, v.paramPath, v.mute === true, folded(v.paramPath)),
+      )
+    : [];
+
+  // driver — every driven param BAND, one row per contributor (its driver source name), the SAME
+  // bottom → top order `DriverStackControls` renders.
+  const driverRows = driverBandsForTarget(state, objectId).flatMap((band) =>
+    band.entries.map((e) =>
+      valueRow('driver', e.label, band.paramPath, e.muted, folded(band.paramPath)),
+    ),
+  );
+
+  const groups: LaneGroup[] = [];
+  for (const [lane, rows] of [
+    ['channel', channelRows],
+    ['strip', stripRows],
+    ['driver', driverRows],
+  ] as const) {
+    if (rows.length > 0) groups.push({ lane, rows, count: rows.length });
+  }
+  return groups;
+}
 
 /** Every node row the stack draws, each unique node once: a `same` row points at a full row that is
  *  already in the list, so it is skipped rather than double-counted. */
@@ -101,9 +212,13 @@ export function objectLayerSurface(
   const objectId = resolveStackObject(state, nodeId) ?? nodeId;
   const rows = flattenNodeRows(stackOf(state, { node: objectId, socket: 'out' }));
 
+  // The VALUE lanes (what SETS each param) come FIRST, in fold order channels → strips → drivers;
+  // the structural lanes (what CONSUMES them) follow. Each value row's amount is folded through the
+  // forwarded cache, so it is read == render and opens no cold origin.
+  const groups: LaneGroup[] = [...valueLaneGroups(state, objectId, ctx ?? STATIC_CTX, cache)];
+
   // One group per structural lane the object stands on, in the fixed pipeline order. A lane with no
-  // rows is omitted (no empty group). The VALUE group prepends this loop in T0b.
-  const groups: LaneGroup[] = [];
+  // rows is omitted (no empty group).
   for (const { lane, group } of STRUCTURAL_LANES) {
     const laneRows = rows
       .filter((row) => rowLaneOfType(row.nodeType) === lane)
