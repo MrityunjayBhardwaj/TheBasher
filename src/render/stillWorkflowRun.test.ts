@@ -11,6 +11,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { compileWorkflowFrame, uploadKeyOf } from './compileWorkflowFrame';
 import { dryRun, framePath } from './dryRun';
 import { runComfyUIWorkflow } from './runComfyUIWorkflow';
+import { runVideoStitch, stubVideoEncoder } from './runVideoStitch';
 
 /** A still workflow: a still input `render`, a text input `prompt`, a still output `still`. */
 const STILL_FILE: ComfyApiJson = {
@@ -176,5 +177,31 @@ describe("#1718 — one workflow's still into another's still input", () => {
         onFrameComplete: () => {},
       }),
     ).rejects.toThrow(/first_frame.*not at renders\/job1\/still_0000\.png yet/);
+  });
+});
+
+describe('#1946 — a still workflow stitched into a video', () => {
+  it('holds its one picture for every frame of the range', async () => {
+    let s = withStillWorkflow(emptyDagState(), 0, 2);
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'stitch',
+      nodeType: 'VideoStitch',
+      params: { outputPath: 'renders/job1/held.mp4' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'sw', socket: 'still' },
+      to: { node: 'stitch', socket: 'pass-input' },
+    }).next;
+    const storage = new MemoryStorage();
+    await runComfyUIWorkflow('sw', s, {
+      capability: new StubComfyUICapability(),
+      storage,
+      compileWorkflow: compileWorkflowFrame({ storage }),
+      onFrameComplete: () => {},
+    });
+    const report = await runVideoStitch('stitch', s, { storage, encoder: stubVideoEncoder });
+    expect(report.framesEncoded).toBe(3);
   });
 });

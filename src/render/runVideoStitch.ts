@@ -57,6 +57,8 @@ interface StitchUpstream {
   readonly outputPath: string;
   readonly frameStart: number;
   readonly frameEnd: number;
+  /** #1946 — the wire reads a still output: one picture at `frameStart`, held for every frame. */
+  readonly still: boolean;
 }
 
 /**
@@ -123,12 +125,14 @@ export async function runVideoStitch(
         `runVideoStitch: upstream workflow "${ref.node}" has empty outputPath — addAIPass should have authored it.`,
       );
     }
+    const upSockets = workflowSocketsOf(upParams);
     upstreams.push({
       nodeId: ref.node,
       // #1715 — the frames of the output this wire reads (a file may have several).
-      outputPath: outputPathOf(upOutputPath, workflowSocketsOf(upParams), ref.socket),
+      outputPath: outputPathOf(upOutputPath, upSockets, ref.socket),
       frameStart: upParams.frameStart ?? 0,
       frameEnd: upParams.frameEnd ?? 60,
+      still: upSockets.outputs.find((o) => o.socket === ref.socket)?.type === 'still',
     });
   }
 
@@ -147,7 +151,9 @@ export async function runVideoStitch(
       const value = evaluate(state, upstream.nodeId, { ctx, cache }).value as ImageValue;
       void value; // metadata only — we read bytes from disk.
 
-      const path = framePath(upstream.outputPath, frame);
+      // A still is one picture, written at the range's first frame (#1946); it holds, as a still
+      // into a frames input does (#1716).
+      const path = framePath(upstream.outputPath, upstream.still ? upstream.frameStart : frame);
       const exists = await deps.storage.exists(path);
       if (!exists) {
         throw new Error(
