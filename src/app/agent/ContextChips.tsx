@@ -6,12 +6,12 @@
 // REF: src/app/agent/turnContext.ts (the words, shared with what is sent);
 //      src/app/stores/agentContextStore.ts (Where + dismissals).
 
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTimeStore } from '../stores/timeStore';
 import { paneLabel, useAgentContextStore, type ChipKind } from '../stores/agentContextStore';
-import { whatLabel, whenLabel } from './turnContext';
+import { filmShots, whatLabel, whenLabel } from './turnContext';
 
 const TITLES: Record<ChipKind, string> = {
   what: 'What: the selection the agent acts on',
@@ -50,12 +50,14 @@ export function ContextChips(): ReactNode {
   const subjects = useAgentContextStore((s) => s.subjects);
   const dismissed = useAgentContextStore((s) => s.dismissed);
   const where = paneLabel(lastPane, subjects);
+  // The chip re-renders every playback frame; the shots change only with the scene.
+  const shots = useMemo(() => filmShots(state), [state]);
 
   return (
     <div data-testid="context-chips" className="mb-1.5 flex flex-wrap items-center gap-1">
       {dismissed.what ? null : <Chip kind="what" text={whatLabel(state, selected)} />}
       {dismissed.where || !where ? null : <Chip kind="where" text={where} />}
-      {dismissed.when ? null : <Chip kind="when" text={whenLabel(state, filmSeconds)} />}
+      {dismissed.when ? null : <Chip kind="when" text={whenLabel(shots, filmSeconds)} />}
     </div>
   );
 }

@@ -13,7 +13,7 @@ import type { TurnContext } from '../../agent/orchestrator';
 import { useDagStore } from '../../core/dag/store';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { sceneEndSeconds } from '../sceneRange';
-import { shotsOf } from '../shots';
+import { shotsOf, type Shot } from '../shots';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTimeStore } from '../stores/timeStore';
 import { paneLabel, useAgentContextStore } from '../stores/agentContextStore';
@@ -26,10 +26,14 @@ export function whatLabel(state: DagState, selected: ReadonlySet<NodeId>): strin
   return ids.length === 1 ? first : `${first} + ${ids.length - 1} more`;
 }
 
+/** The film's shots, for `whenLabel` (derive once per scene, not once per playhead frame). */
+export function filmShots(state: DagState): readonly Shot[] {
+  return shotsOf(state, sceneEndSeconds(state)).shots;
+}
+
 /** The playhead, and its shot when the scene has a camera to film one. */
-export function whenLabel(state: DagState, filmSeconds: number): string {
+export function whenLabel(shots: readonly Shot[], filmSeconds: number): string {
   const time = `${filmSeconds.toFixed(2)} s`;
-  const shots = shotsOf(state, sceneEndSeconds(state)).shots;
   const shot = shots.find((s) => filmSeconds >= s.start && filmSeconds < s.end) ?? null;
   return shot && shot.cameraId ? `Shot ${shot.index + 1} · ${time}` : time;
 }
@@ -44,7 +48,8 @@ export function currentTurnContext(): {
   const context: TurnContext = {};
   const pane = paneLabel(lastPane, subjects);
   if (pane && !dismissed.where) context.pane = pane;
-  if (!dismissed.when) context.playhead = whenLabel(state, useTimeStore.getState().filmSeconds);
+  if (!dismissed.when)
+    context.playhead = whenLabel(filmShots(state), useTimeStore.getState().filmSeconds);
   if (dismissed.what) context.omitSelection = true;
   return {
     // A dismissed selection is not acted on either: "this" no longer means it.

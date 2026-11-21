@@ -9,7 +9,7 @@ import { buildDefaultDagState } from '../../core/project/default';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTimeStore } from '../stores/timeStore';
 import { paneLabel, useAgentContextStore } from '../stores/agentContextStore';
-import { currentTurnContext, whatLabel, whenLabel } from './turnContext';
+import { currentTurnContext, filmShots, whatLabel, whenLabel } from './turnContext';
 
 __resetRegistryForTests();
 registerAllNodes();
@@ -44,7 +44,7 @@ describe('#1705 — the chips in words', () => {
   });
 
   it('When is the playhead to the hundredth, with its shot when a camera films one', () => {
-    const label = whenLabel(state(), 3.4);
+    const label = whenLabel(filmShots(state()), 3.4);
     expect(label).toMatch(/3\.40 s$/);
     expect(label).toMatch(/^(Shot 1 · )?3\.40 s$/);
   });
