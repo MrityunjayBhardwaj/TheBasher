@@ -28,6 +28,7 @@
 
 import { brokenInputsOf, inputsOfNode, outputsOfNode } from '../core/dag/instanceSockets';
 import { levelOf, viewEdgesOf, viewRowsOf, type ViewEdge, type ViewRow } from '../core/dag/layout';
+import { nodeValueParams } from '../core/dag/nodeValues';
 import type { DagState } from '../core/dag/state';
 import type { InputDescriptor, NodeId, NodeRef, OutputDescriptor } from '../core/dag/types';
 import { evaluate, evaluateInputRef, type EvaluatorCache } from '../core/dag/evaluator';
@@ -181,6 +182,8 @@ export interface GraphNode {
   readonly away: number;
   /** The name of the node whose name this one follows (`meta.nameFrom`), or null. */
   readonly namedAfter: string | null;
+  /** #1953 — the params it shows on itself, editable in place (`nodeValueParams`). */
+  readonly values: readonly string[];
 }
 
 export interface SceneGraph {
@@ -311,13 +314,47 @@ function live(state: DagState, w: ViewEdge): boolean {
 }
 
 /**
+ * #1953 — the nodes past the objects: every Scene node, then whatever reads only what is already
+ * past them and feeds nothing on (the render output, which reads only the scene). An object never
+ * qualifies: it feeds the scene, which is the point where the network ends.
+ */
+function pastTheObjects(state: DagState, wires: readonly ViewEdge[]): Set<NodeId> {
+  const past = new Set(Object.keys(state.nodes).filter((id) => state.nodes[id].type === 'Scene'));
+  const into = new Map<NodeId, NodeId[]>();
+  const feeds = new Set<NodeId>();
+  for (const w of wires) {
+    if (w.ref) continue;
+    into.set(w.to, [...(into.get(w.to) ?? []), w.from]);
+    feeds.add(w.from);
+  }
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [id, from] of into) {
+      if (past.has(id) || feeds.has(id) || !from.every((f) => past.has(f))) continue;
+      past.add(id);
+      grew = true;
+    }
+  }
+  return past;
+}
+
+/**
  * What the view draws at one level: the top level (`level` null or absent), or the sub-network
  * of the owner named. A level that does not exist (its owner was deleted, or the node named
  * holds no sub-network) reads as the top.
  */
 export function sceneGraphOf(
   state: DagState,
-  opts: { showHidden: boolean; showAnimation?: boolean; level?: NodeId | null },
+  opts: {
+    showHidden: boolean;
+    showAnimation?: boolean;
+    level?: NodeId | null;
+    /** #1953 — the Nodes tab's own reading: a network ends at its object, so the Scene node
+     *  that gathers every object, and what reads only the scene (the render output), are not
+     *  drawn. The agent's `dag.inspect` leaves this off: it wires new objects into the scene,
+     *  so it has to see where they go. */
+    endAtObjects?: boolean;
+  },
   /** #1716 — for the frame-pick markers, which evaluate a still input's producers. */
   cache?: EvaluatorCache,
 ): SceneGraph {
@@ -330,7 +367,8 @@ export function sceneGraphOf(
   const here = Object.keys(state.nodes).filter((id) => levels.get(id) === level);
   const visible = here.filter((id) => !drawn || drawn.has(id));
   const sidecars = new Set(opts.showAnimation ? [] : visible.filter((id) => isSidecar(state, id)));
-  const shown = new Set(visible.filter((id) => !sidecars.has(id)));
+  const ends = opts.endAtObjects ? pastTheObjects(state, all) : new Set<NodeId>();
+  const shown = new Set(visible.filter((id) => !sidecars.has(id) && !ends.has(id)));
   const wires = all.filter((w) => shown.has(w.from) && shown.has(w.to));
   const rows = viewRowsOf(wires);
 
@@ -388,6 +426,7 @@ export function sceneGraphOf(
       timeDependent: timed.has(id),
       away: away.get(id) ?? 0,
       namedAfter: followed(id),
+      values: nodeValueParams(state, id),
     }));
 
   const path: NodeId[] = [];

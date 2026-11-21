@@ -20,6 +20,7 @@ import { getNodeType, registryEpoch } from './registry';
 import { brokenInputsOf, inputsOfNode, outputsOfNode } from './instanceSockets';
 import { parentSocketOf } from './worldChildren';
 import { subnetworkOf, subnetworkOwnersOf } from './subnetworks';
+import { nodeValuesHeight } from './nodeValues';
 import type { NodeId } from './types';
 
 export type Position = readonly [number, number];
@@ -183,9 +184,11 @@ export function layoutOf(state: DagState): ReadonlyMap<NodeId, Position> {
   }
   const edges = viewEdgesOf(state);
   const rows = viewRowsOf(edges);
+  // #1953 — a node's key values sit on it, below its socket rows (`nodeValues.ts`).
   const height = (id: NodeId) =>
-    ownSocketsHeight(state, id) ??
-    nodeHeight(rows.inputs.get(id)?.length ?? 0, rows.outputs.get(id)?.length ?? 0);
+    (ownSocketsHeight(state, id) ??
+      nodeHeight(rows.inputs.get(id)?.length ?? 0, rows.outputs.get(id)?.length ?? 0)) +
+    nodeValuesHeight(state, id);
   const positions = new Map<NodeId, Position>();
   for (const members of byLevel.values()) layoutLevel(state, members, edges, height, positions);
   layouts.set(state.nodes, { epoch: registryEpoch(), positions });

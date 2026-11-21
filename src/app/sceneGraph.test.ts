@@ -400,3 +400,32 @@ describe('sceneGraphOf — #1715 a workflow node draws the sockets its file decl
     expect(ownSocketsHeight(s, 'v')).toBeNull();
   });
 });
+
+describe('sceneGraphOf — #1953 the Nodes tab: a network ends at its object', () => {
+  it('draws no Scene node and no render output, and no wire into them', () => {
+    const s = buildDefaultDagState();
+    const g = sceneGraphOf(s, { showHidden: false, endAtObjects: true });
+    const types = g.nodes.map((n) => n.type);
+    expect(types).not.toContain('Scene');
+    expect(types).not.toContain('RenderOutput');
+    expect(g.wires.some((w) => w.to === 'n_scene' || w.from === 'n_scene')).toBe(false);
+    // Each object is the end of its network: nothing reads its result here.
+    for (const id of ['n_box', 'n_camera', 'n_light'])
+      expect(g.nodes.find((n) => n.id === id)!.outputs, id).toEqual([]);
+    // Everything else is still drawn.
+    const all = sceneGraphOf(s, { showHidden: false });
+    expect(ids(g)).toEqual(ids(all).filter((id) => id !== 'n_scene' && id !== 'n_render'));
+  });
+
+  it('is the Nodes tab’s reading only: by default (the agent’s) the scene is drawn', () => {
+    const g = sceneGraphOf(buildDefaultDagState(), { showHidden: true, showAnimation: true });
+    expect(ids(g)).toContain('n_scene');
+    expect(ids(g)).toContain('n_render');
+  });
+
+  it('carries each node’s values', () => {
+    const g = sceneGraphOf(buildDefaultDagState(), { showHidden: false, endAtObjects: true });
+    expect(g.nodes.find((n) => n.id === 'n_box_data')!.values).toEqual(['size']);
+    expect(g.nodes.find((n) => n.id === 'n_box')!.values).toEqual([]);
+  });
+});
