@@ -37,8 +37,9 @@
 // WHAT IT DOES NOT SEE YET: animation that reaches the scene through NLA strips or drivers rather
 // than keyframe channels, and channels on nodes the scene is not built from.
 //
-// COST: one record per frame the workflow makes. Memoised per graph state, so the UI computes it
-// once per edit, however many badges ask. Measured in `workflowMadeFrom.test.ts` (#1717 report).
+// COST: one record per frame the workflow makes (~70 ms for a 10 s shot of the default scene,
+// `workflowMadeFrom.test.ts`). Computed once per graph state however many badges ask, and only
+// when something the workflow reads has changed: an edit elsewhere costs a walk of its upstream.
 //
 // REF: src/nodes/comfyWorkflowMade.ts (the states and the regenerate order, which take this hash);
 //      src/nodes/ComfyUIWorkflow.ts (the node's own hash rule this mirrors for non-pass inputs);
@@ -68,6 +69,7 @@ import { runFrameEnd } from '../../render/dryRun';
 import { resolveCameraPoseAt, selectActiveCameraNode } from '../activeCamera';
 import { cameraDataOf, cameraLensParams, isCameraNode } from '../cameraNode';
 import { keyframeChannelsTargeting } from '../nodeChannels';
+import { sceneNodeId } from '../sceneRange';
 import { controllerValueReader } from './controllerValue';
 
 /** The runner's cadence (`runComfyUIWorkflow`). */
@@ -232,10 +234,41 @@ function computeWorkflowMadeFrom(
 }
 
 // One answer per (graph state, node): every badge, the regenerate order and the run read the same
-// state, and an edit makes a new state object, so nothing here goes stale.
+// state, and an edit makes a new state object.
 const memo = new WeakMap<DagState, Map<NodeId, string | null>>();
 
-/** {@link computeWorkflowMadeFrom}, once per graph state and node. */
+// ...and one answer per workflow while nothing it reads has changed. The graph is immutable and
+// shares what an edit leaves alone, so "nothing it reads changed" is "every node it reads is the
+// same object": the workflow and everything upstream of it (its passes, the scene and every node
+// in it, the cameras, the switch), every node aimed at one of those (`params.target`: keyframe
+// channels, drivers, the cut channel, the workflow's own keyed inputs), and the scene the project
+// renders. Without this, an edit anywhere (a layer's opacity in the Video space, a cube in the 3D
+// view) re-read every frame of every shot: ~0.4 s per edit for a 60 s film (#1717, measured).
+const byWorkflow = new Map<
+  NodeId,
+  { readonly reads: readonly unknown[]; readonly hash: string | null }
+>();
+
+function readsOf(state: DagState, id: NodeId): unknown[] {
+  const upstream = topoSort(state, id);
+  const ids = new Set(upstream);
+  const reads: unknown[] = [sceneNodeId(state)];
+  for (const n of upstream) reads.push(state.nodes[n]);
+  for (const node of Object.values(state.nodes)) {
+    const target = (node.params as { target?: unknown } | undefined)?.target;
+    if (typeof target === 'string' && ids.has(target)) reads.push(node);
+  }
+  return reads;
+}
+
+function sameReads(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** {@link computeWorkflowMadeFrom}, once per graph state and node, and reused while nothing the
+ *  workflow reads has changed. */
 export function workflowMadeFrom(
   state: DagState,
   id: NodeId,
@@ -247,7 +280,11 @@ export function workflowMadeFrom(
     memo.set(state, byNode);
   }
   if (byNode.has(id)) return byNode.get(id)!;
-  const hash = computeWorkflowMadeFrom(state, id, cache);
+  const reads = state.nodes[id] ? readsOf(state, id) : [];
+  const known = byWorkflow.get(id);
+  const hash =
+    known && sameReads(known.reads, reads) ? known.hash : computeWorkflowMadeFrom(state, id, cache);
+  if (state.nodes[id]) byWorkflow.set(id, { reads, hash });
   byNode.set(id, hash);
   return hash;
 }

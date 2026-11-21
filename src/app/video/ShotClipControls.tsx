@@ -7,15 +7,31 @@
 //
 // REF: src/app/video/shotClips.ts; src/app/video/shotClipActions.ts.
 
-import type { ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import { useDagStore } from '../../core/dag/store';
+import type { DagState } from '../../core/dag/state';
 import type { NodeId } from '../../core/dag/types';
 import type { ComfyUIWorkflowParams } from '../../nodes/ComfyUIWorkflow';
 import type { WorkflowMadeState } from '../../nodes/comfyWorkflowMade';
 import { madeStateOf } from '../render/workflowMadeFrom';
+import { useEditorStore } from '../stores/editorStore';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
 import { generateStaleShots, makeShotClips, useShotClipRunStore } from './shotClipActions';
 import { layerWorkflowOf, shotClipsOf, shotsToGenerate } from './shotClips';
+
+/**
+ * The graph as the Video space reads it: live while the Video space is shown, held at what it last
+ * read while another space is (the space stays mounted, hidden, #1734). A shot's state reads every
+ * frame of the shot; without the hold, an edit in the 3D view that the shots read would re-read
+ * them for badges nobody can see.
+ */
+function useVideoSpaceState(): DagState {
+  const shown = useEditorStore((s) => s.space === 'video');
+  const held = useRef<DagState | null>(null);
+  const state = useDagStore((s) => (shown || !held.current ? s.state : held.current));
+  held.current = state;
+  return state;
+}
 
 /** What a clip shows: its made state, or that it is being made now. */
 export type ClipState = WorkflowMadeState | 'generating';
@@ -37,11 +53,10 @@ export interface ClipStatus {
 /** The status of workflow `id`'s clip: generating while the run store works on it, else its made
  *  state. */
 export function useClipStatus(id: NodeId | null): ClipStatus | null {
-  const made = useDagStore((s) => (id ? madeStateOf(s.state, id, uiEvaluatorCache) : null));
-  const landed = useDagStore((s) => {
-    const p = id ? (s.state.nodes[id]?.params as Partial<ComfyUIWorkflowParams> | undefined) : null;
-    return p ? (p.lastGoodFrame ?? -1) - (p.frameStart ?? 0) + 1 : 0;
-  });
+  const state = useVideoSpaceState();
+  const made = useMemo(() => (id ? madeStateOf(state, id, uiEvaluatorCache) : null), [state, id]);
+  const p = id ? (state.nodes[id]?.params as Partial<ComfyUIWorkflowParams> | undefined) : null;
+  const landed = p ? (p.lastGoodFrame ?? -1) - (p.frameStart ?? 0) + 1 : 0;
   const run = useShotClipRunStore();
   if (!id || made === null) return null;
   if (run.current === id && run.phase !== null) {
@@ -77,11 +92,10 @@ export function ClipStateBadge({ status, testId }: { status: ClipStatus; testId:
 
 /** The badge on a layer row whose source is a workflow that stores its pictures; else nothing. */
 export function LayerClipBadge({ layerId }: { layerId: NodeId }): ReactNode {
-  const workflowId = useDagStore((s) => {
-    const id = layerWorkflowOf(s.state, layerId);
-    const p = id ? (s.state.nodes[id].params as Partial<ComfyUIWorkflowParams>) : null;
-    return id && p?.outputPath ? id : null;
-  });
+  const state = useVideoSpaceState();
+  const id = layerWorkflowOf(state, layerId);
+  const workflowId =
+    id && (state.nodes[id].params as Partial<ComfyUIWorkflowParams>).outputPath ? id : null;
   const status = useClipStatus(workflowId);
   if (!status) return null;
   return <ClipStateBadge status={status} testId={`layer-clip-state-${layerId}`} />;
@@ -92,10 +106,15 @@ const button =
 
 /** "Make shot clips" and "Generate stale shots (N)", for the composition `compId`. */
 export function ShotClipBar({ compId }: { compId: NodeId }): ReactNode {
-  const missing = useDagStore(
-    (s) => shotClipsOf(s.state, compId).filter((c) => !c.workflowId || !c.layerId).length,
+  const state = useVideoSpaceState();
+  const missing = useMemo(
+    () => shotClipsOf(state, compId).filter((c) => !c.workflowId || !c.layerId).length,
+    [state, compId],
   );
-  const toGenerate = useDagStore((s) => shotsToGenerate(s.state, compId, uiEvaluatorCache).length);
+  const toGenerate = useMemo(
+    () => shotsToGenerate(state, compId, uiEvaluatorCache).length,
+    [state, compId],
+  );
   const running = useShotClipRunStore((s) => s.current !== null);
   return (
     <>

@@ -299,3 +299,28 @@ describe('#1948 — a keyed input of the workflow is part of what it was made fr
     expect(states(edited, shots)).toEqual(['current', 'current', 'stale']);
   });
 });
+
+describe('#1717 — an edit the workflow does not read costs no re-read of its frames', () => {
+  it('a 60 s shot: an edit elsewhere reuses its answer, an edit it reads does not', () => {
+    const { state, shots } = film([[0, 'n_camera']], 60);
+    const cold0 = performance.now();
+    const first = workflowMadeFrom(state, shots[0]);
+    const cold = performance.now() - cold0;
+    // Something the shot does not read: a new, unconnected node.
+    const elsewhere = apply(state, [
+      { type: 'addNode', nodeId: 'unrelated', nodeType: 'TimeSource', params: {} },
+    ]);
+    const warm0 = performance.now();
+    expect(workflowMadeFrom(elsewhere, shots[0])).toBe(first);
+    const warm = performance.now() - warm0;
+    console.log(
+      `[#1717] 60 s shot: ${cold.toFixed(0)} ms read, ${warm.toFixed(1)} ms after an edit elsewhere`,
+    );
+    expect(warm).toBeLessThan(cold / 4);
+    // Something it reads: the camera on screen.
+    const moved = apply(state, [
+      { type: 'setParam', nodeId: 'n_camera', paramPath: 'position', value: [1, 2, 3] },
+    ]);
+    expect(workflowMadeFrom(moved, shots[0])).not.toBe(first);
+  });
+});
