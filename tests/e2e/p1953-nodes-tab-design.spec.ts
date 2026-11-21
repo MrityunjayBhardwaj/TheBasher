@@ -208,10 +208,6 @@ test('the view flag: one node viewing at a time, never on a constraint', async (
 });
 
 test('the view flag shows that node’s result in the viewport', async ({ page }) => {
-  // The viewport side is one change in src/viewport/SceneFromDAG.tsx (draw `viewedState(state,
-  // viewing)` instead of `state`), which is co-owned with another session and waits on its
-  // go-ahead. Measured green with that change applied locally; flip this when it lands.
-  test.fixme(true, '#1953 viewport side: the SceneFromDAG change awaits coordination');
   await boot(page);
   // An Array (count 3) on the box: viewing the box data shows one box, the Array's flag three.
   await page.evaluate(async () => {

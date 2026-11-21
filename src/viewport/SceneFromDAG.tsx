@@ -187,6 +187,8 @@ import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 import { createFrameEvaluator, FrameEvaluatorProvider, useFrameTick } from './frameEvaluator';
 import { pickAsDrawn } from '../render/skinnedPick';
 import { sceneChildRefs } from '../app/sceneMembership';
+import { useNodesTabStore } from '../app/stores/nodesTabStore';
+import { viewedState } from '../app/viewFlag';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -261,7 +263,12 @@ interface SceneFromDAGProps {
 }
 
 export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
-  const state = useDagStore((s) => s.state);
+  // #1953 — the Nodes tab's view flag: while a node part-way up an object's data chain is flagged,
+  // that object wears the flagged node's result (`viewedState`; the real graph is untouched).
+  // Nothing flagged hands back the same state object, so every memo below keys as before.
+  const dagState = useDagStore((s) => s.state);
+  const viewing = useNodesTabStore((s) => s.viewing);
+  const state = useMemo(() => viewedState(dagState, viewing), [dagState, viewing]);
   // P7.10 (B13 Pass 3, #114) — time subscriptions REMOVED.
   //
   // Pre-P7.10 this component subscribed to `useTimeStore.seconds/frame/normalized`
