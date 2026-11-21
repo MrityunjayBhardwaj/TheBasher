@@ -25,10 +25,13 @@
 // REF: issue #1894 (S1); docs/LAYER-PANEL-DESIGN.md; src/core/dag/types.ts (`ChainDeclaration`);
 //      src/app/resolveEvaluatedParam.ts; src/app/stackTree.ts.
 
+import type { z } from 'zod';
 import { getNodeType, mainInputOfType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { templatesOf } from '../core/dag/templates';
 import type { EvalCtx } from '../core/dag/types';
+import { poseLayerWeightOf, PoseLayerParams, type PoseLayerMode } from '../nodes/PoseLayer';
+import { rowLaneOfType } from './operatorChain';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { muteParamOf } from './stackEdit';
@@ -59,6 +62,29 @@ export interface Overridden {
   readonly value: string;
 }
 
+/**
+ * The pose-lane vocabulary a row on the `PosedSkeleton` lane carries (#1927 P1): the layer's blend
+ * mode, its effective weight, and its solo. Null for every other row.
+ *
+ * KNOWN LIMITATION (Stage 2, for the shell): these four reads — `mode`, `weight`, `solo`, and the
+ * `muted` above — do NOT capture EFFECTIVE SILENCE. A pose row can read "override, weight 1, not
+ * soloed" and still render NOTHING: silenced by a soloed layer BELOW it (`PoseLayer.ts:593`), or
+ * holding zero members (`:599,677`), or at weight ≤ 0 (`:677`). Modelling that is a later slice; a
+ * surface built on this must not present an active-looking row as proof the layer is contributing.
+ */
+export interface PoseRowView {
+  readonly mode: PoseLayerMode;
+  /**
+   * The effective weight the fold USES at `ctx` — read == render. `poseLayerWeightOf` samples the
+   * layer's keyed weight (or its static `weight`) UNCLAMPED (`PoseLayer.ts:459`); the render fold
+   * then clamps it to [0, 1] (`foldChannelValue`/`clamp01`) and treats weight ≤ 0 as NO
+   * contribution (`PoseLayer.ts:677`). So this is the clamped value: a keyed 1.5 reads 1, a keyed
+   * −0.2 reads 0 (off). Never the raw sample — that would show a number the renderer never uses.
+   */
+  readonly weight: number;
+  readonly solo: boolean;
+}
+
 export interface RowView {
   readonly name: string;
   readonly type: string;
@@ -71,6 +97,8 @@ export interface RowView {
   readonly influence: string | null;
   /** Null when the type has no mute. */
   readonly muted: boolean | null;
+  /** The pose-lane vocabulary (mode/weight/solo), or null for a row off the `PosedSkeleton` lane. */
+  readonly pose: PoseRowView | null;
 }
 
 /** What a person reads a node as: its name, or its type when nobody named it. */
@@ -119,6 +147,33 @@ export function layerView(state: DagState, row: StackNodeRow, ctx: EvalCtx = STA
   } else influence = 'wired';
 
   const mute = muteParamOf(def);
+
+  // A pose row carries the layer vocabulary (mode/weight/solo). It is found by its LANE — the
+  // `PosedSkeleton` lane, resolved from the DECLARED contract by P0's `rowLaneOf` (a row's main
+  // input type), NEVER from `node.type` (G3). The lane alone is not enough: `Rig`, `LocomotionState`
+  // and `RetargetClip` also stand on the pose lane but are carriers, not layers — so the vocabulary
+  // is read only when the row's own PARAM contract declares it, the same way `muteParamOf` reads a
+  // declared `mute`. That is still a contract read, not a kind-branch.
+  let pose: PoseRowView | null = null;
+  const shape = (def?.paramSchema as z.AnyZodObject | undefined)?.shape;
+  if (
+    rowLaneOfType(row.nodeType) === 'PosedSkeleton' &&
+    shape !== undefined &&
+    'mode' in shape &&
+    'weight' in shape &&
+    'solo' in shape
+  ) {
+    const poseParams = PoseLayerParams.parse(params);
+    // read == render: show the weight the fold USES, clamped to [0, 1] with ≤ 0 reading as off (0),
+    // not the raw unclamped sample. See `PoseRowView.weight`.
+    const raw = poseLayerWeightOf(poseParams)(ctx.time.seconds);
+    pose = {
+      mode: poseParams.mode,
+      weight: Math.max(0, Math.min(1, raw)),
+      solo: poseParams.solo === true,
+    };
+  }
+
   return {
     // A node nobody named reads as its type: an id like `data_mw7iys99` says nothing to a person.
     name: nameOf(state, row.nodeId),
@@ -130,5 +185,6 @@ export function layerView(state: DagState, row: StackNodeRow, ctx: EvalCtx = STA
       .map((param) => ({ param, value: formatValue(params[param]) })),
     influence,
     muted: mute ? params[mute] === true : null,
+    pose,
   };
 }
