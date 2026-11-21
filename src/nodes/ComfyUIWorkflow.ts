@@ -45,6 +45,7 @@ import type {
 } from '../core/dag/types';
 import type { ComfyApiJson } from '../core/comfy/comfyGraph';
 import { socketsOfWorkflow, type WorkflowSockets } from '../core/comfy/workflowSockets';
+import { framePath, outputPathOf } from '../core/comfy/workflowPaths';
 import { DEFAULT_IMAGE_DESCRIPTOR, type ImageValue, type TimeValue } from './types';
 import { widget } from './paramWidget';
 
@@ -256,6 +257,17 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
           // dispatch plan, not the per-frame value.
         }),
         extent: outputExtent(o.type, params),
+        // #1718 — a still lands as one file, at its first frame's path (the runner runs a
+        // still-only workflow there, #1946), so a workflow it is wired into reads it from there:
+        // one workflow's still into another's still input is just a wire.
+        ...(o.type === 'still' && params.outputPath
+          ? {
+              storedAt: framePath(
+                outputPathOf(params.outputPath, sockets, o.socket),
+                params.frameStart ?? 0,
+              ),
+            }
+          : {}),
       };
     }
     return out;

@@ -113,3 +113,68 @@ describe('a picture file wired into a still input', () => {
     expect(sent[0].images[uploadKeyOf('1')]).toEqual(Uint8Array.of(1, 2, 3));
   });
 });
+
+/** A shot's video workflow: a still input `first_frame`, a frames output `video`. */
+const VIDEO_FILE: ComfyApiJson = {
+  '1': {
+    class_type: 'basher_controller',
+    inputs: { name: 'first_frame', kind: 'image', image: '' },
+  },
+  '2': { class_type: 'WanImageToVideo', inputs: { start_image: ['1', 0] } },
+  '3': { class_type: 'basher_export', inputs: { name: 'video', kind: 'video', images: ['2', 0] } },
+};
+
+describe("#1718 — one workflow's still into another's still input", () => {
+  function stillIntoShot(): DagState {
+    let s = withStillWorkflow(emptyDagState(), 0, 0);
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'vw',
+      nodeType: 'ComfyUIWorkflow',
+      params: {
+        graph: { apiJson: VIDEO_FILE, meta: META },
+        frameStart: 0,
+        frameEnd: 2,
+        outputPath: 'renders/shot1/video',
+      },
+    }).next;
+    return applyOp(s, {
+      type: 'connect',
+      from: { node: 'sw', socket: 'still' },
+      to: { node: 'vw', socket: 'first_frame' },
+    }).next;
+  }
+
+  it('the shot is sent the picture the still workflow made, on every frame', async () => {
+    const s = stillIntoShot();
+    const storage = new MemoryStorage();
+    const cap = new StubComfyUICapability();
+    const sent = recording(cap);
+    const deps = {
+      capability: cap,
+      storage,
+      compileWorkflow: compileWorkflowFrame({ storage }),
+      onFrameComplete: () => {},
+    };
+    const still = await runComfyUIWorkflow('sw', s, deps);
+    const stillBytes = await storage.read(still.outputs[0]);
+    await runComfyUIWorkflow('vw', s, deps);
+    // One still, then three frames of the shot.
+    expect(sent).toHaveLength(4);
+    for (const inputs of sent.slice(1)) {
+      expect(inputs.images[uploadKeyOf('1')]).toEqual(stillBytes);
+    }
+  });
+
+  it('a shot run before its still is made stops and says to make the still first', async () => {
+    const storage = new MemoryStorage();
+    await expect(
+      runComfyUIWorkflow('vw', stillIntoShot(), {
+        capability: new StubComfyUICapability(),
+        storage,
+        compileWorkflow: compileWorkflowFrame({ storage }),
+        onFrameComplete: () => {},
+      }),
+    ).rejects.toThrow(/first_frame.*not at renders\/job1\/still_0000\.png yet/);
+  });
+});

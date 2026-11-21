@@ -97,7 +97,7 @@ describe('#756 importsOf reports SOURCE order, wrapped imports included', () => 
 });
 
 describe('#676 importsOf is not derailed by a `/*` inside a line comment', () => {
-  it('reports all ten imports of a file whose header writes `src/render/*` in prose', () => {
+  it('reports all eleven imports of a file whose header writes `src/render/*` in prose', () => {
     // This file answered `[]` before the fix. Its header says "V8 (file-rooted dispatch):
     // src/render/* MUST NOT emit Ops" — the `/*` in `src/render/*` opened a block comment
     // that swallowed every import below it.
@@ -113,6 +113,7 @@ describe('#676 importsOf is not derailed by a `/*` inside a line comment', () =>
       '../core/dag/types',
       '../core/storage',
       '../nodes/ComfyUIWorkflow',
+      '../core/comfy/workflowPaths',
     ]);
   });
 
