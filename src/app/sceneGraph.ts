@@ -19,7 +19,9 @@
 //     and a socket is visible only while available, BKE_node_runtime.hh `is_visible`); the
 //     evaluator ignores it, so drawing it would show a value flowing where none does;
 //   • a node that follows another's name says whose (in its tooltip: today every one is also
-//     wired to the node it follows, so a line would only repeat the wire).
+//     wired to the node it follows, so a line would only repeat the wire);
+//   • #1716 — a row where a run of frames enters a still input says which frame it picks (the
+//     first, today), so the wire shows a still being taken from frames rather than hiding it.
 //
 // REF: src/core/dag/layout.ts (viewEdgesOf, viewRowsOf, levelOf); src/app/collections.ts
 //      (hiddenNodes); src/app/timeDependence.ts (timeDependentNodes).
@@ -27,6 +29,8 @@
 import { levelOf, viewEdgesOf, viewRowsOf, type ViewEdge, type ViewRow } from '../core/dag/layout';
 import type { DagState } from '../core/dag/state';
 import type { NodeId, NodeRef } from '../core/dag/types';
+import { evaluateInputRef, type EvaluatorCache } from '../core/dag/evaluator';
+import { imageTakeOf, isImageValueLike } from '../core/dag/imageExtent';
 import { relationsOf } from '../core/dag/idRefSweep';
 import { getNodeType } from '../core/dag/registry';
 import { inputAvailable, outputAvailable } from '../core/dag/socketAvailability';
@@ -39,6 +43,50 @@ export interface GraphInputRow extends ViewRow {
   /** Set when what drives this row is hidden: the type of the first node driving it, so the
    *  row takes its colour. */
   readonly tint?: string;
+  /** #1716 — set on a still input fed a run of frames: the frame each such wire picks, in wire
+   *  order. Absent when nothing is picked. */
+  readonly picks?: readonly number[];
+}
+
+/**
+ * #1716 — the frames picked on `id`'s wired input `socket`, or undefined when the input does not
+ * take a still or every wire into it already carries one. Asks the evaluator's own arrival
+ * (`evaluateInputRef`) at frame 0, so the row says what the node is really handed. Only still
+ * inputs are evaluated, and a producer that cannot be evaluated yet shows no marker.
+ */
+function picksOn(
+  state: DagState,
+  id: NodeId,
+  socket: string,
+  cache: EvaluatorCache | undefined,
+): number[] | undefined {
+  const node = state.nodes[id];
+  const desc = node ? getNodeType(node.type)?.inputs[socket] : undefined;
+  if (imageTakeOf(desc, node?.params) !== 'still') return undefined;
+  const picks: number[] = [];
+  for (const ref of bindingRefs(node.inputs?.[socket])) {
+    try {
+      const v = evaluateInputRef(state, id, socket, ref, { cache }).value;
+      if (isImageValueLike(v) && v.extent.kind === 'still' && v.extent.pickedFrame !== undefined)
+        picks.push(v.extent.pickedFrame);
+    } catch {
+      // Not evaluable yet (an authoring state): nothing to say about the wire.
+    }
+  }
+  return picks.length > 0 ? picks : undefined;
+}
+
+function withPicks(
+  state: DagState,
+  id: NodeId,
+  rows: GraphInputRow[],
+  cache: EvaluatorCache | undefined,
+): GraphInputRow[] {
+  return rows.map((r) => {
+    if (r.ref) return r;
+    const picks = picksOn(state, id, r.socket, cache);
+    return picks ? { ...r, picks } : r;
+  });
 }
 export type GraphWire = ViewEdge;
 export type GraphFlag = 'scene' | 'render';
@@ -200,6 +248,8 @@ function live(state: DagState, w: ViewEdge): boolean {
 export function sceneGraphOf(
   state: DagState,
   opts: { showHidden: boolean; showAnimation?: boolean; level?: NodeId | null },
+  /** #1716 — for the frame-pick markers, which evaluate a still input's producers. */
+  cache?: EvaluatorCache,
 ): SceneGraph {
   const levels = levelOf(state);
   const owners = new Set(levels.values());
@@ -249,7 +299,12 @@ export function sceneGraphOf(
       id,
       type: state.nodes[id].type,
       name: nodeDisplayName(state.nodes, id),
-      inputs: withTints(rows.inputs.get(id) ?? [], tinted.get(id) ?? []),
+      inputs: withPicks(
+        state,
+        id,
+        withTints(rows.inputs.get(id) ?? [], tinted.get(id) ?? []),
+        cache,
+      ),
       outputs: rows.outputs.get(id) ?? [],
       hidden: hidden.has(id),
       inside: inside.get(id) ?? 0,

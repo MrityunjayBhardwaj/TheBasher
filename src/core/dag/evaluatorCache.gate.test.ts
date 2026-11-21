@@ -136,6 +136,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Agent render-summary tool: one evaluation per tool call.',
   },
+  'src/agent/tools/dagInspect.ts · handler → sceneGraphOf': {
+    count: 1,
+    frequency: 'per-action',
+    why: "#1716 — the agent's graph view, once per tool call: its frame-pick markers evaluate a still input's producers.",
+  },
   'src/agent/tools/renderSummarizeStylized.ts · handler → evaluate': {
     count: 1,
     frequency: 'per-action',
@@ -362,6 +367,10 @@ const TAKERS: string[] = [
   // their own; and the frame pick both it and the evaluator apply. Both forward the caller's cache.
   'evaluateInputRef@src/core/dag/evaluator.ts',
   'pickedArrival@src/core/dag/evaluator.ts',
+  // #1716 — the node view's frame-pick marker forwards the UI cache it is handed.
+  'sceneGraphOf@src/app/sceneGraph.ts',
+  'withPicks@src/app/sceneGraph.ts',
+  'picksOn@src/app/sceneGraph.ts',
   'foldOverlays@src/app/cookState.ts',
   'gltfNodeWorldPosition@src/app/gltfNodeWorld.ts',
   // #1337 — solving a placed bone back through a pose layer stack reads the pose under the layer;

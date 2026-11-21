@@ -18,6 +18,7 @@ import { type GraphNode, sceneGraphOf } from './sceneGraph';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { useSelectionStore } from './stores/selectionStore';
 import { useAgentContextStore } from './stores/agentContextStore';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 import { usePendingProposal, useProposedNodeIds } from '../agent/diff/useProposal';
 import { PROPOSAL_AMBER } from './proposalStyle';
 
@@ -95,7 +96,7 @@ export function GraphView(): ReactNode {
   const [refLines, setRefLines] = useState<'all' | 'selected' | 'none'>('all');
 
   const graph = useMemo(
-    () => sceneGraphOf(state, { showHidden, showAnimation, level }),
+    () => sceneGraphOf(state, { showHidden, showAnimation, level }, uiEvaluatorCache),
     [state, showHidden, showAnimation, level],
   );
   const lines = useMemo(
@@ -457,7 +458,12 @@ export function GraphView(): ReactNode {
                       <g
                         key={`${r.ref ? 'r' : 'w'}:${r.socket}`}
                         data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
+                        data-graph-pick={r.picks ? `${r.socket}:${r.picks.join(',')}` : undefined}
                       >
+                        {/* #1716 — a still input fed a run of frames says which frame it takes. */}
+                        {r.picks && (
+                          <title>{`takes one frame of a run of frames: frame ${r.picks.join(', ')}`}</title>
+                        )}
                         <circle
                           cx={0}
                           cy={y}
@@ -474,6 +480,9 @@ export function GraphView(): ReactNode {
                           fontFamily="ui-monospace, Menlo, monospace"
                         >
                           {r.count > 1 ? `${r.socket} ×${r.count}` : r.socket}
+                          {r.picks && (
+                            <tspan fill="#f0c75e">{` · frame ${r.picks.join(', ')}`}</tspan>
+                          )}
                         </text>
                       </g>
                     );

@@ -14,7 +14,7 @@ import { brokenReferences } from '../../app/animatableParams';
 import { readBaseParam } from '../../app/readBaseParam';
 import type { DagState } from '../../core/dag/state';
 import { paramsForAgent } from '../paramsForAgent';
-import { sceneGraphOf } from '../../app/sceneGraph';
+import { sceneGraphOf, type GraphInputRow } from '../../app/sceneGraph';
 
 export const dagInspectSchema = z.object({
   scope: z
@@ -155,6 +155,8 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
               inside: n.inside || undefined,
               linesToOtherLevels: n.away || undefined,
               namedAfter: n.namedAfter ?? undefined,
+              // #1716 — a still input fed a run of frames: the frame it takes, per input.
+              framePicks: framePicksOf(n.inputs),
             })),
             wires: g.wires
               .filter((w) => !w.ref)
@@ -260,4 +262,12 @@ function listInputs(inputs: Record<string, unknown>): Array<{ socket: string; fr
     }
   }
   return result;
+}
+
+/** #1716 — `{ socket: [frame, …] }` for the rows that pick a frame, or undefined when none do. */
+function framePicksOf(
+  rows: readonly GraphInputRow[],
+): Record<string, readonly number[]> | undefined {
+  const picked = rows.flatMap((r) => (r.picks ? [[r.socket, r.picks] as const] : []));
+  return picked.length > 0 ? Object.fromEntries(picked) : undefined;
 }

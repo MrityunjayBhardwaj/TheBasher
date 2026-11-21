@@ -141,3 +141,30 @@ describe('#1564 — dag.inspect scope=graph is the node view, everything shown',
     expect(ask('n_box')).toBe('Error: node "n_box" holds no sub-network');
   });
 });
+
+describe('#1716 — the agent reads the frame a still input picks, as the view shows it', () => {
+  it('names the frame on the still workflow and nothing on the video one', () => {
+    const graph = {
+      apiJson: { '1': { class_type: 'SaveImage', inputs: { filename_prefix: 'x' } } },
+      meta: { name: 'flux_still', importedAt: 'test', fps: 30, frames: 1 },
+    };
+    const s = applyOps(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'clip',
+        nodeType: 'MediaClip',
+        params: { src: 'clips/run.mp4', mediaKind: 'video', srcFps: 30, srcFrames: 90 },
+      },
+      { type: 'addNode', nodeId: 'still', nodeType: 'ComfyUIWorkflow', params: { graph } },
+      { type: 'addNode', nodeId: 'video', nodeType: 'ComfyUIWorkflow', params: {} },
+      ...['still', 'video'].map((to) => ({
+        type: 'connect' as const,
+        from: { node: 'clip', socket: 'out' },
+        to: { node: to, socket: 'pass-input' },
+      })),
+    ]).next;
+    const nodes = describeGraph(s).nodes as { id: string; framePicks?: unknown }[];
+    expect(nodes.find((n) => n.id === 'still')!.framePicks).toEqual({ 'pass-input': [0] });
+    expect(nodes.find((n) => n.id === 'video')!.framePicks).toBeUndefined();
+  });
+});

@@ -175,6 +175,10 @@ const CONSUMERS: Record<string, Decision> = {
   // left this table. `resolveMeshUVSpace` and `cookMotionGenerations` import the cache
   // TYPE only, to take one from their UI caller and hand it to the resolver they already called.
   'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
+  // #1716 — the node view's frame-pick marker evaluates a still input's producers at frame 0,
+  // DELIBERATELY: what it reads is whether the producer is a still or a run of frames and which
+  // frame a still input takes, which no playhead changes.
+  'src/app/sceneGraph.ts': authored('fixed-ctx-by-design'),
   'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
   // #1681 — the path fit takes the cook button's cache (TYPE only) and hands the authored state to
@@ -399,7 +403,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 64 → 66, not new roads: #1829's drawn world read and #1516's keep-position reparent cache,
     // each declared above. 66 → 67 at #1810 (the world fold). 68 → 69 at #575, a compute node's
     // keyed settings at its cook, declared above.
-    expect(evaluatorConsumers()).toHaveLength(69); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 69 → 70 at #1716, a new road: the node view's frame-pick marker (declared above as
+    // fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(70); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
