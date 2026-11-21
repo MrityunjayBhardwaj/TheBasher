@@ -14,6 +14,8 @@ import { parentIdsOf } from './sceneHierarchy';
 import { moveNotices } from './keepPlaceReparent';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
+import { addStepOps, readChain, removeStepOps } from '../core/dag/chainEdit';
+import { makeSplitCube } from '../test-utils/splitCube';
 import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
 import { attachOp, worldParentOf } from '../core/dag/worldChildren';
@@ -392,6 +394,125 @@ describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
     expect(findConsumer(s, boxDataId)).toEqual({ node: boxId, socket: 'data' });
     // Kept as a genuine invariant now rather than as the moving part it used to be.
     expect(findConsumer(s, boxId)?.socket).toBe('children'); // renderable, not stranded
+  });
+});
+
+describe('buildDeleteNodesOps — a Track To / Follow Path step (#1894 S0b)', () => {
+  // S0b made `TrackTo.in` / `FollowPath.in` own 'stack' (`wireOwnership`), so a constraint step
+  // now satisfies `isTargetWrapperNode` and newly ARMS the generic #432 wrapper-splice, on top of
+  // the dedicated #1812 `removeStepOps`. These cases observe that a step still deletes through the
+  // dedicated path only (the chain value rides `world`; the splice follows `out`, so it is inert
+  // here) and, either way, "deleting a step never takes what it reads": the spine subject survives.
+  const applyAll = (s: DagState, ops: readonly Op[] | null): DagState => {
+    expect(ops).not.toBeNull();
+    return ops!.reduce((acc, op) => applyOp(acc, op).next, s);
+  };
+  const SCENE = { node: 'n_scene', socket: 'children' };
+  /** Object `a` in the scene with a three-step Track To chain (bottom→top t1, t2, t3). */
+  const chainCube = (): DagState => {
+    const { state } = makeSplitCube(buildDefaultDagState(), {
+      objectId: 'a',
+      position: [1, 0, 0],
+      connectTo: SCENE,
+    });
+    let s = state;
+    s = applyAll(s, addStepOps(s, 'a', 't1', 'TrackTo', { aimPoint: [5, 0, 0], up: [0, 1, 0] }));
+    s = applyAll(s, addStepOps(s, 'a', 't2', 'TrackTo', { aimPoint: [1, 5, 0], up: [0, 0, 1] }));
+    s = applyAll(s, addStepOps(s, 'a', 't3', 'TrackTo', { aimPoint: [1, 0, 5], up: [0, 1, 0] }));
+    return s;
+  };
+
+  it('deleting a middle step re-stitches the chain and keeps what it read', () => {
+    const s = chainCube();
+    expect(readChain(s, 'a')!.steps.map((x) => x.id)).toEqual(['t1', 't2', 't3']);
+    const after = applyAll(s, buildDeleteNodesOps(s, ['t2']));
+    expect(after.nodes.t2).toBeUndefined();
+    // the gap closes: t1 (what t2 read on its spine `in`) survives, spliced under t3.
+    expect(readChain(after, 'a')!.steps.map((x) => x.id)).toEqual(['t1', 't3']);
+    expect(after.nodes.t1).toBeDefined();
+    expect(after.nodes.t3).toBeDefined();
+    expect(after.nodes.a).toBeDefined();
+  });
+
+  it('the dedicated path does it all — the generic #432 splice adds nothing', () => {
+    // The full scene-delete and the bare chain-edit must land the SAME graph: if the generic
+    // splice fired for a constraint step it would rewire or strand a node, and these would differ.
+    const s = chainCube();
+    const viaDelete = applyAll(s, buildDeleteNodesOps(s, ['t2']));
+    const viaStep = applyAll(s, removeStepOps(s, 'a', 't2'));
+    // Not vacuous: the step really left (the chain shrank), and both roads agree it did.
+    expect(readChain(viaDelete, 'a')!.steps.map((x) => x.id)).toEqual(['t1', 't3']);
+    expect(Object.keys(viaDelete.nodes).sort()).toEqual(Object.keys(viaStep.nodes).sort());
+    expect(readChain(viaDelete, 'a')).toEqual(readChain(viaStep, 'a'));
+  });
+
+  it('deleting the only step keeps the object and clears its chain', () => {
+    const { state } = makeSplitCube(buildDefaultDagState(), {
+      objectId: 'a',
+      position: [1, 2, 3],
+      connectTo: SCENE,
+    });
+    const s = applyAll(
+      state,
+      addStepOps(state, 'a', 't1', 'TrackTo', { aimPoint: [5, 0, 0], up: [0, 1, 0] }),
+    );
+    const after = applyAll(s, buildDeleteNodesOps(s, ['t1']));
+    expect(after.nodes.t1).toBeUndefined();
+    expect(after.nodes.a).toBeDefined();
+    expect(readChain(after, 'a')).toEqual({ own: null, steps: [] });
+  });
+
+  it('a DANGLING step (target empty, `in` wired) deletes without taking what it reads', () => {
+    // The reviewer's edge case. target '' makes `removeStepOps` return null (no object chain to
+    // edit), so the step stays in the delete set and the generic #432 path is the one that reaches
+    // it. Its spine `in` is wired to a surviving OwnWorld; deleting the step must leave that alone.
+    let s = makeSplitCube(buildDefaultDagState(), {
+      objectId: 'b',
+      position: [0, 0, 0],
+      connectTo: SCENE,
+    }).state;
+    s = applyAll(s, [
+      { type: 'addNode', nodeId: 'ow', nodeType: 'OwnWorld', params: { object: 'b' } },
+      {
+        type: 'addNode',
+        nodeId: 'dang',
+        nodeType: 'TrackTo',
+        params: { target: '', aimPoint: [1, 0, 0], up: [0, 1, 0] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'ow', socket: 'world' },
+        to: { node: 'dang', socket: 'in' },
+      },
+    ] as unknown as Op[]);
+    const ops = buildDeleteNodesOps(s, ['dang']);
+    const after = applyAll(s, ops);
+    expect(after.nodes.dang).toBeUndefined();
+    // "deleting a step never takes what it reads": the spine subject (and object b) survive.
+    expect(after.nodes.ow).toBeDefined();
+    expect(after.nodes.b).toBeDefined();
+    // nothing reads the step's `out`, so no surviving consumer — the splice emits no stray connect.
+    expect(ops.some((o) => o.type === 'connect')).toBe(false);
+  });
+
+  it('duplicating the object copies the whole chain and re-points each step to the copy', () => {
+    const s = chainCube();
+    const res = buildDuplicateNodesOps(s, ['a']);
+    expect(res).not.toBeNull();
+    const after = applyAll(s, res!.ops);
+    const copyId = res!.newRootIds[0];
+    const copyChain = readChain(after, copyId);
+    // the copy stands up its own three-step chain (never takes what the original reads).
+    expect(copyChain).not.toBeNull();
+    expect(copyChain!.steps.length).toBe(3);
+    for (const step of copyChain!.steps) {
+      expect((after.nodes[step.id].params as { target?: string }).target).toBe(copyId);
+    }
+    // the original's chain is left exactly as it was.
+    expect(readChain(after, 'a')!.steps.map((x) => x.id)).toEqual(['t1', 't2', 't3']);
+    for (const id of ['t1', 't2', 't3']) {
+      expect((after.nodes[id].params as { target?: string }).target).toBe('a');
+    }
   });
 });
 
