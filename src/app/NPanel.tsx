@@ -158,6 +158,7 @@ import {
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { ComfyWorkflowSection } from './ComfyWorkflowSection';
+import { StackFrame } from './StackFrame';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { WrapInRigConnector } from './animate/WrapInRigConnector';
@@ -5468,6 +5469,8 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
       {/* #1706 — what a pending proposal would change on this node, old → new. */}
       <InspectorProposed nodeId={node.id} />
       <SelectedBoneSection />
+      {/* #1957 — the frame around the stacks: which stack shows, and the order they apply in. */}
+      <StackFrame nodeId={node.id} />
       {refParamMeta && (
         // The general node-ref picker block — one NodeRefField per declared ref param,
         // shown regardless of section mode (and even when the ref is unset).
