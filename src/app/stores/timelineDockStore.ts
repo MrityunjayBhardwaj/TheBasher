@@ -23,13 +23,14 @@ import { create } from 'zustand';
 
 const STORAGE_KEY = 'basher.timelineDock.v1';
 
-// #1703 — the decided drawer: Shots · Dopesheet · NLA · Curves · Nodes · Library. The Curves tab
-// keeps the id 'curve'. Controllers stays after them until its fate is decided. The Light Studio
+// #1703 — the decided drawer: Shots · Dopesheet · NLA · Curves · Nodes · Library; #1956 puts Anim
+// Layers between NLA and Curves (design board 14d). The Curves tab keeps the id 'curve'. Controllers stays after them until its fate is decided. The Light Studio
 // left for the right panel, so a persisted 'lightStudio' coerces to the default.
 export type TimelineTab =
   | 'shots'
   | 'dopesheet'
   | 'nla'
+  | 'animLayers'
   | 'curve'
   | 'nodes'
   | 'library'
@@ -39,6 +40,7 @@ const VALID_TABS: readonly TimelineTab[] = [
   'shots',
   'dopesheet',
   'nla',
+  'animLayers',
   'curve',
   'nodes',
   'library',
@@ -57,8 +59,13 @@ export const MIN_DRAWER_HEIGHT_PX = 120;
 export const MAX_DRAWER_HEIGHT_PX = 2000;
 export const DEFAULT_DRAWER_HEIGHT_PX = 240;
 // A node graph needs room for boxes and wires, so Nodes opens taller than the time editors; the
-// Library (#1707) needs a row of tiles plus the Generate form beside them.
-const DEFAULT_TAB_HEIGHTS: Partial<Record<TimelineTab, number>> = { nodes: 480, library: 340 };
+// Library (#1707) needs a row of tiles plus the Generate form beside them; Anim Layers (#1956) needs
+// its lanes plus the selected layer's settings under them.
+const DEFAULT_TAB_HEIGHTS: Partial<Record<TimelineTab, number>> = {
+  nodes: 480,
+  library: 340,
+  animLayers: 400,
+};
 
 /** The height a tab opens at when it has never been resized. */
 export function defaultDrawerHeight(tab: TimelineTab): number {

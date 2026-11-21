@@ -7,7 +7,7 @@
 // toolbar with track-ops buttons added P6 W6.
 //
 // #1703 — the decided tab set is Shots · Dopesheet · NLA · Curves · Nodes ·
-// Library (see TABS). Nodes hosts the node view (GraphView, formerly a whole
+// Library (see TABS); #1956 adds Anim Layers between NLA and Curves. Nodes hosts the node view (GraphView, formerly a whole
 // editor space) and mounts only while its tab is up; Library hosts the asset
 // library (#1707 — moved from the left panel's Assets tab). Each tab keeps its
 // own height, set by the handle on the drawer's top edge.
@@ -58,6 +58,7 @@ import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
 import { NlaLanePane } from './NlaLanePane';
+import { AnimLayersPane } from './AnimLayersPane';
 import { ControllersDockPane } from './ControllersDockPane';
 import { ShotsPanel } from '../app/ShotsPanel';
 import { GraphView } from '../app/GraphView';
@@ -72,6 +73,7 @@ const PANE_OF_TAB: Record<TimelineTab, PaneKind> = {
   shots: 'shots',
   dopesheet: 'dopesheet',
   nla: 'nla',
+  animLayers: 'animLayers',
   curve: 'curves',
   nodes: 'nodes',
   library: 'library',
@@ -87,13 +89,15 @@ const VIEWPORT_MIN_PX = 240;
 const RESIZE_KEY_STEP_PX = 16;
 const HEADER_HEIGHT_PX = 28;
 
-// #1703 — the drawer's tabs, in the decided order: Shots · Dopesheet · NLA · Curves · Nodes ·
-// Library. Controllers follows until its fate is decided. (The Light Studio moved to the right
+// #1703 — the drawer's tabs, in the decided order: Shots · Dopesheet · NLA · Anim Layers (#1956) ·
+// Curves · Nodes · Library. Controllers follows until its fate is decided. (The Light Studio moved to the right
 // panel's Lights tab.)
 const TABS: readonly { id: TimelineTab; label: string }[] = [
   { id: 'shots', label: 'Shots' },
   { id: 'dopesheet', label: 'Dopesheet' },
   { id: 'nla', label: 'NLA' },
+  // #1956 — the selected character's pose layers as lanes over time (design board 14d).
+  { id: 'animLayers', label: 'Anim Layers' },
   // "Curves", never "Curve Editor": the word must not clash with node graphs. The id stays.
   { id: 'curve', label: 'Curves' },
   { id: 'nodes', label: 'Nodes' },
@@ -122,6 +126,7 @@ export function TimelineDrawer() {
     shots: usePaneFocus('shots'),
     dopesheet: usePaneFocus('dopesheet'),
     nla: usePaneFocus('nla'),
+    animLayers: usePaneFocus('animLayers'),
     curves: usePaneFocus('curves'),
     nodes: usePaneFocus('nodes'),
     library: usePaneFocus('library'),
@@ -218,6 +223,17 @@ export function TimelineDrawer() {
               style={{ display: activeTab === 'nla' ? 'flex' : 'none' }}
             >
               <NlaLanePane />
+            </div>
+            <div
+              data-testid="anim-layers-pane"
+              {...focus.animLayers}
+              data-active={activeTab === 'animLayers'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'animLayers' ? 'flex' : 'none' }}
+            >
+              {/* #1956 — mounted only while its tab is up: it keeps no state worth a mount, and it
+                  reads the whole graph, so a hidden one would re-derive its rows on every change. */}
+              {activeTab === 'animLayers' ? <AnimLayersPane /> : null}
             </div>
             <div
               data-testid="nodes-pane"

@@ -67,6 +67,14 @@ describe('timelineDockStore', () => {
     expect(mod.useTimelineDockStore.getState().activeTab).toBe('curve');
   });
 
+  it("#1956 — the 'animLayers' tab is a tab: it is kept, persisted and survives re-init", async () => {
+    useTimelineDockStore.getState().setActiveTab('animLayers');
+    expect(useTimelineDockStore.getState().activeTab).toBe('animLayers');
+    vi.resetModules();
+    const mod = await import('./timelineDockStore');
+    expect(mod.useTimelineDockStore.getState().activeTab).toBe('animLayers');
+  });
+
   it("persistence round-trip for the 'nla' tab (#283 Phase 5) — survives re-init", async () => {
     useTimelineDockStore.getState().setActiveTab('nla');
     expect(useTimelineDockStore.getState().activeTab).toBe('nla');

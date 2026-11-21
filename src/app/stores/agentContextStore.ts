@@ -25,6 +25,7 @@ export type PaneKind =
   | 'shots'
   | 'dopesheet'
   | 'nla'
+  | 'animLayers'
   | 'curves'
   | 'nodes'
   | 'library'
@@ -41,6 +42,7 @@ export const PANE_LABELS: Record<PaneKind, string> = {
   shots: 'Shots',
   dopesheet: 'Dopesheet',
   nla: 'NLA',
+  animLayers: 'Anim Layers',
   curves: 'Curves',
   nodes: 'Nodes',
   library: 'Library',

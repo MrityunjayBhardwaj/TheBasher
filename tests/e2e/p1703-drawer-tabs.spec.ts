@@ -1,4 +1,4 @@
-// #1703 — the bottom drawer's decided tab set: Shots · Dopesheet · NLA · Curves · Nodes · Library
+// #1703 — the bottom drawer's decided tab set: Shots · Dopesheet · NLA · Anim Layers (#1956) · Curves · Nodes · Library
 // (Controllers stays after them until its fate is decided). Shots left the left panel for the
 // drawer, the node view left the space switcher for the Nodes tab, and Library holds the asset
 // library (#1707). Nodes opens taller than the others.
@@ -26,6 +26,7 @@ test('the drawer shows the decided tabs, in the decided order', async ({ page })
     'Shots',
     'Dopesheet',
     'NLA',
+    'Anim Layers',
     'Curves',
     'Nodes',
     'Library',
