@@ -5321,9 +5321,9 @@ export function NPanel() {
   const inspectorLabel = `Inspector — ${node ? nodeDisplayName(dagState.nodes, node.id) : 'no selection'}`;
 
   if (collapsed) {
-    // Collapsed strip: 28px wide, chevron-only (mirrors LeftSidebar's collapsed
-    // aside). Clicking re-expands to the full inspector. The Layout column is
-    // already 28px, so this fits without overflow.
+    // The rail: 28px wide, the inspector's icon as the one control (mirrors LeftSidebar's rail).
+    // Clicking opens the full inspector. #1952: a fresh start boots this rail, and selecting an
+    // object never opens it — only the director does (their choice is saved and wins later).
     return (
       <aside
         data-testid="inspector"
@@ -5340,7 +5340,22 @@ export function NPanel() {
           aria-label="Expand inspector"
           className="flex h-8 w-7 items-center justify-center self-end rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          ‹
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 18 18"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            {/* Sliders: the selection's properties. */}
+            <path d="M3 5h12M3 9h12M3 13h12" />
+            <circle cx="11" cy="5" r="1.6" fill="currentColor" />
+            <circle cx="6" cy="9" r="1.6" fill="currentColor" />
+            <circle cx="12" cy="13" r="1.6" fill="currentColor" />
+          </svg>
         </button>
       </aside>
     );

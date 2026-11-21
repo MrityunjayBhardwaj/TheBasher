@@ -60,26 +60,37 @@ export interface ChromeStore extends ChromeState {
   toggleShowFpsMeter: () => void;
 }
 
-// The subset of ChromeState that actually persists. presentMode is deliberately
-// excluded — it must never be written to localStorage (a reload boots it false).
-type PersistedChromeState = Omit<ChromeState, 'presentMode'>;
+// The fields that persist. presentMode and the narrow drawers are deliberately excluded — they
+// must never be written to localStorage (a reload boots them closed).
+type SavedField =
+  | 'toolRailCollapsed'
+  | 'leftSidebarCollapsed'
+  | 'inspectorCollapsed'
+  | 'showFpsMeter';
+const SAVED_FIELDS: readonly SavedField[] = [
+  'toolRailCollapsed',
+  'leftSidebarCollapsed',
+  'inspectorCollapsed',
+  'showFpsMeter',
+];
 
-// First-visit defaults. Spline redesign Wave B: leftSidebarCollapsed now
-// defaults to FALSE — the scene outliner is ALWAYS-ON, matching Spline (the
-// W2.6 default-collapsed rationale is reversed: Spline keeps the outliner
-// visible at all times; an editor whose first paint hides the scene tree reads
-// as a bare viewport, not a 3D editor). The collapse affordance is preserved
-// (V35) so a user who wants the extra ~232px can still fold it; chromeStore
-// persists their choice, so a returning user sees what they last set.
-const DEFAULT_STATE: ChromeState = {
+// First-visit defaults. #1952 — the outliner and the inspector start as RAILS: the decided editor
+// design (editor-design-v1, "The viewport is the film. Side panels start as rails") opens on the
+// picture, not on chrome around a smaller picture, the same way the chat column already starts as a
+// rail (#1704). The rails keep their expand control (V35), and a director's own choice is saved and
+// wins on every later start: storage holds only the fields a director (or a fold rule acting for
+// them) actually set, so a key that was never set reads as this default, never as a choice.
+// (This reverses Spline redesign Wave B, which had made the outliner always-on.)
+export const DEFAULT_CHROME_STATE: ChromeState = {
   toolRailCollapsed: false,
-  leftSidebarCollapsed: false,
-  inspectorCollapsed: false,
+  leftSidebarCollapsed: true,
+  inspectorCollapsed: true,
   presentMode: false,
   narrowLeftDrawerOpen: false,
   narrowRightDrawerOpen: false,
   showFpsMeter: false,
 };
+const DEFAULT_STATE = DEFAULT_CHROME_STATE;
 
 // Defensive against test envs where `localStorage` exists but its methods
 // are stubbed weirdly (happy-dom + vitest module-load ordering can land us
@@ -102,71 +113,87 @@ function safeSetItem(key: string, value: string): void {
   }
 }
 
-function readPersisted(): ChromeState {
-  const raw = safeGetItem(STORAGE_KEY);
-  if (!raw) return DEFAULT_STATE;
+// The saved record, as an object of whatever booleans it holds; anything unreadable is "nothing saved".
+function readRecord(raw: string | null): Partial<Record<SavedField, unknown>> {
+  if (!raw) return {};
   try {
-    const parsed = JSON.parse(raw) as Partial<ChromeState>;
-    return {
-      toolRailCollapsed:
-        typeof parsed.toolRailCollapsed === 'boolean' ? parsed.toolRailCollapsed : false,
-      leftSidebarCollapsed:
-        typeof parsed.leftSidebarCollapsed === 'boolean' ? parsed.leftSidebarCollapsed : false,
-      inspectorCollapsed:
-        typeof parsed.inspectorCollapsed === 'boolean' ? parsed.inspectorCollapsed : false,
-      showFpsMeter: typeof parsed.showFpsMeter === 'boolean' ? parsed.showFpsMeter : false,
-      // Always boot false — never read back from storage (non-persisted).
-      presentMode: false,
-      narrowLeftDrawerOpen: false,
-      narrowRightDrawerOpen: false,
-    };
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return DEFAULT_STATE;
+    return {};
   }
 }
 
-// Persists ONLY the collapse fields. presentMode is structurally excluded so it
-// can never land in localStorage even via a sibling toggle's get() spread.
-function writePersisted(state: PersistedChromeState): void {
-  safeSetItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      toolRailCollapsed: state.toolRailCollapsed,
-      leftSidebarCollapsed: state.leftSidebarCollapsed,
-      inspectorCollapsed: state.inspectorCollapsed,
-      showFpsMeter: state.showFpsMeter,
-    }),
-  );
+/**
+ * The chrome state a start boots with, from the saved record (#1952). A field the record holds as a
+ * boolean is a choice and wins; a missing or malformed field falls back to the first-start default.
+ * The ephemeral fields (present mode, narrow drawers) always boot closed.
+ */
+export function chromeStateFromSaved(raw: string | null): ChromeState {
+  const rec = readRecord(raw);
+  const pick = (k: SavedField): boolean => {
+    const v = rec[k];
+    return typeof v === 'boolean' ? v : DEFAULT_STATE[k];
+  };
+  return {
+    toolRailCollapsed: pick('toolRailCollapsed'),
+    leftSidebarCollapsed: pick('leftSidebarCollapsed'),
+    inspectorCollapsed: pick('inspectorCollapsed'),
+    showFpsMeter: pick('showFpsMeter'),
+    // Always boot false — never read back from storage (non-persisted).
+    presentMode: false,
+    narrowLeftDrawerOpen: false,
+    narrowRightDrawerOpen: false,
+  };
+}
+
+function readPersisted(): ChromeState {
+  return chromeStateFromSaved(safeGetItem(STORAGE_KEY));
+}
+
+// Saves ONE field that was just set, merged into what is already saved. Writing only the field that
+// changed is what keeps "never chosen" readable (#1952): folding the tool rail must not record the
+// panels' current default as if the director had picked it. presentMode is structurally excluded
+// (it is not a SavedField), so it can never land in localStorage.
+function writePersisted(field: SavedField, value: boolean): void {
+  const rec = readRecord(safeGetItem(STORAGE_KEY));
+  const next: Partial<Record<SavedField, boolean>> = {};
+  for (const k of SAVED_FIELDS) {
+    const v = rec[k];
+    if (typeof v === 'boolean') next[k] = v;
+  }
+  next[field] = value;
+  safeSetItem(STORAGE_KEY, JSON.stringify(next));
 }
 
 export const useChromeStore = create<ChromeStore>((set, get) => ({
   ...readPersisted(),
   setToolRailCollapsed(collapsed) {
     set({ toolRailCollapsed: collapsed });
-    writePersisted({ ...get(), toolRailCollapsed: collapsed });
+    writePersisted('toolRailCollapsed', collapsed);
   },
   setLeftSidebarCollapsed(collapsed) {
     set({ leftSidebarCollapsed: collapsed });
-    writePersisted({ ...get(), leftSidebarCollapsed: collapsed });
+    writePersisted('leftSidebarCollapsed', collapsed);
   },
   setInspectorCollapsed(collapsed) {
     set({ inspectorCollapsed: collapsed });
-    writePersisted({ ...get(), inspectorCollapsed: collapsed });
+    writePersisted('inspectorCollapsed', collapsed);
   },
   toggleToolRail() {
     const next = !get().toolRailCollapsed;
     set({ toolRailCollapsed: next });
-    writePersisted({ ...get(), toolRailCollapsed: next });
+    writePersisted('toolRailCollapsed', next);
   },
   toggleLeftSidebar() {
     const next = !get().leftSidebarCollapsed;
     set({ leftSidebarCollapsed: next });
-    writePersisted({ ...get(), leftSidebarCollapsed: next });
+    writePersisted('leftSidebarCollapsed', next);
   },
   toggleInspector() {
     const next = !get().inspectorCollapsed;
     set({ inspectorCollapsed: next });
-    writePersisted({ ...get(), inspectorCollapsed: next });
+    writePersisted('inspectorCollapsed', next);
   },
   // presentMode is EPHEMERAL: set() only, never writePersisted — a reload must
   // never trap the user in fullscreen with no chrome to escape.
@@ -190,11 +217,11 @@ export const useChromeStore = create<ChromeStore>((set, get) => ({
   },
   setShowFpsMeter(show) {
     set({ showFpsMeter: show });
-    writePersisted({ ...get(), showFpsMeter: show });
+    writePersisted('showFpsMeter', show);
   },
   toggleShowFpsMeter() {
     const next = !get().showFpsMeter;
     set({ showFpsMeter: next });
-    writePersisted({ ...get(), showFpsMeter: next });
+    writePersisted('showFpsMeter', next);
   },
 }));

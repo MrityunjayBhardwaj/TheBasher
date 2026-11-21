@@ -37,6 +37,17 @@ describe('installChatInspectorFold', () => {
     expect(useChatColumnStore.getState().open).toBe(true);
   });
 
+  it('#1952 — an inspector at its first-start rail: opening chat leaves both as they are', () => {
+    useChatColumnStore.setState({ open: false });
+    useChromeStore.setState({ inspectorCollapsed: true });
+    useChatColumnStore.getState().setVisible(false, true);
+    expect(useChromeStore.getState().inspectorCollapsed).toBe(true);
+    expect(useChatColumnStore.getState().open).toBe(true);
+    // The director opening the rail is a user unfold: chat folds, as before.
+    useChromeStore.getState().toggleInspector();
+    expect(useChatColumnStore.getState().open).toBe(false);
+  });
+
   it('opening chat folds the inspector; folding chat does not touch it', () => {
     useChatColumnStore.getState().setVisible(false, false);
     expect(useChromeStore.getState().inspectorCollapsed).toBe(false);

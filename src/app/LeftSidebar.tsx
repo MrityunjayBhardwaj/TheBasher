@@ -8,9 +8,10 @@
 // The agent surface is the right-hand chat column (#1704), not a tab here.
 //
 // Collapse is preserved (V35 — the reveal affordance stays reachable while
-// collapsed): collapsed renders a 28px strip whose only control is the expand
-// chevron. Default is EXPANDED (chromeStore.leftSidebarCollapsed defaults
-// false — the outliner is always-on like Spline).
+// collapsed): collapsed renders a 28px rail whose only control is the outliner
+// icon, which opens it. #1952: a fresh start boots this RAIL (chromeStore
+// defaults leftSidebarCollapsed to true — "the viewport is the film"); a
+// director's own choice is saved and wins later.
 //
 // V8 file-rooted: src/app/. Reads UI projection stores; no DAG mutation.
 //
@@ -22,6 +23,24 @@ import { useProjectStore } from '../core/project/store';
 import { SceneTree } from './SceneTree';
 import { useChromeStore } from './stores/chromeStore';
 
+// The outliner's rail icon: a tree of rows (design board Stage4Console, "Outliner").
+function OutlinerIcon(): ReactNode {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 18 18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M3 4h12M6 9h9M6 14h9" />
+    </svg>
+  );
+}
+
 export function LeftSidebar(): ReactNode {
   const collapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const toggle = useChromeStore((s) => s.toggleLeftSidebar);
@@ -29,8 +48,8 @@ export function LeftSidebar(): ReactNode {
   const [search, setSearch] = useState('');
 
   if (collapsed) {
-    // Collapsed strip: 28px wide, chevron-only. The expand affordance must stay
-    // reachable while collapsed (V35) — it is the only control here.
+    // The rail: 28px wide, the outliner's icon (design board Stage4Console's left rail) as the one
+    // control. The expand affordance must stay reachable while collapsed (V35).
     return (
       <aside
         data-testid="left-sidebar"
@@ -47,7 +66,7 @@ export function LeftSidebar(): ReactNode {
           aria-label="Expand scene outliner"
           className="flex h-8 w-7 items-center justify-center self-start rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          ›
+          <OutlinerIcon />
         </button>
       </aside>
     );

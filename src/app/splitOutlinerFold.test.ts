@@ -105,6 +105,24 @@ describe('installSplitOutlinerFold', () => {
     expect(folded()).toBe(true);
   });
 
+  // #1952 — a fresh start boots the outliner as a rail. That rail was folded by the default, not by
+  // this rule: the split must neither claim it (and open it on the way out) nor lose track of a
+  // director who opens it during the split.
+  it("a first-start rail is not the rule's to restore: the split comes and goes and it stays a rail", () => {
+    off();
+    useChromeStore.setState({ leftSidebarCollapsed: true });
+    off = installSplitOutlinerFold(() => width);
+    space('uv');
+    expect(useSplitViewStore.getState().outlinerFoldedBySplit).toBe(false);
+    space('view3d');
+    expect(folded()).toBe(true);
+    // ...and opened during the split, it is the director's: closing the split leaves it open.
+    space('uv');
+    useChromeStore.getState().toggleLeftSidebar();
+    space('view3d');
+    expect(folded()).toBe(false);
+  });
+
   it('does nothing in the narrow layout, where the outliner is an overlay drawer', () => {
     width = 900;
     space('uv');

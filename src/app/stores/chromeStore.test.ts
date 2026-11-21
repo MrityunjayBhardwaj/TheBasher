@@ -36,7 +36,7 @@ beforeAll(() => {
 });
 
 // Static import is safe because beforeAll runs before any describe block.
-import { useChromeStore } from './chromeStore';
+import { chromeStateFromSaved, useChromeStore } from './chromeStore';
 
 const STORAGE_KEY = 'basher.chrome.v1';
 
@@ -79,8 +79,9 @@ describe('chromeStore', () => {
       boolean
     >;
     expect(persisted.toolRailCollapsed).toBe(true);
-    expect(persisted.leftSidebarCollapsed).toBe(false);
-    expect(persisted.inspectorCollapsed).toBe(false);
+    // #1952 — the panels were not set, so they are not saved (they keep reading as the default).
+    expect(persisted).not.toHaveProperty('leftSidebarCollapsed');
+    expect(persisted).not.toHaveProperty('inspectorCollapsed');
   });
 
   it('setLeftSidebarCollapsed persists independently', () => {
@@ -133,7 +134,7 @@ describe('chromeStore', () => {
       boolean
     >;
     expect(persisted.toolRailCollapsed).toBe(true);
-    expect(persisted.leftSidebarCollapsed).toBe(false);
+    expect(persisted).not.toHaveProperty('leftSidebarCollapsed');
     expect(persisted.inspectorCollapsed).toBe(true);
   });
 
@@ -169,21 +170,77 @@ describe('chromeStore', () => {
     expect(mod.useChromeStore.getState().toolRailCollapsed).toBe(true);
   });
 
-  it('first-visit boot defaults: toolRail expanded, leftSidebar EXPANDED, inspector expanded', async () => {
-    // Re-import the module with empty localStorage so zustand's create()
-    // re-runs against a fresh DEFAULT_STATE. Verifies the documented
-    // first-visit boot shape (Spline redesign Wave B — leftSidebar default
-    // flipped back to FALSE so the scene outliner is always-on, matching
-    // Spline; reverses the W2.6 default-collapsed call).
+  it('first-visit boot defaults: toolRail expanded, outliner and inspector as RAILS (#1952)', async () => {
+    // Re-import the module with empty localStorage so zustand's create() re-runs against a fresh
+    // default. #1952: the decided editor design opens on the picture, so the outliner and the
+    // inspector start folded to their rails (reverses Spline redesign Wave B's always-on outliner).
     localStorage.clear();
     vi.resetModules();
     const mod = await import('./chromeStore');
     const fresh = mod.useChromeStore.getState();
     expect(fresh.toolRailCollapsed).toBe(false);
-    expect(fresh.leftSidebarCollapsed).toBe(false);
-    expect(fresh.inspectorCollapsed).toBe(false);
+    expect(fresh.leftSidebarCollapsed).toBe(true);
+    expect(fresh.inspectorCollapsed).toBe(true);
     // The dev FPS overlay boots OFF — a clean editor canvas is the default.
     expect(fresh.showFpsMeter).toBe(false);
+  });
+
+  it("a director's own choice is remembered and wins on the next start (#1952)", async () => {
+    localStorage.clear();
+    vi.resetModules();
+    let mod = await import('./chromeStore');
+    mod.useChromeStore.getState().toggleLeftSidebar();
+    expect(mod.useChromeStore.getState().leftSidebarCollapsed).toBe(false);
+    vi.resetModules();
+    mod = await import('./chromeStore');
+    expect(mod.useChromeStore.getState().leftSidebarCollapsed).toBe(false);
+    // The inspector was never touched: still the first-start rail.
+    expect(mod.useChromeStore.getState().inspectorCollapsed).toBe(true);
+  });
+
+  it('setting one field never records the others as choices (#1952)', () => {
+    // A fresh store whose panels sit at their default rails.
+    useChromeStore.setState({ leftSidebarCollapsed: true, inspectorCollapsed: true });
+    useChromeStore.getState().toggleShowFpsMeter();
+    useChromeStore.getState().setToolRailCollapsed(true);
+    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
+      string,
+      boolean
+    >;
+    expect(persisted).toEqual({ showFpsMeter: true, toolRailCollapsed: true });
+  });
+
+  describe('chromeStateFromSaved', () => {
+    it('nothing saved, unreadable or not an object: the first-start rails', () => {
+      for (const raw of [null, '', '{not json', '42', 'null', '[]']) {
+        const s = chromeStateFromSaved(raw);
+        expect(s.leftSidebarCollapsed, String(raw)).toBe(true);
+        expect(s.inspectorCollapsed, String(raw)).toBe(true);
+        expect(s.toolRailCollapsed, String(raw)).toBe(false);
+      }
+    });
+    it('a saved boolean wins; a missing or malformed field falls back to the default', () => {
+      const s = chromeStateFromSaved(
+        JSON.stringify({ leftSidebarCollapsed: false, inspectorCollapsed: 'no' }),
+      );
+      expect(s.leftSidebarCollapsed).toBe(false);
+      expect(s.inspectorCollapsed).toBe(true);
+      expect(
+        chromeStateFromSaved(JSON.stringify({ inspectorCollapsed: false })).inspectorCollapsed,
+      ).toBe(false);
+    });
+    it('present mode and the narrow drawers always boot closed', () => {
+      const s = chromeStateFromSaved(
+        JSON.stringify({
+          presentMode: true,
+          narrowLeftDrawerOpen: true,
+          narrowRightDrawerOpen: true,
+        }),
+      );
+      expect(s.presentMode).toBe(false);
+      expect(s.narrowLeftDrawerOpen).toBe(false);
+      expect(s.narrowRightDrawerOpen).toBe(false);
+    });
   });
 
   it('toggleShowFpsMeter flips and persists the dev FPS overlay flag', () => {
@@ -196,8 +253,8 @@ describe('chromeStore', () => {
     >;
     // Unlike presentMode, this dev preference DOES persist (survives reload).
     expect(persisted.showFpsMeter).toBe(true);
-    // The collapse flags ride along untouched.
-    expect(persisted.toolRailCollapsed).toBe(false);
+    // The collapse flags are not recorded by an FPS toggle (#1952: only what was set is saved).
+    expect(persisted).not.toHaveProperty('toolRailCollapsed');
     useChromeStore.getState().toggleShowFpsMeter();
     expect(useChromeStore.getState().showFpsMeter).toBe(false);
   });
