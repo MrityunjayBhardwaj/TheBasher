@@ -13,7 +13,8 @@
 //     gets a black picture when it does not.
 // Nothing about any particular model is known here.
 //
-// Where a picture's bytes come from: a render pass writes each frame next to the job
+// Where a picture's bytes come from: a picture that says where it is stored (`storedAt`, an image
+// clip's file) is read from there. A render pass writes each frame next to the job
 // (`${jobDir}/${passKind}_NNNN.png`, runRenderJob), and the workflow's output path sits in the
 // same job directory (D-04), so an arriving pass is read from there, at the frame it carries.
 //
@@ -136,6 +137,14 @@ async function bytesOfArrival(
   value: ImageValue,
   frame: number,
 ): Promise<Uint8Array> {
+  // #1947 — a picture that says where its bytes are is read from there (an image clip), never
+  // taken for the job's render pass of the same kind.
+  if (value.storedAt) {
+    if (!(await storage.exists(value.storedAt))) {
+      throw new Error(`The picture on "${socket}" is not at ${value.storedAt}.`);
+    }
+    return storage.read(value.storedAt);
+  }
   if (!PASS_KINDS.has(value.passKind)) {
     throw new Error(
       `The picture on "${socket}" comes from a ${value.passKind} node; a frame-by-frame run can ` +

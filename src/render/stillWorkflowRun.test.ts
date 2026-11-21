@@ -1,5 +1,5 @@
-// Still workflows through the frame runner (#1946): a workflow whose file makes only stills is
-// run once.
+// Still workflows through the frame runner: a workflow whose file makes only stills is run once
+// (#1946), and a picture file wired into a still input is sent as that file (#1947).
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { StubComfyUICapability, type ComfyInputs } from '../core/comfy';
@@ -8,7 +8,7 @@ import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { MemoryStorage } from '../core/storage';
 import { registerAllNodes } from '../nodes/registerAll';
-import { compileWorkflowFrame } from './compileWorkflowFrame';
+import { compileWorkflowFrame, uploadKeyOf } from './compileWorkflowFrame';
 import { dryRun, framePath } from './dryRun';
 import { runComfyUIWorkflow } from './runComfyUIWorkflow';
 
@@ -82,5 +82,34 @@ describe('a workflow that makes only stills', () => {
       compileWorkflow: compileWorkflowFrame({ storage }),
     });
     expect(report.frames).toBe(1);
+  });
+});
+
+describe('a picture file wired into a still input', () => {
+  it("is sent as the file's own bytes, not the job's beauty pass", async () => {
+    let s = withStillWorkflow(emptyDagState(), 0, 0);
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'img',
+      nodeType: 'MediaClip',
+      params: { src: 'renders/first_frame.png', mediaKind: 'image' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'img', socket: 'out' },
+      to: { node: 'sw', socket: 'render' },
+    }).next;
+    const storage = new MemoryStorage();
+    await storage.write('renders/first_frame.png', Uint8Array.of(1, 2, 3));
+    await storage.write('renders/job1/beauty_0000.png', Uint8Array.of(9, 9, 9));
+    const cap = new StubComfyUICapability();
+    const sent = recording(cap);
+    await runComfyUIWorkflow('sw', s, {
+      capability: cap,
+      storage,
+      compileWorkflow: compileWorkflowFrame({ storage }),
+      onFrameComplete: () => {},
+    });
+    expect(sent[0].images[uploadKeyOf('1')]).toEqual(Uint8Array.of(1, 2, 3));
   });
 });

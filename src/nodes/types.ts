@@ -2939,6 +2939,14 @@ export interface ImageValue {
    * compile. See {@link ImageExtent}.
    */
   readonly extent: ImageExtent;
+  /**
+   * #1947 — where this picture's bytes already sit in storage, as one file, when its producer
+   * knows: an image clip's `src`, a ComfyUI workflow's still once it is made. A reader that needs
+   * the bytes (the frame compiler) reads them from here. Absent for a picture rendered from the
+   * scene, which the reader finds by its pass kind and frame, and for a run of frames. Not in the
+   * hash: where the bytes are is not what they are.
+   */
+  readonly storedAt?: string;
 }
 
 /** Default Image descriptor for fresh pass nodes. 1280x720 rgba8 (P4 §43). */

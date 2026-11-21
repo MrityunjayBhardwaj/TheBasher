@@ -97,6 +97,9 @@ export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
         frameIndex,
       }),
       extent: mediaClipExtent(params),
+      // #1947 — an image clip is one file, so it says where: the value's `passKind` has to name
+      // some kind, and without this a reader of the bytes took the clip for the job's beauty pass.
+      ...((params.mediaKind ?? 'video') === 'image' && params.src ? { storedAt: params.src } : {}),
     };
   },
 };
