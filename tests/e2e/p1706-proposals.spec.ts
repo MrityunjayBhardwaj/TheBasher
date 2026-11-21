@@ -131,6 +131,8 @@ test('#1706 — the proposal is listed in chat, marked in the viewport, and acce
 
   // In the 2D view the 3D slot is hidden — the proposal is still listed and Accept still works.
   await page.getByTestId('space-switch-uv').click();
+  // #1709 — the UV mode opens with the 3D view beside it; the case here is the 2D View alone.
+  await page.getByTestId('twodview-split-toggle').click();
   await expect(page.getByTestId('view3d-slot')).toBeHidden();
   await expect(page.getByTestId('proposal-viewport-edge')).toBeHidden();
   const undoDepth = await page.evaluate(

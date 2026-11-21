@@ -70,6 +70,11 @@ export function usePanZoomCanvas(
     }
     const { zoom, panX, panY } = view.current;
     // dpr → CSS-px space, then pan/zoom on top. The pane draws in CSS px.
+    // #1709 — the transform this paint used, on the canvas itself: the one place a reader (an e2e
+    // spec, a split-view check) can see the view a director left without reaching into the ref.
+    canvas.dataset.viewZoom = String(zoom);
+    canvas.dataset.viewPanX = String(panX);
+    canvas.dataset.viewPanY = String(panY);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);

@@ -122,6 +122,9 @@ test('P2.6#3 space toggle swaps view3d ↔ uv; Canvas DOM node persists', async 
   expect(beforeId).not.toBeNull();
 
   await page.getByTestId('toolbar-space-uv').click();
+  // #1709 — the UV mode opens split, the 3D view beside it; turned off, the 2D View is alone.
+  await expect(page.getByTestId('view3d-slot')).toHaveCSS('display', 'block');
+  await page.getByTestId('twodview-split-toggle').click();
   await expect(page.getByTestId('view3d-slot')).toHaveCSS('display', 'none');
   await expect(page.getByTestId('uv-slot')).toHaveCSS('display', 'block');
   await expect(page.getByTestId('uv-editor')).toBeVisible();

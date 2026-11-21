@@ -14,11 +14,15 @@
 
 import { UVEditor } from './UVEditor';
 import { RenderResultView } from './RenderResultView';
+import { useSplitViewStore } from './stores/splitViewStore';
 import { type TwoDViewMode, useTwoDViewStore } from './stores/twoDViewStore';
 
 export function TwoDView() {
   const mode = useTwoDViewStore((s) => s.mode);
   const setMode = useTwoDViewStore((s) => s.setMode);
+  // #1709 — whether this mode shows the 3D view beside it (per mode: UV opens split, Render not).
+  const split = useSplitViewStore((s) => s.split[mode]);
+  const setSplit = useSplitViewStore((s) => s.setSplit);
 
   return (
     <div data-testid="twodview" className="flex h-full w-full flex-col bg-bg">
@@ -35,6 +39,20 @@ export function TwoDView() {
           active={mode === 'render'}
           onClick={() => setMode('render')}
         />
+        <button
+          type="button"
+          data-testid="twodview-split-toggle"
+          aria-pressed={split}
+          title={
+            split ? 'Hide the 3D view beside the 2D View' : 'Show the 3D view beside the 2D View'
+          }
+          onClick={() => setSplit(mode, !split)}
+          className={`ml-auto flex items-center whitespace-nowrap border-l border-border px-3 py-1.5 font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+            split ? 'text-accent' : 'text-fg/50 hover:text-fg/80'
+          }`}
+        >
+          3D beside
+        </button>
       </div>
       <div className="relative flex-1" style={{ minHeight: 0 }}>
         <div

@@ -170,6 +170,8 @@ test.describe("#327 — the proposal's Accept / Reject are reachable, not just v
     await page.goto('/');
     await proposeCurve(page);
     await page.getByTestId('space-switch-uv').click();
+    // #1709 — the UV mode opens with the 3D view beside it; the case here is the 2D View alone.
+    await page.getByTestId('twodview-split-toggle').click();
     await expect(page.getByTestId('view3d-slot')).toBeHidden();
 
     expect(await reachableSamples(page, 'proposal-accept')).toBe(9);

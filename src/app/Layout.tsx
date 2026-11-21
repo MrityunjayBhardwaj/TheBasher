@@ -36,7 +36,7 @@
 // REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5,
 // §5.3, §5.4, §8.1 (focus order), §8.2 (keyboard-only).
 
-import type { CSSProperties } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 
 import { AssetDropZone } from './AssetDropZone';
 import { AssetErrorBanner } from './AssetErrorBanner';
@@ -48,6 +48,7 @@ import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { ProposalViewportEdge } from './ProposalViewportEdge';
+import { Split3DHeader, SplitCollapsedStrip, SplitDivider } from './SplitChrome';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
 import { SpreadsheetView } from './SpreadsheetView';
@@ -60,10 +61,13 @@ import { usePaneFocus } from './stores/agentContextStore';
 import { useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
+import { useSplitViewStore } from './stores/splitViewStore';
+import { useTwoDViewStore } from './stores/twoDViewStore';
 import { useViewportStore } from './stores/viewportStore';
 import {
   CENTER_SURFACE_MAX_WIDTH,
   CENTER_SURFACE_TOP,
+  centerBandInsets,
   centerSurfaceBox,
   chatColumnWidth,
   INSPECTOR_WIDTH,
@@ -72,6 +76,7 @@ import {
   PLAYBACK_BAND,
   sideIslandBottom,
   sideIslandWidth,
+  splitPaneBoxes,
 } from './layoutIslands';
 
 export function Layout() {
@@ -198,20 +203,61 @@ export function Layout() {
     inspectorCollapsed,
     band: 'top',
   });
+  const centerSurfaceTopBottom: CSSProperties = {
+    position: 'absolute',
+    top: CENTER_SURFACE_TOP,
+    bottom: drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
+    zIndex: 15,
+  };
+
+  // #1709 — the one fixed split: the 2D View with the 3D view beside it, across the same clear band
+  // the lone 2D View fills. The 3D side is the ONE existing view3d slot (and its one Canvas),
+  // re-boxed to its half — never a second canvas or renderer. Split is a per-2D-mode choice (UV
+  // opens split, Render result does not); the drawer row and the chat column are outside <main>,
+  // so nothing here can move them.
+  const twoDMode = useTwoDViewStore((s) => s.mode);
+  const splitOn = useSplitViewStore((s) => s.split[twoDMode]);
+  const twoDShare = useSplitViewStore((s) => s.twoDShare);
+  const splitCollapsed = useSplitViewStore((s) => s.collapsed);
+  const splitSwapped = useSplitViewStore((s) => s.swapped);
+  const splitActive = space === 'uv' && splitOn;
+  const splitInsets = centerBandInsets({
+    isNarrow,
+    leftCollapsed: leftSidebarCollapsed,
+    inspectorCollapsed,
+    band: 'top',
+  });
+  const splitBoxes = splitPaneBoxes({
+    insets: splitInsets,
+    twoDShare,
+    collapsed: splitCollapsed,
+    swapped: splitSwapped,
+  });
+  const show3D = space === 'view3d' || (splitActive && !splitCollapsed);
+  const view3dStyle: CSSProperties =
+    splitActive && splitBoxes.view3d
+      ? { ...centerSurfaceTopBottom, display: 'block', ...splitBoxes.view3d }
+      : { display: show3D ? 'block' : 'none', position: 'absolute', inset: 0 };
+
+  // The 3D side is the editor's free camera, never a shot camera: a look-through still on when the
+  // split shows comes back out to the free view.
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
+  useEffect(() => {
+    if (splitActive && lookThrough) useViewportStore.getState().setLookThroughCamera(false);
+  }, [splitActive, lookThrough]);
+
   const twoDViewStyle: CSSProperties = {
     // 'block' (not 'flex') — TwoDView is h-full/w-full and owns its own flex
     // column; the wrapper just bounds it. Keeps the p26 display:block contract.
     display: space === 'uv' ? 'block' : 'none',
-    position: 'absolute',
-    top: CENTER_SURFACE_TOP,
-    bottom: drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
-    ...twoDViewBox,
-    zIndex: 15,
+    ...centerSurfaceTopBottom,
+    ...(splitActive ? splitBoxes.twoD : twoDViewBox),
   };
   // #1556 — the Spreadsheet takes the same bounded center surface, so the outliner stays beside
-  // it to pick what it shows.
+  // it to pick what it shows (always the lone, centred box — the split is the 2D View's).
   const sheetViewStyle: CSSProperties = {
-    ...twoDViewStyle,
+    ...centerSurfaceTopBottom,
+    ...twoDViewBox,
     display: space === 'sheet' ? 'block' : 'none',
   };
   return (
@@ -294,14 +340,17 @@ export function Layout() {
             mounts ONCE; never on space switch — same discipline as mode
             switch). Returning to view3d is instant; GPU state preserved. */}
         <div
-          style={{
-            display: space === 'view3d' ? 'block' : 'none',
-            position: 'absolute',
-            inset: 0,
-          }}
+          style={view3dStyle}
           data-testid="view3d-slot"
+          data-split={splitActive ? 'true' : undefined}
           {...viewportFocus}
+          className={
+            splitActive
+              ? 'overflow-hidden rounded-2xl border border-border shadow-xl shadow-black/40'
+              : undefined
+          }
         >
+          {splitActive ? <Split3DHeader /> : null}
           {/* #1706 — a pending proposal is accepted from the chat column (ProposalCard), which every
               space shows; the 3D slot only marks it, with an amber edge. */}
           <ProposalViewportEdge />
@@ -322,6 +371,15 @@ export function Layout() {
         >
           <TwoDView />
         </div>
+        {splitActive && splitBoxes.divider ? (
+          <SplitDivider
+            insets={splitInsets}
+            style={{ ...centerSurfaceTopBottom, ...splitBoxes.divider }}
+          />
+        ) : null}
+        {splitActive && splitBoxes.strip ? (
+          <SplitCollapsedStrip style={{ ...centerSurfaceTopBottom, ...splitBoxes.strip }} />
+        ) : null}
         <div
           style={sheetViewStyle}
           data-testid="sheet-slot"
