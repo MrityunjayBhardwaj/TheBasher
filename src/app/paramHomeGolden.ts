@@ -172,7 +172,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   ColorCorrect:
     '[effect] brightness=(unrouted) contrast=(unrouted) saturation=(unrouted) muted=(unrouted)',
   ComfyUIWorkflow:
-    '[render] graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
+    '[render] graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) madeFrom=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
   Composition:
     '[layout] name=layout width=(unrouted) height=(unrouted) fps=(unrouted) durationFrames=(unrouted) background=(unrouted)',
   CurveData: '[curve] points=curve closed=curve resolution=curve',
@@ -502,4 +502,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //   types 103 + 1 = 104 · routed 147 · unrouted 271 + 12 = 283
 // #1715 removes ComfyUIWorkflow's `presetId` (routed to render): the node runs its workflow file.
 //   types 104 · routed 147 - 1 = 146 · unrouted 283
-export const GOLDEN_TOTALS = { types: 104, routed: 146, unrouted: 283 } as const;
+// #1718 adds ComfyUIWorkflow's `madeFrom`, unrouted like `lastGoodFrame` (the run road writes it):
+//   types 104 · routed 146 · unrouted 283 + 1 = 284
+export const GOLDEN_TOTALS = { types: 104, routed: 146, unrouted: 284 } as const;

@@ -102,6 +102,14 @@ export const ComfyUIWorkflowParams = z.object({
    */
   lastGoodFrame: z.number().int().default(-1),
   /**
+   * #1718 — the source hash of the node's first output, as it was when the node's pictures last
+   * landed (written by the app's run road, never here). Null until a run lands. A node whose
+   * current hash differs is stale (`workflowMadeState`): the hash takes in the file, its keyed
+   * values' defaults and every wired input's hash, so an edit upstream (a still's prompt) reaches
+   * every workflow it feeds by the wire alone. Defaulted, so an older project loads as never made.
+   */
+  madeFrom: z.string().nullable().default(null),
+  /**
    * Storage path prefix. Mutator-authored at build time per D-04. Schema
    * default is empty so legacy projects don't crash; consumers `?? ''`
    * and refuse-with-error when path is missing at execute time.

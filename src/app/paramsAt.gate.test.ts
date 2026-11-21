@@ -226,6 +226,13 @@ const CONSUMERS: Record<string, Decision> = {
   // fit the character (`motionPathScaleFit`). AUTHORED and fixed-ctx for the same reason: whether
   // a run is stale is a property of the generation, not of where the playhead is.
   'src/nodes/motionGenerateRuns.ts': authored('fixed-ctx-by-design'),
+  // #1718 — whether a ComfyUI workflow's pictures are current: its first output's hash read at its
+  // first frame, AUTHORED, for the same reason as the run strips above. Whether a run is stale is a
+  // property of the run, not of where the playhead is.
+  'src/nodes/comfyWorkflowMade.ts': authored('fixed-ctx-by-design'),
+  // #1718 — Regenerate reads the same made state through it, to order its runs and record what
+  // each landed from. Fixed-ctx for the same reason.
+  'src/app/render/regenerateWorkflow.ts': authored('fixed-ctx-by-design'),
   // #935 — the node road's placement half reads the landed generation's world
   // offset off the producer. AUTHORED and fixed-ctx for the third time in this
   // chain and for the third instance of one reason: where a character stands at
@@ -417,7 +424,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // fixed-ctx).
     // 71 → 72 at #1715, a new road: the frame runner's keyed workflow inputs (declared above as
     // delegates-to-a-folding-resolver).
-    expect(evaluatorConsumers()).toHaveLength(72); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 72 → 74 at #1718, two new roads: a ComfyUI workflow's made state, and Regenerate reading it
+    // (both declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(74); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

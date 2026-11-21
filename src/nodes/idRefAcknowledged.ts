@@ -183,6 +183,8 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'ComfyUIWorkflow.imageBindings{key}': FOREIGN,
   'ComfyUIWorkflow.imageBindings{}': STORAGE,
   'ComfyUIWorkflow.outputPath': STORAGE,
+  // #1718 — the source hash a run landed from, compared with the node's current one.
+  'ComfyUIWorkflow.madeFrom': HASH,
   'ComponentGroupOp.name': LABEL,
   'ComponentGroupOp.scope': GROUP,
   'Composition.name': LABEL,

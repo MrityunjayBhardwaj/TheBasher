@@ -56,6 +56,18 @@ interface Origin {
 }
 
 const ORIGINS: Record<string, Origin> = {
+  // #1718 — Regenerate reads the graph between runs, and each run moves it, so each read starts
+  // its own cache: once to order the runs, once per run to record what it landed from.
+  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → regenerateOrder': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Regenerate click.',
+  },
+  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → workflowSourceHash': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per workflow a Regenerate click runs.',
+  },
   'src/agent/mutators/builders/addModifier.ts · preconditions → canModifyGeometry': {
     count: 1,
     frequency: 'per-action',
@@ -329,6 +341,11 @@ const TAKERS: string[] = [
   'worldUnitsOf@src/app/asset/fitMotionPathScale.ts',
   // #1721 — the NLA pane's generated-run strips; the pane hands it the shared UI cache.
   'generatedRuns@src/nodes/motionGenerateRuns.ts',
+  // #1718 — a ComfyUI workflow's made state and what regenerating it runs; the Generated tab
+  // hands these the shared UI cache, the regenerate road a fresh one per state it reads.
+  'regenerateOrder@src/nodes/comfyWorkflowMade.ts',
+  'workflowMadeState@src/nodes/comfyWorkflowMade.ts',
+  'workflowSourceHash@src/nodes/comfyWorkflowMade.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   // #1556 — the Spreadsheet's read of the selected mesh; the view hands it the shared UI cache.
   'attributeSheetOf@src/app/attributeSheet.ts',
