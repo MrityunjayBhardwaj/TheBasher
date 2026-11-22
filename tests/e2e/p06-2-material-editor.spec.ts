@@ -13,6 +13,7 @@
 // (`__basher_mesh_material`) stays on `n_box`.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -50,9 +51,7 @@ test.describe('v0.6 #2 W3 — NPanel material editor lands on the real material'
 
     // Expand the material section if collapsed (clicking an open one would close it).
     const editor = page.getByTestId('inspector-material-editor-n_box_data');
-    if (!(await editor.isVisible())) {
-      await page.getByTestId('inspector-section-toggle-material').click();
-    }
+    await openInspectorSection(page, 'material');
     await expect(editor).toBeVisible(); // the placeholder (complex) is GONE
 
     // --- scalar: specular.roughness → 0.8 ---
@@ -103,10 +102,8 @@ test.describe('v0.6 #2 W3 — NPanel material editor lands on the real material'
       (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box'),
     );
     await expect(page.getByTestId('inspector')).toBeVisible();
-    const editor = page.getByTestId('inspector-material-editor-n_box_data');
-    if (!(await editor.isVisible())) {
-      await page.getByTestId('inspector-section-toggle-material').click();
-    }
+    await openInspectorSection(page, 'material');
+    await expect(page.getByTestId('inspector-material-editor-n_box_data')).toBeVisible();
     const swatch = page.getByTestId('inspector-color-n_box_data-material.base.color');
     await expect(swatch).toBeVisible();
 

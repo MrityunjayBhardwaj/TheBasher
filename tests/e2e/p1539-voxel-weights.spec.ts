@@ -16,6 +16,7 @@ import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
 import { toolbarControl } from './_toolbar';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -168,7 +169,7 @@ test('#1539 — an open tube bound by voxel distance bends smoothly, and says ev
     const s = await import('/src/app/stores/selectionStore.ts');
     s.useSelectionStore.getState().select(id);
   }, TUBE);
-  await page.getByTestId('inspector-section-toggle-modifier').click();
+  await openInspectorSection(page, 'modifier');
   await page.getByTestId('skin-bind').selectOption(armature);
   const capture = Object.entries(await nodes(page)).find(
     ([, n]) => n.type === 'CaptureModifier',

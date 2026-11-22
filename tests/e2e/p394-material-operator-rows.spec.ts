@@ -188,10 +188,12 @@ test("#518 — the material section shows the operator's rows AND the base's, ea
 
   // …and no widget in the panel addresses a node that is not in the chain. This is the
   // half that reddens if the block re-attaches one id to every row it draws.
-  const nodeIds = await page.evaluate(() => {
+  // #1959 — the data node's material section is drawn inside the stack frame, tagged with the node
+  // whose section it is.
+  const nodeIds = await page.evaluate((data) => {
     const ids = new Set<string>();
     document
-      .querySelector('[data-testid="inspector-linked-data"]')
+      .querySelector(`[data-testid="stack-frame-section-material"][data-node="${data}"]`)
       ?.querySelectorAll('[data-testid]')
       .forEach((el) => {
         const m =
@@ -201,7 +203,7 @@ test("#518 — the material section shows the operator's rows AND the base's, ea
         if (m) ids.add(m[1]!);
       });
     return [...ids];
-  });
+  }, DATA);
   expect(new Set(nodeIds)).toEqual(new Set([DATA, OP]));
 });
 

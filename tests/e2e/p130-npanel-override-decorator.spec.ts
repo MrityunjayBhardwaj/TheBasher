@@ -29,6 +29,7 @@
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
 import { wrapImportInOverride } from './_importOverride';
+import { inspectorSectionBody, openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -144,10 +145,8 @@ test('#130 (D-04) — NPanel decorator: edit marks overridden + ✕ reverts, obs
 
   // Open the Inspector material section so the decorated field is on screen.
   await expect(page.getByTestId('inspector')).toBeVisible();
-  const sectionBody = page.getByTestId('inspector-section-body-material');
-  if (!(await sectionBody.isVisible().catch(() => false))) {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  const sectionBody = inspectorSectionBody(page, 'material');
+  await openInspectorSection(page, 'material');
   await expect(sectionBody).toBeVisible();
 
   // The dot starts hollow (the field inherits source — no authored bit).

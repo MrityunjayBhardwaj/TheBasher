@@ -1,7 +1,8 @@
 // P6 W4 acceptance — NPanel section convention (UI-SPEC §5.8 + §7.2 + §7.3).
 //
 // Coverage:
-//   #1 selecting a split cube renders Mesh/Transform/Material section headers
+//   #1 selecting a split cube renders Mesh/Transform section headers (#1959: Material is drawn
+//      inside the stack frame, under its Materials stack, with no card of its own)
 //   #2 §5.8 default-collapsed rule — primary domain expanded, others collapsed
 //   #3 toggling a section header collapses it and persists across reload
 //   #4 different node types show different sections (selecting a Transform
@@ -74,20 +75,27 @@ test.beforeEach(async ({ page }) => {
 // transform, and the linked BoxData's ['mesh','material'] independently expands mesh. A single
 // fused node cannot distinguish "the rule is applied per node" from "the rule is applied once
 // to whatever is on screen"; two blocks can.
+//
+// #1959 — the stack sections (Constraint, Modifier, Constraint Stack, Material) are drawn inside
+// the stack frame for an object that has one, so they are no longer cards here. The per-node rule
+// still reads on the cards that remain: the Object's transform (primary) and driver (not), and
+// the BoxData's mesh (its primary).
 async function selectSeedBox(page: import('@playwright/test').Page): Promise<void> {
   await page.getByTestId('scene-tree-row-n_box').click();
   await expect(page.getByTestId('inspector-section-transform')).toBeVisible();
 }
 
-test('P6.W4#1 selecting a split cube renders Mesh/Transform/Material section headers (linked-data reach)', async ({
+test('P6.W4#1 selecting a split cube renders Mesh/Transform section headers (linked-data reach)', async ({
   page,
 }) => {
   // The seed box is a split Object: Transform is its own section, Mesh + Material come from the
-  // linked BoxData (the Slice 1c reach). All three headers must be visible.
+  // linked BoxData (the Slice 1c reach). Mesh and Transform are cards; Material is drawn by the
+  // stack frame (#1959), so it has no header and is offered as the frame's Materials stack.
   await page.getByTestId('scene-tree-row-n_box').click();
   await expect(page.getByTestId('inspector-section-mesh')).toBeVisible();
   await expect(page.getByTestId('inspector-section-transform')).toBeVisible();
-  await expect(page.getByTestId('inspector-section-material')).toBeVisible();
+  await expect(page.getByTestId('inspector-section-material')).toHaveCount(0);
+  await expect(page.getByTestId('stack-frame-tab-materials')).toBeVisible();
   // The linked-data region is what surfaces Mesh + Material for the Object.
   await expect(page.getByTestId('inspector-linked-data')).toBeVisible();
 });
@@ -97,14 +105,14 @@ test('P6.W4#2 §5.8 default-collapsed rule — each block’s primary expanded, 
 }) => {
   await selectSeedBox(page);
 
-  // The Object's own list is ['transform','constraint','driver','modifier'] → transform is its
-  // primary domain and expands; the other three collapse.
+  // The Object's own list leads with 'transform' → transform is its primary domain and expands;
+  // driver, the other card left beside the stack frame, collapses.
   await expect(page.getByTestId('inspector-section-transform')).not.toHaveAttribute(
     'data-collapsed',
     'true',
   );
   await expect(page.getByTestId('inspector-section-body-transform')).toBeVisible();
-  for (const id of ['constraint', 'driver', 'modifier']) {
+  for (const id of ['driver']) {
     await expect(page.getByTestId(`inspector-section-${id}`)).toHaveAttribute(
       'data-collapsed',
       'true',
@@ -119,25 +127,27 @@ test('P6.W4#2 §5.8 default-collapsed rule — each block’s primary expanded, 
     'true',
   );
   await expect(page.getByTestId('inspector-section-body-mesh')).toBeVisible();
-  await expect(page.getByTestId('inspector-section-material')).toHaveAttribute(
-    'data-collapsed',
-    'true',
-  );
 });
 
 test('P6.W4#3 toggling a section header persists across reload', async ({ page }) => {
   await selectSeedBox(page);
   // Both toggles move a section AWAY from its default, so a collapse state that silently reset
   // on reload could not be mistaken for the default one. Transform defaults EXPANDED (the
-  // Object's primary) → collapse it; Material defaults COLLAPSED (not BoxData's primary) →
-  // expand it. One toggle per block, so the assertion also covers the linked half.
+  // Object's primary) → collapse it; Driver defaults COLLAPSED → expand it; Mesh defaults
+  // EXPANDED (BoxData's primary) → collapse it. The last covers the linked half. (Material was
+  // the linked toggle until #1959 moved it into the stack frame.)
   await page.getByTestId('inspector-section-toggle-transform').click();
   await expect(page.getByTestId('inspector-section-transform')).toHaveAttribute(
     'data-collapsed',
     'true',
   );
-  await page.getByTestId('inspector-section-toggle-material').click();
-  await expect(page.getByTestId('inspector-section-material')).not.toHaveAttribute(
+  await page.getByTestId('inspector-section-toggle-driver').click();
+  await expect(page.getByTestId('inspector-section-driver')).not.toHaveAttribute(
+    'data-collapsed',
+    'true',
+  );
+  await page.getByTestId('inspector-section-toggle-mesh').click();
+  await expect(page.getByTestId('inspector-section-mesh')).toHaveAttribute(
     'data-collapsed',
     'true',
   );
@@ -160,7 +170,11 @@ test('P6.W4#3 toggling a section header persists across reload', async ({ page }
     'data-collapsed',
     'true',
   );
-  await expect(page.getByTestId('inspector-section-material')).not.toHaveAttribute(
+  await expect(page.getByTestId('inspector-section-driver')).not.toHaveAttribute(
+    'data-collapsed',
+    'true',
+  );
+  await expect(page.getByTestId('inspector-section-mesh')).toHaveAttribute(
     'data-collapsed',
     'true',
   );
@@ -219,7 +233,7 @@ test('P6.W4#4 raw-fallback path: legacy nodes render flat (no sections)', async 
   await expect(page.getByTestId('inspector-section-transform')).toHaveCount(0);
 });
 
-test('P6.W4#5 sections appear in declared order (transform → mesh → material across the split pair)', async ({
+test('P6.W4#5 sections appear in declared order (transform → mesh across the split pair)', async ({
   page,
 }) => {
   await selectSeedBox(page);
@@ -236,9 +250,6 @@ test('P6.W4#5 sections appear in declared order (transform → mesh → material
       .map((el) => el.getAttribute('data-testid'));
     return sections;
   });
-  expect(order).toEqual([
-    'inspector-section-transform',
-    'inspector-section-mesh',
-    'inspector-section-material',
-  ]);
+  // Material is BoxData's second declared section; the stack frame draws it (#1959).
+  expect(order).toEqual(['inspector-section-transform', 'inspector-section-mesh']);
 });

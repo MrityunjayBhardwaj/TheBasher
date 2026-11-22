@@ -17,6 +17,7 @@
 
 import { expect, test } from './_fixtures';
 import { splitCurveOps } from './_splitCurve';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -109,7 +110,7 @@ async function addAndSelectConstraint(
   await page.evaluate(() =>
     (window as unknown as UiWindow).__basher_selection.getState().select('n_box'),
   );
-  await page.getByTestId('inspector-section-toggle-constraint').click();
+  await openInspectorSection(page, 'constraint');
   const stack = page.getByTestId('constraint-stack');
   await expect(stack).toBeVisible();
   await page.getByTestId(`constraint-add-${type}`).click();

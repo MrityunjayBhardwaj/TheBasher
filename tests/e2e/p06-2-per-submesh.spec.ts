@@ -14,6 +14,7 @@ import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { importRoots } from './_importedMesh';
 import { wrapImportInOverride } from './_importOverride';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -144,9 +145,7 @@ test('#1412 — a held slot reads as text and "All" clears it (no radio group)',
   });
 
   const selector = page.getByTestId('inspector-slot-selector-mo62s');
-  if (!(await selector.isVisible().catch(() => false))) {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  await openInspectorSection(page, 'material');
   await expect(selector).toBeVisible();
   await expect(page.getByTestId('inspector-slot-held-mo62s')).toHaveText('Slot 1');
   await expect(selector.getByRole('radiogroup')).toHaveCount(0);

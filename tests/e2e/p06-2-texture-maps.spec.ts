@@ -12,6 +12,7 @@
 // (`__basher_mesh_material`) stays on the Object `n_box`.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -37,9 +38,7 @@ async function selectBoxAndOpenMaterial(page: import('@playwright/test').Page) {
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
   const editor = page.getByTestId('inspector-material-editor-n_box_data');
-  if (!(await editor.isVisible())) {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  await openInspectorSection(page, 'material');
   await expect(editor).toBeVisible();
 }
 

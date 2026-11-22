@@ -11,6 +11,7 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -33,9 +34,7 @@ async function selectBoxAndOpenMaterial(page: Page): Promise<void> {
   });
   await expect(page.getByTestId('inspector')).toBeVisible();
   const editor = page.getByTestId('inspector-material-editor-n_box_data');
-  if (!(await editor.isVisible())) {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  await openInspectorSection(page, 'material');
   await expect(editor).toBeVisible();
 }
 

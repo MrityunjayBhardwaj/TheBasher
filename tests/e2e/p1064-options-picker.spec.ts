@@ -9,6 +9,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 import { openInspector, openLightStudio } from './_rightPanel';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -154,7 +155,7 @@ test('the node-reference picker shows a dangling target as not found, and an inv
 }) => {
   await boot(page);
   await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select('n_box'));
-  await page.getByTestId('inspector-section-toggle-constraint').click();
+  await openInspectorSection(page, 'constraint');
   const stack = page.getByTestId('constraint-stack');
   await expect(stack).toBeVisible();
   await page.getByTestId('constraint-add-TrackTo').click();

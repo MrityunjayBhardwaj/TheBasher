@@ -11,6 +11,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
 import { toolbarControl } from './_toolbar';
+import { openInspectorSection } from './_inspectorSections';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -174,7 +175,7 @@ test('#1353 — a tube bound to a chain made in Edit mode bends smoothly, with n
     const s = await import('/src/app/stores/selectionStore.ts');
     s.useSelectionStore.getState().select(id);
   }, TUBE);
-  await page.getByTestId('inspector-section-toggle-modifier').click();
+  await openInspectorSection(page, 'modifier');
   const bind = page.getByTestId('skin-bind');
   await expect(bind).toBeVisible();
   // Nothing is skinned yet: no skinned mesh is drawn.

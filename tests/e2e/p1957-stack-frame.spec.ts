@@ -3,9 +3,9 @@
 // tab), no presets bar (no stack presets exist), and a picked row's settings below the list.
 //
 // The box gets a Track To and an Array through the panels' own builders. The switch shows one
-// stack's cards at a time; picking the Array row keeps the frame on Modifiers and its settings
-// follow below. The skinned bar's armature puts Anim layers first in the flow, and that step opens
-// the drawer on the Anim Layers tab.
+// stack at a time, drawn inside the frame (#1959); picking the Array row keeps the frame on
+// Modifiers and its settings follow below the selected-row line. The skinned bar's armature puts
+// Anim layers first in the flow, and that step opens the drawer on the Anim Layers tab.
 
 import type { Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
@@ -59,7 +59,8 @@ async function dressBox(
   });
 }
 
-const body = (page: Page, id: string) => page.getByTestId(`inspector-section-body-${id}`);
+// #1959 — a stack's sections are drawn inside the frame, one stack at a time.
+const body = (page: Page, id: string) => page.getByTestId(`stack-frame-section-${id}`);
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -90,7 +91,7 @@ test('the switch counts each stack, shows one at a time, and the flow reads in a
   // No presets bar: there are no stack presets to offer.
   await expect(frame.getByText(/preset/i)).toHaveCount(0);
 
-  // Constraints: their cards open, the modifier card folds.
+  // Constraints: the frame draws them, and no longer the modifiers.
   await page.getByTestId('stack-frame-tab-constraints').click();
   await expect(page.getByTestId('stack-frame-tab-constraints')).toHaveAttribute(
     'aria-selected',
@@ -108,7 +109,8 @@ test('the switch counts each stack, shows one at a time, and the flow reads in a
   await expect(body(page, 'modifier')).toBeVisible();
   await expect(body(page, 'constraint')).toHaveCount(0);
 
-  // Picking the Array row: the frame stays on Modifiers, and the row's settings follow below it.
+  // Picking the Array row: the frame stays on Modifiers, and the row's settings follow below the
+  // selected-row line (inside the frame, under the list, #1959).
   await page.getByTestId(`modifier-row-${modifier}`).getByRole('button').first().click();
   await expect
     .poll(() =>
@@ -119,9 +121,11 @@ test('the switch counts each stack, shows one at a time, and the flow reads in a
   await expect(page.getByTestId('stack-frame-selected')).toContainText('its settings follow below');
   const count = page.getByTestId(`inspector-input-${modifier}-count`);
   await expect(count).toBeVisible();
-  const frameBox = await frame.boundingBox();
+  const lineBox = await page.getByTestId('stack-frame-selected').boundingBox();
+  const rowBox = await page.getByTestId(`modifier-row-${modifier}`).boundingBox();
   const countBox = await count.boundingBox();
-  expect(countBox!.y).toBeGreaterThan(frameBox!.y + frameBox!.height);
+  expect(countBox!.y).toBeGreaterThan(lineBox!.y + lineBox!.height);
+  expect(countBox!.y).toBeGreaterThan(rowBox!.y + rowBox!.height);
 
   // Switching stack from a picked row goes back to the object, on the stack picked.
   await page.getByTestId('stack-frame-tab-constraints').click();
