@@ -38,7 +38,7 @@
 // re-render before next frame).
 
 import { InspectorProposed, ProposedValueMark } from './InspectorProposed';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   attachMapFromFile,
   shownMapSlots,
@@ -4034,6 +4034,7 @@ function LinkedSectionBody({
   rows,
   promoted,
   skipControls,
+  belowLeading,
 }: {
   sectionId: SectionId;
   dataNodeId: string;
@@ -4043,6 +4044,8 @@ function LinkedSectionBody({
   promoted: readonly PromotedParam[];
   /** Controls the frame already drew from the object's own section (#1959). */
   skipControls?: ReadonlySet<ControlKey>;
+  /** Drawn under the section's leading controls, above its rows (#1961; `SectionBody`). */
+  belowLeading?: ReactNode;
 }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dataNode = nodes[dataNodeId] ?? null;
@@ -4076,6 +4079,7 @@ function LinkedSectionBody({
         }))}
         renderers={SECTION_CONTROL_RENDERERS}
         skipControls={skipControls}
+        belowLeading={belowLeading}
         renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
           <ParamRow
             key={rowKey}
@@ -5545,12 +5549,14 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
       grouped.get(section)!.push([key, value]);
     }
   }
-  /** One of this node's section bodies: its controls, its rows, and the controls homed in it. */
-  const mainBody = (sectionId: SectionId) => (
+  /** One of this node's section bodies: its controls, its rows, and the controls homed in it.
+   *  `belowLeading` goes under its leading controls (a stack's list), above its rows (#1961). */
+  const mainBody = (sectionId: SectionId, belowLeading?: ReactNode) => (
     <>
       <SectionBody
         sectionId={sectionId}
         ctx={sectionCtx}
+        belowLeading={belowLeading}
         rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({ key, value }))}
         renderers={SECTION_CONTROL_RENDERERS}
         renderRow={({ key, value }) => (
@@ -5598,19 +5604,23 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
   const drawable = [
     ...new Set([...mainFramed, ...linkedFramed].map((id) => frameStackOf(frameView, id)!)),
   ];
-  const renderStack = (kind: StackKind) => (
-    <>
-      {FRAME_SECTIONS[kind]
-        .filter((id) => mainFramed.includes(id))
-        .map((id) => (
+  // `belowList` (#1961) is the frame's "Pick a row" line. It goes into the FIRST section the frame
+  // draws, under that section's list and above the rows that follow it, which are the picked row's
+  // settings when a row is picked: the line points at the settings, not at the list.
+  const renderStack = (kind: StackKind, belowList: ReactNode) => {
+    const mainIds = FRAME_SECTIONS[kind].filter((id) => mainFramed.includes(id));
+    const linkedIds = linkedDataId
+      ? FRAME_SECTIONS[kind].filter((id) => linkedFramed.includes(id))
+      : [];
+    return (
+      <>
+        {mainIds.map((id, i) => (
           <div key={`main-${id}`} data-testid={`stack-frame-section-${id}`} data-node={node.id}>
-            {mainBody(id)}
+            {mainBody(id, i === 0 ? belowList : undefined)}
           </div>
         ))}
-      {linkedDataId
-        ? FRAME_SECTIONS[kind]
-            .filter((id) => linkedFramed.includes(id))
-            .map((id) => (
+        {linkedDataId
+          ? linkedIds.map((id, i) => (
               <div
                 key={`linked-${id}`}
                 data-testid={`stack-frame-section-${id}`}
@@ -5628,11 +5638,20 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
                   skipControls={
                     mainFramed.includes(id) ? activeControlKeys(id, sectionCtx) : undefined
                   }
+                  belowLeading={mainIds.length === 0 && i === 0 ? belowList : undefined}
                 />
               </div>
             ))
-        : null}
-    </>
+          : null}
+      </>
+    );
+  };
+
+  // The cards this node draws for itself: every declared section the frame does not take in.
+  const cards = declared.filter((sectionId) => !framed(sectionId));
+  const frameUnderTransform = cards.includes('transform');
+  const stackFrame = (
+    <StackFrame nodeId={node.id} view={frameView} drawable={drawable} renderStack={renderStack} />
   );
 
   return (
@@ -5666,8 +5685,10 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
       {/* #1706 — what a pending proposal would change on this node, old → new. */}
       <InspectorProposed nodeId={node.id} />
       <SelectedBoneSection />
-      {/* #1957 — the frame around the stacks: which stack shows, and the order they apply in. */}
-      <StackFrame nodeId={node.id} view={frameView} drawable={drawable} renderStack={renderStack} />
+      {/* #1957 — the frame around the stacks. Where this node draws a Transform card, the frame
+          stands directly under it (#1961), so Transform stays near the top however long the
+          picked stack runs; a node without one (a selected row, a data node) keeps it here. */}
+      {frameUnderTransform ? null : stackFrame}
       {refParamMeta && (
         // The general node-ref picker block — one NodeRefField per declared ref param,
         // shown regardless of section mode (and even when the ref is unset).
@@ -5703,18 +5724,14 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
         </div>
       ) : (
         <>
-          {declared
-            .filter((sectionId) => !framed(sectionId))
-            .map((sectionId) => (
-              <SectionCard
-                key={sectionId}
-                nodeType={node.type}
-                sectionId={sectionId}
-                declaredSections={declared}
-              >
+          {cards.map((sectionId) => (
+            <Fragment key={sectionId}>
+              <SectionCard nodeType={node.type} sectionId={sectionId} declaredSections={declared}>
                 {mainBody(sectionId)}
               </SectionCard>
-            ))}
+              {sectionId === 'transform' && frameUnderTransform ? stackFrame : null}
+            </Fragment>
+          ))}
           {unrouted.length > 0 ? (
             <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
               {unrouted.map(([key, value]) => (

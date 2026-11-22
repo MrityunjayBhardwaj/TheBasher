@@ -297,6 +297,7 @@ function emitted(
   ctx: SectionCtx,
   rows: readonly (readonly [string, unknown])[] = [],
   skipControls?: ReadonlySet<ControlKey>,
+  belowLeading?: string,
 ): string[] {
   const out: string[] = [];
   const walk = (n: unknown): void => {
@@ -322,6 +323,7 @@ function emitted(
       renderers: STUB_RENDERERS,
       renderRow: ({ key }) => `row:${key}`,
       skipControls,
+      belowLeading,
     }),
   );
   return out;
@@ -357,6 +359,40 @@ describe('#1959 skipControls — a control drawn already is not drawn again; its
     ];
     expect(emitted('curve', ctx('CurveData'), rows, new Set<ControlKey>(['curvePoints']))).toEqual([
       'row:closed',
+    ]);
+  });
+});
+
+// #1961 — the stack frame's "Pick a row" line goes under a stack's list, above the picked row's
+// settings: after the leading controls, ahead of the rows.
+describe('#1961 belowLeading — drawn under the leading controls, above the rows', () => {
+  const ctx = (type: string) =>
+    makeSectionCtx({ id: 'n', type, version: 1, params: {}, inputs: {} }, 'n', false);
+
+  it('sits between a stack list and the picked row’s settings', () => {
+    expect(emitted('modifier', ctx('ArrayModifier'), [['count', 2]], undefined, 'LINE')).toEqual([
+      'modifierStack(n,n)',
+      'LINE',
+      'row:count',
+    ]);
+  });
+
+  it('comes after every leading control, and before the trailing ones', () => {
+    const group = makeSectionCtx(
+      { id: 'g', type: 'Group', version: 1, params: {}, inputs: {} },
+      'g',
+      true,
+    );
+    const out = emitted('transform', group, [['position', [0, 0, 0]]], undefined, 'LINE');
+    expect(out[0]).toBe('LINE');
+    expect(out.indexOf('LINE')).toBeLessThan(out.indexOf('row:position'));
+    expect(out.indexOf('LINE')).toBeLessThan(out.indexOf('clock(g,g)'));
+  });
+
+  it('draws nothing extra when left out', () => {
+    expect(emitted('modifier', ctx('ArrayModifier'), [['count', 2]])).toEqual([
+      'modifierStack(n,n)',
+      'row:count',
     ]);
   });
 });

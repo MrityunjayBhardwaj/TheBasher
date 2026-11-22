@@ -64,8 +64,9 @@ export function StackFrame({
   view: StackFrameView | null;
   /** The stacks the inspector can draw for this selection: the ones whose sections it declares. */
   drawable: readonly StackKind[];
-  /** The picked stack's section bodies, as the inspector's cards drew them. */
-  renderStack: (kind: StackKind) => ReactNode;
+  /** The picked stack's section bodies, as the inspector's cards drew them, with `belowList`
+   *  (the "Pick a row" line) under the first section's list, above the picked row's settings. */
+  renderStack: (kind: StackKind, belowList: ReactNode) => ReactNode;
 }) {
   const state = useDagStore((s) => s.state);
   const stored = useStackFrameStore((s) => s.stack);
@@ -93,6 +94,16 @@ export function StackFrame({
 
   const flow = flowOf(view);
   const memberName = view.member !== null ? nodeDisplayName(state.nodes, nodeId) : null;
+  // #1961 — the line points at the picked row's settings, so it sits under the list, right above
+  // them, rather than between the flow strip and the list. A stack the object cannot take has no
+  // rows to pick: its note says why instead.
+  const selectedLine = view.stacks.some((s) => s.kind === shown && !s.available) ? null : (
+    <p data-testid="stack-frame-selected" className="px-3 pt-1.5 text-[11px] text-fg-dim">
+      {memberName !== null
+        ? `${memberName} · ${STACK_LABELS[shown]}: its settings follow below.`
+        : 'Pick a row: its settings open below.'}
+    </p>
+  );
 
   return (
     <section
@@ -183,16 +194,8 @@ export function StackFrame({
           </ol>
         </nav>
       ) : null}
-      {/* A stack the object cannot take has no rows to pick: its note says why instead. */}
-      {view.stacks.some((s) => s.kind === shown && !s.available) ? null : (
-        <p data-testid="stack-frame-selected" className="text-[11px] text-fg-dim">
-          {memberName !== null
-            ? `${memberName} · ${STACK_LABELS[shown]}: its settings follow below.`
-            : 'Pick a row: its settings open below.'}
-        </p>
-      )}
       <div data-testid="stack-frame-body" data-stack={shown} className="-mx-3 flex flex-col">
-        {renderStack(shown)}
+        {renderStack(shown, selectedLine)}
       </div>
     </section>
   );

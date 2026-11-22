@@ -511,6 +511,7 @@ export function SectionBody<R extends SectionBodyRow>({
   renderers,
   renderRow,
   skipControls,
+  belowLeading,
 }: {
   sectionId: SectionId;
   ctx: SectionCtx;
@@ -519,6 +520,12 @@ export function SectionBody<R extends SectionBodyRow>({
   renderRow: (row: R) => ReactNode;
   /** Controls drawn elsewhere already (#1959). Not drawn here; the rows they own stay omitted. */
   skipControls?: ReadonlySet<ControlKey>;
+  /**
+   * Drawn after the leading ('before') controls and ahead of the rows (#1961). A stack section
+   * leads with its list, so this is the spot under the list and above the picked row's settings,
+   * which is where the stack frame says "its settings follow below".
+   */
+  belowLeading?: ReactNode;
 }) {
   const active = activeControls(sectionId, ctx).filter((c) => !skipControls?.has(c.key));
   const { suppressAllRows, omitted } = sectionRowFilter(sectionId, ctx);
@@ -539,6 +546,7 @@ export function SectionBody<R extends SectionBodyRow>({
   return (
     <>
       {at('before')}
+      {belowLeading}
       {shownRows.map((r) => {
         const control = anchorOf.get(r.key);
         if (control) return draw(control);
