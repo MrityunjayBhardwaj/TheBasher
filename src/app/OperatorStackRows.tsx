@@ -132,14 +132,16 @@ export function OperatorStackRows({
           );
         })
       )}
-      <div className="flex items-center gap-1 pt-0.5">
+      {/* #1962 — the + Add buttons wrap onto more lines rather than running off the panel's
+          edge, and each keeps its label on one line. */}
+      <div className="flex flex-wrap items-center gap-1 pt-0.5">
         {addable.map((a) => (
           <button
             key={a.type}
             type="button"
             data-testid={`${testIdPrefix}-add-${a.type}`}
             onClick={() => onAdd(a.type)}
-            className="rounded border border-border bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            className="whitespace-nowrap rounded border border-border bg-bg-2 px-2 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             + {a.label}
           </button>

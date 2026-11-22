@@ -4456,18 +4456,44 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
   );
 }
 
+/**
+ * #1962 — the stack lists (their rows, + Add buttons and data-block line) inset to the panel's
+ * padding. Param rows carry their own `px-3`, and the stack frame and the section cards hold both
+ * kinds edge to edge, so the inset goes on the stack controls themselves (here, one wrapper for
+ * all of them) rather than on the frame, which would inset every param row twice. It applies the
+ * same in a card (a Null's constraints) as in the frame.
+ */
+function StackInset({ children }: { children: ReactNode }) {
+  return <div className="px-3">{children}</div>;
+}
+
 const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
   sceneEnvironment: (ctx) => <SceneEnvironmentControls nodeId={ctx.paramsNodeId} />,
   cameraLens: (ctx) => (
     <CameraLensControls nodeId={ctx.paramsNodeId} poseNodeId={ctx.objectNodeId} />
   ),
-  modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
-  materialStack: (ctx) => <MaterialStackControls nodeId={ctx.paramsNodeId} />,
-  materialLink: (ctx) => <MaterialLinkControls nodeId={ctx.paramsNodeId} />,
+  modifierStack: (ctx) => (
+    <StackInset>
+      <ModifierStackControls nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
+  materialStack: (ctx) => (
+    <StackInset>
+      <MaterialStackControls nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
+  materialLink: (ctx) => (
+    <StackInset>
+      <MaterialLinkControls nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
   constraintStack: (ctx) => (
     <>
-      <ConstraintStackControls nodeId={ctx.paramsNodeId} />
+      <StackInset>
+        <ConstraintStackControls nodeId={ctx.paramsNodeId} />
+      </StackInset>
+      {/* Carries its own px-3, like a param row. */}
       <InfluenceRow nodeId={ctx.paramsNodeId} />
     </>
   ),
@@ -4479,7 +4505,12 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
   rotationMode: (ctx) => <RotationModeControl nodeId={ctx.paramsNodeId} />,
   clock: (ctx) => <ClockControl nodeId={ctx.paramsNodeId} />,
-  constraintChain: (ctx) => <ConstraintStackCard nodeId={ctx.paramsNodeId} />,
+  // The shared stack panel (the spine's) inset from here, so its file stays untouched.
+  constraintChain: (ctx) => (
+    <StackInset>
+      <ConstraintStackCard nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
   // lets two objects share one mesh and still look different. In the linked-data block

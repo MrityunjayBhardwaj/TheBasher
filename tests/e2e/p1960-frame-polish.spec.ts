@@ -6,6 +6,10 @@
 // #1961 — the frame stands directly under Transform, so Transform stays near the top however long
 // the picked stack runs, and the "Pick a row" line sits under the list, above the picked row's
 // settings.
+//
+// #1962 — stack rows inset to the panel's padding, and every + Add button wraps onto a line of its
+// own rather than running off the panel's right edge, for all three stacks, in the frame and in a
+// card (a Null's constraints).
 
 import type { Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
@@ -198,11 +202,11 @@ test("#1961 the pick-a-row line sits under the list, above the picked row's sett
   const count = await box(page, `inspector-input-${ids.array}-count`);
   expect(at.y).toBeGreaterThanOrEqual(list2.y + list2.height);
   expect(count.y).toBeGreaterThanOrEqual(at.y + at.height);
-  // The line is the list section's next sibling: nothing else stands between them.
-  const after = await page
-    .getByTestId('modifier-stack')
-    .evaluate((el) => el.nextElementSibling?.getAttribute('data-testid'));
-  expect(after).toBe('stack-frame-selected');
+  // Nothing stands between the list and the line: the element before the line holds the list.
+  const before = await page
+    .getByTestId('stack-frame-selected')
+    .evaluate((el) => !!el.previousElementSibling?.querySelector('[data-testid="modifier-stack"]'));
+  expect(before).toBe(true);
 
   // Constraints and Materials: the line also comes after their lists.
   await select(page, 'n_box');
@@ -216,4 +220,76 @@ test("#1961 the pick-a-row line sits under the list, above the picked row's sett
     const a = await box(page, 'stack-frame-selected');
     expect(a.y, kind).toBeGreaterThanOrEqual(l.y + l.height);
   }
+});
+
+/** Every + Add button of `prefix` lies inside the inspector, and the rows are inset from its left. */
+async function expectInsideAndInset(page: Page, prefix: string, rowTestId: string | null) {
+  const panel = (await page.getByTestId('inspector').boundingBox())!;
+  const buttons = page.locator(`[data-testid^="${prefix}-add-"]`);
+  const n = await buttons.count();
+  // A zero here would make the edge check vacuous: every stack this spec dresses offers buttons.
+  expect(n, `${prefix}: + Add buttons`).toBeGreaterThan(1);
+  for (let i = 0; i < n; i++) {
+    const b = (await buttons.nth(i).boundingBox())!;
+    const label = await buttons.nth(i).textContent();
+    expect(b.x + b.width, `${label} right edge`).toBeLessThanOrEqual(panel.x + panel.width);
+    expect(b.x, `${label} left edge`).toBeGreaterThan(panel.x + 4);
+  }
+  // Wrapped, not squeezed: each button keeps its label on one line.
+  const heights = new Set<number>();
+  for (let i = 0; i < n; i++) heights.add(Math.round((await buttons.nth(i).boundingBox())!.height));
+  expect(heights.size, `${prefix}: one button height`).toBe(1);
+  if (rowTestId) {
+    const row = (await page.getByTestId(rowTestId).boundingBox())!;
+    expect(row.x, `${rowTestId} inset`).toBeGreaterThan(panel.x + 4);
+    expect(row.x + row.width, `${rowTestId} inset right`).toBeLessThan(panel.x + panel.width - 4);
+  }
+}
+
+test('#1962 rows are inset and every + Add button is reachable, for all three stacks', async ({
+  page,
+}) => {
+  const ids = await dressBox(page);
+  await select(page, 'n_box');
+  const rows = {
+    modifiers: ['modifier', `modifier-row-${ids.array}`],
+    constraints: ['constraint', null],
+    materials: ['material-op', null],
+  } as const;
+  for (const kind of ['modifiers', 'constraints', 'materials'] as const) {
+    await page.getByTestId(`stack-frame-tab-${kind}`).click();
+    await expect(page.getByTestId('stack-frame-body')).toHaveAttribute('data-stack', kind);
+    await page.getByTestId('stack-frame').scrollIntoViewIfNeeded();
+    const [prefix, row] = rows[kind];
+    const firstRow =
+      row ??
+      (await page.locator(`[data-testid^="${prefix}-row-"]`).first().getAttribute('data-testid'));
+    await expectInsideAndInset(page, prefix, firstRow);
+  }
+});
+
+test("#1962 outside the frame (a Null's Constraint card) the same rows are inset and reachable", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const dag = (window as unknown as W).__basher_dag.getState();
+    const scene = dag.state.outputs.scene!.node;
+    dag.dispatch({ type: 'addNode', nodeId: 'n_null1962', nodeType: 'Null', params: {} });
+    dag.dispatch({
+      type: 'connect',
+      from: { node: 'n_null1962', socket: 'out' },
+      to: { node: scene, socket: 'children' },
+    });
+  });
+  await select(page, 'n_null1962');
+  await expect(page.getByTestId('inspector-node-name')).toHaveText('n_null1962');
+  const toggle = page.getByTestId('inspector-section-toggle-constraint');
+  if (!(await page.getByTestId('inspector-section-body-constraint').isVisible())) {
+    await toggle.click();
+  }
+  await expect(page.getByTestId('constraint-stack')).toBeVisible();
+  await page.getByTestId('constraint-add-TrackTo').click();
+  const row = page.locator('[data-testid^="constraint-row-"]').first();
+  await expect(row).toBeVisible();
+  await expectInsideAndInset(page, 'constraint', await row.getAttribute('data-testid'));
 });
