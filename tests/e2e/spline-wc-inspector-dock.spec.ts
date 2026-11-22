@@ -12,6 +12,7 @@
 // REF: docs/UI-SPEC.md §5.5, §5.8; THESIS §15, §196.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -65,7 +66,7 @@ test('WC#2 inspector is a tall floating island near the viewport right edge', as
 });
 
 test('WC#3 present mode hides the agent dock', async ({ page }) => {
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('agent-dock')).toBeHidden();
   await page.keyboard.press('Escape');

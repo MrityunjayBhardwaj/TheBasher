@@ -48,6 +48,7 @@
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importedMeshes, type DrawnImportMesh } from './_importedMesh';
+import { toolbarControl } from './_toolbar';
 
 type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
@@ -331,7 +332,7 @@ test('P7.9 (b) — My Imports refresh: entry appears in an already-open popover 
   //    on every bump from importGltfFromOpfs — so the entry must appear
   //    without a manual close/reopen.
   // The toolbar's Assets button opens the drawer's Library tab (#1707).
-  const trigger = page.getByTestId('top-toolbar-assets');
+  const trigger = await toolbarControl(page, 'top-toolbar-assets');
   await trigger.click();
   const popover = page.getByTestId('library-popover');
   await expect(popover).toBeVisible({ timeout: 5_000 });
@@ -366,7 +367,7 @@ test('P7.9 (b) — My Imports refresh: entry appears in an already-open popover 
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_ingestGltfFolder);
   });
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('library-popover')).toBeVisible({ timeout: 5_000 });
   await expect(
     page.getByTestId('library-popover-my-import-user-imports/freshness-asset/scene.gltf'),

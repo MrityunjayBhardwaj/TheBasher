@@ -16,6 +16,7 @@
 // REF: .planning/phases/v06.4-director-ux/PLAN.md (W2); CONTEXT D-05/D-06.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -26,17 +27,18 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('W2#1 run → Play ▶ toggles the playback transport (no mode)', async ({ page }) => {
-  const play = page.getByTestId('floating-toolbar-play');
-  await expect(play).toBeVisible();
+  // #1935 — Play lives behind ⋯, and the menu closes after an action, so re-find it each time.
+  const play = () => toolbarControl(page, 'floating-toolbar-play');
+  await expect(await play()).toBeVisible();
   // Idle: not playing (the button reads useTimeStore.playing via data-active).
-  await expect(play).not.toHaveAttribute('data-active', 'true');
+  await expect(await play()).not.toHaveAttribute('data-active', 'true');
   // Click → transport starts (playing). The button's pressed state reads the
   // real store, so this proves the handler is wired to useTimeStore.toggle().
-  await play.click();
-  await expect(play).toHaveAttribute('data-active', 'true');
+  await (await play()).click();
+  await expect(await play()).toHaveAttribute('data-active', 'true');
   // Click again → pause.
-  await play.click();
-  await expect(play).not.toHaveAttribute('data-active', 'true');
+  await (await play()).click();
+  await expect(await play()).not.toHaveAttribute('data-active', 'true');
 });
 
 test('W2#2 animate → the timeline reveal opens the drawer (no mode)', async ({ page }) => {
@@ -44,7 +46,7 @@ test('W2#2 animate → the timeline reveal opens the drawer (no mode)', async ({
   // The drawer BODY is closed by default (the Timebar row stays visible).
   await expect(drawer).toHaveAttribute('data-open', 'false');
   // The floating pill carries a toolbar-level reveal for the drawer body.
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await expect(drawer).toHaveAttribute('data-open', 'true');
 });
 
@@ -57,7 +59,7 @@ test('W2#3 director → Present toggles chrome collapse; Esc exits (no mode)', a
 
   // Present: every chrome band collapses; the over-canvas pill self-gates out.
   // The Present toggle lives on the pill (testid preserved through W1).
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('project-tabs')).toBeHidden();
   await expect(page.getByTestId('inspector')).toBeHidden();

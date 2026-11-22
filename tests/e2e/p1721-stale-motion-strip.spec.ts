@@ -17,6 +17,7 @@ import {
   STUB_UNIT_SCALE,
   synthesiseBvh,
 } from '../../src/core/motiongen/StubMotionGenerationCapability';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -100,7 +101,7 @@ async function generateAlong(page: Page, curveId: string, prompt: string) {
   const before = new Set(Object.keys(await nodesOf(page)));
   await select(page, curveId);
   if (!(await page.getByTestId('generate-kind-motion').isVisible())) {
-    await page.getByTestId('top-toolbar-assets').click();
+    await (await toolbarControl(page, 'top-toolbar-assets')).click();
   }
   await page.getByTestId('generate-kind-motion').click();
   await page.getByTestId('generate-prompt').fill(prompt);
@@ -194,7 +195,7 @@ test('dragging a waypoint marks exactly that strip stale, and Re-cook clears it 
 
   // The Assets panel lives in the same drawer, so it is open already; only the tab changes.
   if (!(await page.getByTestId('timeline-tab-nla').isVisible())) {
-    await page.getByTestId('floating-toolbar-timeline').click();
+    await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   }
   await page.getByTestId('timeline-tab-nla').click();
   await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');

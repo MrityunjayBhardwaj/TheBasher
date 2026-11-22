@@ -7,6 +7,7 @@
 // gizmoStore.test.ts.)
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface W {
   __basher_dag: { getState: () => unknown };
@@ -24,7 +25,8 @@ test('the orientation chip toggles Global↔Local and the gizmo stays mounted', 
   await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select('n_box'));
   await page.waitForTimeout(400);
 
-  const chip = page.getByTestId('floating-toolbar-orientation');
+  // #1935 — orientation lives behind ⋯; the menu stays open while a setting is edited.
+  const chip = await toolbarControl(page, 'floating-toolbar-orientation');
   await expect(chip).toHaveText('global');
 
   await chip.click();

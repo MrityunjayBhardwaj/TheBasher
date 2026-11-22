@@ -7,6 +7,7 @@
 // at 0 / 0.5 / 1 s. Dragging the 0.5 s key to 0.75 s makes Bone1 at 0.5 s a third of the way to 45°
 // (30°), so the bar bends less there; at 0 s and 1 s the keys did not move.
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface Node {
   type: string;
@@ -177,7 +178,7 @@ test('#1215 — dragging a baked key in the dopesheet moves the skin at that tim
   const before = { 0: await drawnAt(0), 0.5: await drawnAt(0.5), 1: await drawnAt(1) };
 
   // The dopesheet: the Bone1 quaternion row of the baked layer, found by the canvas's own builders.
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   const canvas = page.getByTestId('timeline-canvas').locator('canvas');
   await expect(canvas).toBeVisible();
   const rowIndex = await page.evaluate(

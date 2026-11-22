@@ -23,6 +23,7 @@
 // island is the playback bar alone. Updated on purpose to the decided layout.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -179,7 +180,7 @@ test('#2.9 opening the timeline drawer hides the orbit hint', async ({ page }) =
 });
 
 test('#2.7 present mode hides every floating island', async ({ page }) => {
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   // Islands stay MOUNTED (mount-once discipline) but display:none → hidden +
   // removed from the tab order (D-W8-8). Revert present-hide → these are visible.

@@ -11,6 +11,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 import { splitSphereOps } from './_splitSphere';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -21,7 +22,7 @@ test.use({ sidePanels: 'open' });
  * open; tests that need to interact with one click the Assets button first.
  */
 async function openAssetsPopover(page: Page): Promise<void> {
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('library-popover')).toBeVisible();
 }
 

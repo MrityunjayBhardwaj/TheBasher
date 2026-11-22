@@ -10,6 +10,7 @@
 import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
 import { seedCubeObjectId } from './_seedNodes';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -183,7 +184,7 @@ test('P6.W3#6 AddMenu reachable from RMB and toolbar + button (D-04 regression)'
   await expect(page.getByTestId('add-menu')).toHaveCount(0);
 
   // Path 2 — toolbar + button.
-  await page.getByTestId('top-toolbar-add').click();
+  await (await toolbarControl(page, 'top-toolbar-add')).click();
   await expect(page.getByTestId('add-menu')).toBeVisible();
   // Sanity: contains at least one mesh group.
   await expect(page.getByTestId('add-menu-mesh')).toBeVisible();

@@ -51,6 +51,7 @@ import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -191,7 +192,7 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   });
   expect(armatureId, 'no Armature modifier — the character is not native').not.toBeNull();
   await page.getByTestId(`scene-tree-row-${armatureId}`).click();
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   await page.waitForTimeout(300);
 
   let picked: string | null = null;

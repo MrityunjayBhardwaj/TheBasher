@@ -7,6 +7,7 @@
 // what is under test is the cook's report, not the gesture that makes a layer.
 
 import { test, expect, type Page } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -61,7 +62,7 @@ test('a re-cook names the layer whose result it moved', async ({ page }) => {
     errors.push(`${m.text()} @ ${m.location().url}`);
   });
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('generate-kind-motion').click();
   await page.getByTestId('generate-prompt').fill('a figure walks forward');
   await page.getByTestId('generate-submit').click();

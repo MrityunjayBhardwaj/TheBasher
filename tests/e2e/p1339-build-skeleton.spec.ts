@@ -10,6 +10,7 @@
 import type { Page } from '@playwright/test';
 import * as THREE from 'three';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -139,7 +140,7 @@ test('#1339 — a skeleton built by hand in Edit mode, and every step undone exa
   await page.keyboard.press('Shift+A');
   await page.getByText('Empty', { exact: true }).hover();
   await page.getByText('Armature', { exact: true }).click();
-  await expect(page.getByTestId('armature-mode')).toBeVisible();
+  await expect(await toolbarControl(page, 'armature-mode')).toBeVisible();
   // Framed on where the chain will grow, from the side so every link is long on screen.
   await page.evaluate(() => {
     const t = (window as unknown as W).__basher_three.getState();
@@ -150,7 +151,7 @@ test('#1339 — a skeleton built by hand in Edit mode, and every step undone exa
   graphs.push(await graph(page));
 
   // Edit mode, and the tip picked.
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   await clickBone(page, 'Bone');
   await expect(page.getByTestId('edit-bone')).toBeVisible();
 

@@ -5,6 +5,7 @@
 // a narrow panel could not: a source list, a kind filter, a search and a details panel.
 import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -64,14 +65,17 @@ test('a remembered Assets tab falls back to the outliner', async ({ page }) => {
 });
 
 test('the toolbar Assets button opens the drawer on Library', async ({ page }) => {
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('timeline-tab-library')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('library-pane').getByTestId('library-popover')).toBeVisible();
   // A second press keeps it open on Library — the button reveals the library, it does not toggle.
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
-  await expect(page.getByTestId('top-toolbar-assets')).toHaveAttribute('data-active', 'true');
+  await expect(await toolbarControl(page, 'top-toolbar-assets')).toHaveAttribute(
+    'data-active',
+    'true',
+  );
 });
 
 test('Import… in the Library tab opens the file picker', async ({ page }) => {

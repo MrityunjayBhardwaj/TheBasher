@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface DagNode {
   type: string;
@@ -136,7 +137,7 @@ test('a motion generated through the panel onto a character hides its own rig, a
   );
 
   // The director's gesture: a prompt, through the panel.
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('generate-kind-motion').click();
   await page.getByTestId('generate-prompt').fill('a figure walks forward');
   await page.getByTestId('generate-submit').click();

@@ -34,6 +34,7 @@ import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -194,7 +195,7 @@ test('clicking a bone selects it, highlights it, and names it in the inspector',
     'object mode picked a bone',
   ).toBeNull();
   // Bones pick in Pose mode, entered from the toolbar's mode menu.
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
 
   let picked: { name: string | null; chain: string[] } = { name: null, chain: [] };
   for (const t of targets.slice(0, 8)) {

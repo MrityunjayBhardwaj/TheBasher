@@ -17,6 +17,7 @@
 // `hero walk`, the Object's row still read the file's name, and its rename box opened on it.
 
 import { test, expect, type Page } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -86,7 +87,7 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
     errors.push(`${m.text()} @ ${m.location().url}`);
   });
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('generate-kind-motion').click();
   await page.getByTestId('generate-prompt').fill('a figure walks forward');
   await page.getByTestId('generate-submit').click();

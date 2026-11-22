@@ -12,6 +12,7 @@
 // the off-canvas + full-width + tab-presence assertions → these fail.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -47,7 +48,9 @@ test.describe('narrow layout (<1024px)', () => {
 
   test('N#2 the toolbar + bottom stack go full-width', async ({ page }) => {
     const layout = await page.getByTestId('layout').boundingBox();
-    const toolbar = await page.getByTestId('floating-viewport-toolbar').boundingBox();
+    // #1935 — the pill hugs its content now (what does not fit goes behind ⋯), so the full-width
+    // claim is about the band it is fitted to, the space the toolbar may use.
+    const toolbar = await page.getByTestId('floating-toolbar-band').boundingBox();
     // #1704 — the bottom-centre island is the playback bar alone now.
     const stack = await page.getByTestId('timeline-slot').boundingBox();
     if (!layout || !toolbar || !stack) throw new Error('missing boxes');
@@ -96,7 +99,7 @@ test.describe('narrow layout (<1024px)', () => {
   });
 
   test('N#6 present mode hides the drawers, tabs, and scrim', async ({ page }) => {
-    await page.getByTestId('top-toolbar-present').click();
+    await (await toolbarControl(page, 'top-toolbar-present')).click();
     await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
     await expect(page.getByTestId('tree-slot')).toBeHidden();
     await expect(page.getByTestId('left-drawer-tab')).toHaveCount(0);

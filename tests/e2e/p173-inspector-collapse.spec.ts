@@ -16,6 +16,7 @@
 // REF: docs/UI-SPEC.md §3.2, §5.8, D-UX-5, D-UX-23; issue #173.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // UX-BACKLOG #2 — the inspector is no longer a grid column; it floats as an
 // absolute island (`inspector-slot`). The collapse falsifier now reads the
@@ -106,7 +107,7 @@ test('#173 Present mode hides the inspector entirely regardless of the flag', as
   // Expanded (opened from its first-start rail, #1952). Enter Present (the v0.6 #4 re-home for the dissolved
   // `director` mode) via the floating-pill button — all chrome, the inspector
   // column included, collapses to 0 independent of the collapse flag.
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   const px = await inspectorIslandWidth(page);
   expect(px).toBe(0);

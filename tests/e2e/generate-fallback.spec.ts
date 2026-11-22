@@ -21,6 +21,7 @@
 //      (`pickModelGeneration`'s report); src/app/stores/assetErrorStore.ts.
 
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 const SETTINGS_KEY = 'basher.settings.v1';
 
@@ -39,7 +40,7 @@ async function withKey(page: import('@playwright/test').Page, key: string): Prom
 }
 
 async function askForAModel(page: import('@playwright/test').Page): Promise<void> {
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('generate-panel')).toBeVisible();
   await page.getByTestId('generate-kind-model').click();
   await page.getByTestId('generate-prompt').fill('a worn leather armchair');

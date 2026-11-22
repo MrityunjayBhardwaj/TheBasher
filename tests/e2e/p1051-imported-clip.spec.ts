@@ -22,6 +22,7 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { Matrix4, Quaternion, Vector3 } from 'three';
+import { toolbarControl } from './_toolbar';
 
 interface W {
   __basher_time?: { getState: () => { pause: () => void; setTime: (s: number) => void } };
@@ -341,7 +342,7 @@ test('#1051 — Auto-Key on the imported cube keys the channel the import wrote'
   await expect.poll(async () => (await importShape(page)).channels.length).toBe(5);
   const shape = await importShape(page);
   await page.evaluate(() => (window as unknown as W).__basher_time!.getState().pause());
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.evaluate(
     (id) => (window as unknown as W).__basher_selection!.getState().select(id),
     shape.cubeId!,

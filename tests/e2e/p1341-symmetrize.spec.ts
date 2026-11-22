@@ -8,6 +8,7 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -87,7 +88,7 @@ test('#1341 — symmetrize a left arm from the panel; equal rotations pose the t
     return object;
   });
 
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   await page.evaluate(async (object) => {
     const b = await import('/src/app/stores/boneSelectionStore.ts');
     b.useBoneSelectionStore
@@ -121,7 +122,7 @@ test('#1341 — symmetrize a left arm from the panel; equal rotations pose the t
   }
 
   // Pose mode: the same rotation on both forearms; the drawn forearms are mirror images.
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   await page.evaluate(async (object) => {
     const d = await import('/src/app/animate/dispatchMutator.ts');
     for (const bone of ['Forearm_L', 'Forearm_R']) {
@@ -192,7 +193,7 @@ test('#1341 — symmetrizing an arm with an IK gives the twin arm its own IK', a
   });
 
   // Pose mode: Shift+I on the left hand.
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   await page.evaluate(async (object) => {
     const b = await import('/src/app/stores/boneSelectionStore.ts');
     b.useBoneSelectionStore
@@ -204,7 +205,7 @@ test('#1341 — symmetrizing an arm with an IK gives the twin arm its own IK', a
   await expect(page.getByTestId(`inspector-bone-ik-${id}_ik_Hand_L`)).toBeVisible();
 
   // Edit mode: symmetrize the arm from the upper arm.
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   await page.evaluate(async (object) => {
     const b = await import('/src/app/stores/boneSelectionStore.ts');
     b.useBoneSelectionStore
@@ -226,7 +227,7 @@ test('#1341 — symmetrizing an arm with an IK gives the twin arm its own IK', a
     pole: 'Hand_ik_pole_R',
   });
 
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   // Look at the arms from the front, above the starter box.
   await page.evaluate(() => {
     const t = (

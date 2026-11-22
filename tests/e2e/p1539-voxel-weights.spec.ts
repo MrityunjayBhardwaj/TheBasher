@@ -15,6 +15,7 @@
 import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -141,13 +142,13 @@ test('#1539 — an open tube bound by voxel distance bends smoothly, and says ev
   await page.keyboard.press('Shift+A');
   await page.getByText('Empty', { exact: true }).hover();
   await page.getByText('Armature', { exact: true }).click();
-  await expect(page.getByTestId('armature-mode')).toBeVisible();
+  await expect(await toolbarControl(page, 'armature-mode')).toBeVisible();
   await page.evaluate(() => {
     const t = (window as unknown as W).__basher_three.getState();
     t.controlsTarget!.set(0, 1.5, 0);
     t.camera.position.set(0, 1.5, 6);
   });
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   const armature = await page.evaluate(async () => {
     const b = await import('/src/app/stores/boneSelectionStore.ts');
     const s = await import('/src/app/stores/selectionStore.ts');
@@ -160,7 +161,7 @@ test('#1539 — an open tube bound by voxel distance bends smoothly, and says ev
   await expect
     .poll(() => page.evaluate(() => (window as unknown as W).__basher_bone.getState().boneName))
     .toBe('Bone_end_001');
-  await page.getByTestId('armature-mode').selectOption('object');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('object');
 
   // Bind from the tube's modifier section: the proximity bind, as before.
   await page.evaluate(async (id) => {

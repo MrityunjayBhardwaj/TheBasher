@@ -23,6 +23,7 @@
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots } from './_importedMesh';
+import { toolbarControl } from './_toolbar';
 
 interface DagNode {
   type: string;
@@ -142,7 +143,7 @@ test('P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef
   // The native import holds nothing that points at its folder.
   expect(await sceneMentions(page, 'flat-asset')).toBe(false);
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('library-popover')).toBeVisible({ timeout: 5_000 });
   await expect(
     page.getByTestId('library-popover-my-import-user-imports/flat-asset/scene.gltf'),
@@ -183,7 +184,7 @@ test('P7.14 (delete unreferenced) — ︙ Delete of a BVH (no ref) removes it + 
     await w.__basher_ingestBvhFile!(new Uint8Array(buf), 'walk');
   });
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(
     page.getByTestId('library-popover-my-import-user-imports/walk/walk.bvh'),
   ).toBeVisible({ timeout: 5_000 });
@@ -207,7 +208,7 @@ test('P7.14 (delete native import) — ︙ Delete is immediate and the scene kee
   const rootId = await drawnTexturedRoot(page, 'native');
   const nodesAfterImport = await dagNodeCount(page);
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('library-popover-menu-btn-native-asset').click();
   await page.getByTestId('library-popover-menu-delete-native-asset').click();
 

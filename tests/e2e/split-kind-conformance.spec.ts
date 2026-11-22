@@ -85,6 +85,7 @@ import {
 } from '../../src/test-utils/splitKinds';
 import { OLD_IMPORT_NODE_TYPES } from '../../src/core/project/oldImports';
 import { splitSphereOps } from './_splitSphere';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -1000,7 +1001,7 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
         (id) => (window as unknown as BasherWindow).__basher_selection!.getState().select(id),
         objectId,
       );
-      await page.getByTestId('floating-toolbar-timeline').click();
+      await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
       await page.getByTestId('timeline-tab-nla').click();
       await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');
 

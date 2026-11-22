@@ -5,10 +5,13 @@
 //
 // Anatomy (left → right):
 //
-//   [↖][✥][⟲][⤢] │ [+ Add][📦 Assets] │ [3D|UV] │ [▶] │ [⌂][⊞] │
-//   tools           create               space      play   view
-//     [studio][wire][rendered] │ [snap][step] │ [☰] │ [100%▾][⬇ Export][⛚ Present]
-//     shading                    snap            timeline  status / export / present
+//   [↖][✥][⟲][⤢] │ [+ Add] │ [armature mode] │ [studio][wire][rendered] │ [cam] │ [⋯]
+//   tools           create    (armature only)    shading                    camera   more
+//
+//   ⋯ (#1935, the decided board `Main.jpg`): Assets · 3D|2D space · ▶ play · ⌂ ⊞ view ·
+//   pivot · orientation · snap · ☰ timeline · zoom / Render / Export / Present.
+//   The everyday groups are fitted to the measured band (toolbarFit.ts); any that do not fit
+//   go into ⋯ as well, so the pill never scrolls and no control is ever out of reach.
 //
 // Dispatch (single owner per control — no duplication, H27):
 //   tools     → editorStore.setActiveTool (translate/rotate/scale propagate
@@ -47,7 +50,7 @@ import {
   usePrimaryIsArmature,
   type ArmatureMode,
 } from './armatureMode';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
 import { renderToViewWithFeedback } from './renderImageAction';
@@ -61,6 +64,7 @@ import { useTimelineDockStore } from './stores/timelineDockStore';
 import { openDrawerTab } from './openDrawerTab';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
+import { fitToolbar, TOOLBAR_GROUPS, type ToolbarGroupId } from './toolbarFit';
 
 interface ToolDef {
   readonly id: ActiveTool;
@@ -125,6 +129,8 @@ function ToolButton({
   ariaLabel,
   testId,
   onClick,
+  buttonRef,
+  ariaExpanded,
   children,
 }: {
   active: boolean;
@@ -132,6 +138,8 @@ function ToolButton({
   ariaLabel: string;
   testId: string;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  buttonRef?: React.Ref<HTMLButtonElement>;
+  ariaExpanded?: boolean;
   children: ReactNode;
 }): ReactNode {
   const base =
@@ -139,12 +147,14 @@ function ToolButton({
   const state = active ? 'bg-bg-1 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg';
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onClick}
       data-testid={testId}
       data-active={active || undefined}
       title={title}
       aria-label={ariaLabel}
+      aria-expanded={ariaExpanded}
       className={`${base} ${state}`}
     >
       {children}
@@ -253,6 +263,86 @@ function openAddMenuFrom(e: React.MouseEvent<HTMLButtonElement>): void {
   useAddMenuStore.getState().openAt(x, y);
 }
 
+/** #1935 — the inline candidates (everyday groups), display order. */
+const INLINE_GROUPS = TOOLBAR_GROUPS.filter((g) => g.placement === 'inline');
+/** #1935 — the groups that always live behind ⋯, display order. */
+const MENU_GROUPS = TOOLBAR_GROUPS.filter((g) => g.placement === 'menu');
+
+const sameIds = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * #1935 — which inline groups do not fit the clear band, measured live.
+ *
+ * The band element spans the whole clear band between the side islands (its width is CSS, so a
+ * panel fold or a window resize changes it without a re-render); a ResizeObserver on it re-runs
+ * the fit. Each inline group's width is read off the DOM while it is inline and cached, so a group
+ * that went into ⋯ is still sized when the band grows back. A group never measured (the armature
+ * menu the first time an armature is selected) is first rendered inline so it can be measured.
+ */
+function useToolbarOverflow(
+  bandRef: React.RefObject<HTMLDivElement | null>,
+  pillRef: React.RefObject<HTMLDivElement | null>,
+  moreRef: React.RefObject<HTMLDivElement | null>,
+  candidateIds: readonly ToolbarGroupId[],
+  mounted: boolean,
+): readonly string[] {
+  const [overflow, setOverflow] = useState<readonly string[]>([]);
+  const widths = useRef(new Map<string, number>());
+  // Bumped by the ResizeObserver: a re-render is all it needs (the layout effect re-measures).
+  const [, setMeasureTick] = useState(0);
+
+  // Runs after EVERY render, on purpose: it reads the DOM (a group's width changes with its
+  // contents, not with any prop), and it re-sets state only when the answer changed (sameIds),
+  // so it settles in at most two passes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    const band = bandRef.current;
+    const pill = pillRef.current;
+    if (!band || !pill) return;
+    for (const el of pill.querySelectorAll<HTMLElement>('[data-toolbar-group]')) {
+      widths.current.set(el.dataset.toolbarGroup!, el.getBoundingClientRect().width);
+    }
+    // A candidate that has never been measured is put back inline so the next pass can size it.
+    const unmeasured: readonly string[] = candidateIds.filter((id) => !widths.current.has(id));
+    let next: readonly string[];
+    if (unmeasured.length > 0) {
+      next = overflow.filter((id) => !unmeasured.includes(id));
+    } else {
+      const css = getComputedStyle(pill);
+      const chrome =
+        parseFloat(css.paddingLeft) +
+        parseFloat(css.paddingRight) +
+        parseFloat(css.borderLeftWidth) +
+        parseFloat(css.borderRightWidth);
+      const keepOf = new Map(INLINE_GROUPS.map((g) => [g.id as string, g.keep ?? 0]));
+      next = fitToolbar({
+        candidates: candidateIds.map((id) => ({
+          id,
+          width: widths.current.get(id)!,
+          keep: keepOf.get(id) ?? 0,
+        })),
+        // Floor the band, ceil nothing: sub-pixel widths must never round into a scrolling pill.
+        available: Math.floor(band.clientWidth - chrome) - 1,
+        gap: parseFloat(css.columnGap) || 0,
+        moreWidth: moreRef.current?.getBoundingClientRect().width ?? 0,
+        alwaysMore: MENU_GROUPS.length > 0,
+      }).overflow;
+    }
+    if (!sameIds(next, overflow)) setOverflow(next);
+  });
+
+  useEffect(() => {
+    const band = bandRef.current;
+    if (!band || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setMeasureTick((n) => n + 1));
+    ro.observe(band);
+    return () => ro.disconnect();
+  }, [bandRef, mounted]);
+
+  return overflow;
+}
+
 export function FloatingViewportToolbar(): ReactNode {
   // #170: render the production frame to a PNG with surfaced feedback. Local
   // `rendering` flag drives a brief "Rendering…" affordance + disables the
@@ -311,6 +401,40 @@ export function FloatingViewportToolbar(): ReactNode {
   // for the islands.
   const isNarrow = useIsNarrowLayout();
 
+  // #1935 — the fit: which everyday groups stay in the pill, and the ⋯ menu.
+  const bandRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const candidateIds = INLINE_GROUPS.filter((g) => g.id !== 'armature' || primaryIsArmature).map(
+    (g) => g.id,
+  );
+  const overflow = useToolbarOverflow(bandRef, pillRef, moreRef, candidateIds, !presentMode);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // The menu may not run past the bottom of the viewport area (the drawer row clips it): its
+  // height is capped at the room between the pill and <main>'s bottom edge, read when it opens.
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const host = bandRef.current?.offsetParent;
+    const pill = pillRef.current;
+    if (!host || !pill) return;
+    const room = host.getBoundingClientRect().bottom - pill.getBoundingClientRect().bottom - 18;
+    setMenuMaxHeight(Math.max(120, Math.floor(room)));
+  }, [menuOpen]);
+
+  // The menu closes on a press anywhere outside the pill + menu (the canvas, a panel, a key row).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (shellRef.current && !shellRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    // Capture phase: the canvas and the panels stop their own pointer events from bubbling.
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [menuOpen]);
+
   // Present-mode chrome-hide: the pill vanishes when presentMode is on.
   // Self-gated rather than Layout.tsx-gated because the pill is a viewport
   // overlay, not a grid slot — returning null is the simplest path. Esc
@@ -318,81 +442,39 @@ export function FloatingViewportToolbar(): ReactNode {
   // toggle itself is hidden along with the pill.
   if (presentMode) return null;
 
-  return (
-    <div
-      data-testid="floating-viewport-toolbar"
-      role="toolbar"
-      aria-orientation="horizontal"
-      aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
-      // UX-BACKLOG #2 — the viewport is full-bleed and the outliner/inspector
-      // float as side islands over it. A toolbar centred on the viewport
-      // midpoint would slide UNDER those islands at narrow widths (its right end
-      // disappeared behind the inspector — observed at 1100px). It is centred in
-      // the clear band BETWEEN the islands and capped at that band's width; it
-      // still scrolls horizontally (overflow-x-auto) when the controls exceed it.
-      // The band tracks the LIVE collapse flags (#1704: each side reserves its
-      // own island, so folding a panel to its 28px strip frees its whole width).
-      style={(() => {
-        const box = centerSurfaceBox({ isNarrow, leftCollapsed, inspectorCollapsed, band: 'top' });
-        return { left: box.left, transform: box.transform, maxWidth: box.width };
-      })()}
-      className="no-scrollbar absolute top-4 z-10 flex items-center gap-1 overflow-x-auto rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
-    >
-      {TOOLS.map((t) => (
-        <ToolButton
-          key={t.id}
-          active={activeTool === t.id}
-          title={`${t.label} (${t.shortcut})`}
-          ariaLabel={`${t.label} tool`}
-          testId={t.testId}
-          onClick={() => setActiveTool(t.id)}
-        >
-          {t.icon}
-        </ToolButton>
-      ))}
-      <Divider />
-      {/* Create — Add menu + sample-assets popover (folded from R3/R4 in W1). */}
-      <BarButton
-        testId="top-toolbar-add"
-        title="Add primitive (A or Shift+A)"
-        ariaLabel="Add node menu"
-        onClick={openAddMenuFrom}
-      >
-        <span aria-hidden>+</span>
-        <span>Add</span>
-      </BarButton>
-      <BarButton
-        testId="top-toolbar-assets"
-        title="Asset library (bottom drawer)"
-        active={assetsActive}
-        onClick={() => openDrawerTab('library')}
-      >
-        <span aria-hidden>📦</span>
-        <span>Assets</span>
-      </BarButton>
-      <Divider />
-      {/* Space toggle 3D View ↔ UV Editor (folded from R3 SpaceGroup). */}
-      <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
-        {SPACES.map((s) => (
-          <button
-            key={s.value}
-            type="button"
-            onClick={() => setSpace(s.value)}
-            data-testid={`toolbar-space-${s.value}`}
-            title={s.key ? `${s.label} (${s.key} to toggle)` : s.label}
-            className={`rounded px-2 py-1 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              space === s.value ? 'bg-accent/15 text-accent' : 'text-fg/60 hover:text-fg'
-            }`}
+  /** One group's controls. The same controls (same testids) render in the pill or in ⋯ — never
+   *  both, because a group is in exactly one of the two lists. */
+  const renderGroup = (id: ToolbarGroupId): ReactNode => {
+    switch (id) {
+      case 'tools':
+        return TOOLS.map((t) => (
+          <ToolButton
+            key={t.id}
+            active={activeTool === t.id}
+            title={`${t.label} (${t.shortcut})`}
+            ariaLabel={`${t.label} tool`}
+            testId={t.testId}
+            onClick={() => setActiveTool(t.id)}
           >
-            {s.label}
-          </button>
-        ))}
-      </div>
-      {primaryIsArmature ? (
-        <>
-          <Divider />
-          {/* #1335 — Object / Edit / Pose for the selected armature (Blender's header mode
-              menu). Tab toggles Edit; Ctrl+Tab toggles Pose where the browser delivers it. */}
+            {t.icon}
+          </ToolButton>
+        ));
+      case 'add':
+        return (
+          <BarButton
+            testId="top-toolbar-add"
+            title="Add primitive (A or Shift+A)"
+            ariaLabel="Add node menu"
+            onClick={openAddMenuFrom}
+          >
+            <span aria-hidden>+</span>
+            <span>Add</span>
+          </BarButton>
+        );
+      case 'armature':
+        // #1335 — Object / Edit / Pose for the selected armature (Blender's header mode menu).
+        // Tab toggles Edit; Ctrl+Tab toggles Pose where the browser delivers it.
+        return (
           <select
             value={armatureMode}
             onChange={(e) => setArmatureMode(e.target.value as ArmatureMode)}
@@ -405,204 +487,357 @@ export function FloatingViewportToolbar(): ReactNode {
             <option value="edit">Edit mode</option>
             <option value="pose">Pose mode</option>
           </select>
-        </>
-      ) : null}
-      <Divider />
-      {/* Play ▶ transport (v0.6 #4 — the re-home for the deleted `run` mode;
-          D-06: run became playback). Toggles useTimeStore.playing — the same
-          transport Space drives. Ephemeral, no DAG state (V34-clean). */}
-      <ToolButton
-        active={playing}
-        title={playing ? 'Pause (Space)' : 'Play (Space)'}
-        ariaLabel={playing ? 'Pause playback' : 'Play timeline'}
-        testId="floating-toolbar-play"
-        onClick={togglePlay}
-      >
-        {playing ? '⏸' : '▶'}
-      </ToolButton>
-      <Divider />
-      <ToolButton
-        active={false}
-        title="Frame selection (F)"
-        ariaLabel="Reset view"
-        testId="floating-toolbar-home"
-        onClick={homeFrame}
-      >
-        ⌂
-      </ToolButton>
-      <ToolButton
-        active={gridVisible}
-        title={gridVisible ? 'Hide grid' : 'Show grid'}
-        ariaLabel={gridVisible ? 'Hide grid' : 'Show grid'}
-        testId="floating-toolbar-grid"
-        onClick={toggleGridVisible}
-      >
-        ⊞
-      </ToolButton>
-      <Divider />
-      {SHADING.map((s) => (
-        <Chip
-          key={s.value}
-          active={shading === s.value}
-          title={`Shading: ${s.label}`}
-          ariaLabel={`${s.label} shading`}
-          testId={s.testId}
-          onClick={() => setShading(s.value)}
+        );
+      case 'shading':
+        return SHADING.map((s) => (
+          <Chip
+            key={s.value}
+            active={shading === s.value}
+            title={`Shading: ${s.label}`}
+            ariaLabel={`${s.label} shading`}
+            testId={s.testId}
+            onClick={() => setShading(s.value)}
+          >
+            {s.label}
+          </Chip>
+        ));
+      case 'camera':
+        // #165: look through the active scene camera (Blender Numpad 0).
+        return (
+          <Chip
+            active={lookThrough}
+            title="Look through active camera (0)"
+            ariaLabel={lookThrough ? 'Exit camera view' : 'Look through active camera'}
+            testId="floating-toolbar-look-through"
+            onClick={toggleLookThroughCamera}
+          >
+            cam
+          </Chip>
+        );
+      case 'assets':
+        return (
+          <BarButton
+            testId="top-toolbar-assets"
+            title="Asset library (bottom drawer)"
+            active={assetsActive}
+            onClick={() => openDrawerTab('library')}
+          >
+            <span aria-hidden>📦</span>
+            <span>Assets</span>
+          </BarButton>
+        );
+      case 'space':
+        // Space toggle 3D View ↔ UV Editor (folded from R3 SpaceGroup).
+        return (
+          <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+            {SPACES.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setSpace(s.value)}
+                data-testid={`toolbar-space-${s.value}`}
+                title={s.key ? `${s.label} (${s.key} to toggle)` : s.label}
+                className={`rounded px-2 py-1 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                  space === s.value ? 'bg-accent/15 text-accent' : 'text-fg/60 hover:text-fg'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        );
+      case 'play':
+        // Play ▶ transport (v0.6 #4 — the re-home for the deleted `run` mode; D-06: run became
+        // playback). Toggles useTimeStore.playing — the same transport Space drives.
+        return (
+          <ToolButton
+            active={playing}
+            title={playing ? 'Pause (Space)' : 'Play (Space)'}
+            ariaLabel={playing ? 'Pause playback' : 'Play timeline'}
+            testId="floating-toolbar-play"
+            onClick={togglePlay}
+          >
+            {playing ? '⏸' : '▶'}
+          </ToolButton>
+        );
+      case 'view':
+        return (
+          <>
+            <ToolButton
+              active={false}
+              title="Frame selection (F)"
+              ariaLabel="Reset view"
+              testId="floating-toolbar-home"
+              onClick={homeFrame}
+            >
+              ⌂
+            </ToolButton>
+            <ToolButton
+              active={gridVisible}
+              title={gridVisible ? 'Hide grid' : 'Show grid'}
+              ariaLabel={gridVisible ? 'Hide grid' : 'Show grid'}
+              testId="floating-toolbar-grid"
+              onClick={toggleGridVisible}
+            >
+              ⊞
+            </ToolButton>
+          </>
+        );
+      case 'pivot':
+        // #228 — transform pivot point (Blender pivot_point/index.rst). Drives the MULTI-object
+        // gizmo: median / bounding-box / individual / active. (3D cursor reserved.)
+        return (
+          <select
+            value={pivot === 'cursor' ? 'median' : pivot}
+            onChange={(e) => setPivot(e.target.value as typeof pivot)}
+            data-testid="floating-toolbar-pivot"
+            aria-label="Transform pivot point"
+            title="Transform pivot point (multi-select gizmo)"
+            className="h-7 rounded-md border border-border bg-bg px-1.5 text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <option value="median">pivot: median</option>
+            <option value="boundingBox">pivot: bbox</option>
+            <option value="individual">pivot: individual</option>
+            <option value="active">pivot: active</option>
+          </select>
+        );
+      case 'orientation':
+        // #228 — transform orientation (Blender Global/Local).
+        return (
+          <Chip
+            active={gizmoOrientation === 'local'}
+            title={`Transform orientation: ${gizmoOrientation} (click to toggle Global/Local)`}
+            ariaLabel={
+              gizmoOrientation === 'local'
+                ? 'Switch to global orientation'
+                : 'Switch to local orientation'
+            }
+            testId="floating-toolbar-orientation"
+            onClick={toggleGizmoOrientation}
+          >
+            {gizmoOrientation === 'local' ? 'local' : 'global'}
+          </Chip>
+        );
+      case 'snap':
+        return (
+          <>
+            <Chip
+              active={snapEnabled}
+              title="Toggle translation snap"
+              ariaLabel={snapEnabled ? 'Disable snap' : 'Enable snap'}
+              testId="floating-toolbar-snap-toggle"
+              onClick={toggleSnapEnabled}
+            >
+              snap
+            </Chip>
+            <input
+              type="number"
+              step="0.05"
+              min={0}
+              value={snapStep}
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                if (!Number.isNaN(n)) setSnapStep(n);
+              }}
+              data-testid="floating-toolbar-snap-step"
+              aria-label="Snap step value"
+              className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              title="Snap step (world units)"
+            />
+            {/* #228 — Snapping ▸ Affect (Blender snapping.rst): which transform modes the snap
+                gates. Shown only while snap is on. */}
+            {snapEnabled ? (
+              <>
+                <Chip
+                  active={snapAffect.move}
+                  title="Snap moves (translate)"
+                  ariaLabel={snapAffect.move ? 'Disable move snap' : 'Enable move snap'}
+                  testId="floating-toolbar-snap-affect-move"
+                  onClick={() => toggleSnapAffect('move')}
+                >
+                  M
+                </Chip>
+                <Chip
+                  active={snapAffect.rotate}
+                  title="Snap rotations (5° increments)"
+                  ariaLabel={snapAffect.rotate ? 'Disable rotate snap' : 'Enable rotate snap'}
+                  testId="floating-toolbar-snap-affect-rotate"
+                  onClick={() => toggleSnapAffect('rotate')}
+                >
+                  R
+                </Chip>
+                <Chip
+                  active={snapAffect.scale}
+                  title="Snap scaling (0.1 increments)"
+                  ariaLabel={snapAffect.scale ? 'Disable scale snap' : 'Enable scale snap'}
+                  testId="floating-toolbar-snap-affect-scale"
+                  onClick={() => toggleSnapAffect('scale')}
+                >
+                  S
+                </Chip>
+              </>
+            ) : null}
+          </>
+        );
+      case 'timeline':
+        // Timeline reveal — a toolbar-level toggle for the timeline drawer body. The Timebar
+        // (with the Auto-Key indicator) stays always-visible below.
+        return (
+          <ToolButton
+            active={timelineDrawerOpen}
+            title={timelineDrawerOpen ? 'Hide timeline' : 'Show timeline'}
+            ariaLabel={timelineDrawerOpen ? 'Hide timeline' : 'Show timeline'}
+            testId="floating-toolbar-timeline"
+            onClick={toggleTimelineDrawer}
+          >
+            ☰
+          </ToolButton>
+        );
+      case 'output':
+        // Status / export / present (folded from R3 RightCluster). The zoom readout is a
+        // disabled button: §5.3 anatomy lists `[100% ▾]` as a display, not an input.
+        return (
+          <>
+            <button
+              type="button"
+              disabled
+              data-testid="top-toolbar-zoom"
+              title={`Viewport zoom — ${cameraZoom}%`}
+              aria-label={`Viewport zoom ${cameraZoom} percent`}
+              className="flex h-7 items-center gap-1 rounded-md border border-border bg-muted/30 px-2 text-[11px] font-medium text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            >
+              <span data-testid="top-toolbar-zoom-value">{cameraZoom}%</span>
+              <span aria-hidden>▾</span>
+            </button>
+            <BarButton
+              testId="top-toolbar-render"
+              title="Render image — current frame to PNG"
+              ariaLabel={rendering ? 'Rendering image' : 'Render image'}
+              onClick={() => void handleRenderImage()}
+              disabled={rendering}
+            >
+              <span aria-hidden>{rendering ? '⏳' : '📷'}</span>
+              <span>{rendering ? 'Rendering…' : 'Render'}</span>
+            </BarButton>
+            <BarButton
+              testId="top-toolbar-export"
+              title="Export DAG as JSON"
+              onClick={exportDagJson}
+            >
+              <span aria-hidden>⬇</span>
+              <span>Export</span>
+            </BarButton>
+            <BarButton
+              testId="top-toolbar-present"
+              title="Present — chrome-hidden viewport (Esc returns)"
+              onClick={() => togglePresentMode()}
+            >
+              <span aria-hidden>⛚</span>
+              <span>Present</span>
+            </BarButton>
+          </>
+        );
+    }
+  };
+
+  const inlineIds = candidateIds.filter((id) => !overflow.includes(id));
+  const menuIds: ToolbarGroupId[] = [
+    ...candidateIds.filter((id) => overflow.includes(id)),
+    ...MENU_GROUPS.map((g) => g.id),
+  ];
+  const labelOf = new Map(TOOLBAR_GROUPS.map((g) => [g.id, g.label]));
+  // Settings stay open for a second edit (snap on → set the step); an action closes the menu.
+  const KEEP_OPEN: ReadonlySet<ToolbarGroupId> = new Set(['pivot', 'orientation', 'snap']);
+  // Groups whose controls need a full row of the two-column menu.
+  const WIDE_IN_MENU: ReadonlySet<ToolbarGroupId> = new Set(['tools', 'shading', 'snap', 'output']);
+
+  // UX-BACKLOG #2 — the viewport is full-bleed and the outliner/inspector float as side islands
+  // over it. The pill is centred in the clear band BETWEEN the islands (tracking the live collapse
+  // flags, #1704) and capped at that band's width. #1935 — it never scrolls: the band's measured
+  // width decides which everyday groups stay inline; the rest live behind ⋯.
+  const box = centerSurfaceBox({ isNarrow, leftCollapsed, inspectorCollapsed, band: 'top' });
+
+  return (
+    <div
+      ref={bandRef}
+      data-testid="floating-toolbar-band"
+      style={{ left: box.left, transform: box.transform, width: box.width }}
+      // The open menu drops over the viewport's own insets (the camera live preview is z-20), so
+      // the band lifts above them while it is open; closed, the pill keeps its old z-10.
+      className={`pointer-events-none absolute top-4 flex justify-center ${menuOpen ? 'z-30' : 'z-10'}`}
+    >
+      <div ref={shellRef} className="pointer-events-auto relative max-w-full">
+        <div
+          ref={pillRef}
+          data-testid="floating-viewport-toolbar"
+          data-overflow={overflow.join(',')}
+          role="toolbar"
+          aria-orientation="horizontal"
+          aria-label={`Viewport toolbar — ${activeTool ?? 'no tool'} active`}
+          className="flex max-w-full items-center gap-1 overflow-hidden rounded-2xl border border-border bg-bg-2/95 px-2 py-1 text-fg shadow-xl shadow-black/40 backdrop-blur-md [&>*]:shrink-0"
         >
-          {s.label}
-        </Chip>
-      ))}
-      <Divider />
-      {/* #165: look through the active scene camera (Blender Numpad 0). */}
-      <Chip
-        active={lookThrough}
-        title="Look through active camera (0)"
-        ariaLabel={lookThrough ? 'Exit camera view' : 'Look through active camera'}
-        testId="floating-toolbar-look-through"
-        onClick={toggleLookThroughCamera}
-      >
-        cam
-      </Chip>
-      <Divider />
-      {/* #228 — transform pivot point (Blender pivot_point/index.rst). Drives the
-          MULTI-object gizmo: median / bounding-box / individual / active. (3D
-          cursor reserved — Basher has no cursor yet.) */}
-      <select
-        value={pivot === 'cursor' ? 'median' : pivot}
-        onChange={(e) => setPivot(e.target.value as typeof pivot)}
-        data-testid="floating-toolbar-pivot"
-        aria-label="Transform pivot point"
-        title="Transform pivot point (multi-select gizmo)"
-        className="h-7 rounded-md border border-border bg-bg px-1.5 text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-      >
-        <option value="median">pivot: median</option>
-        <option value="boundingBox">pivot: bbox</option>
-        <option value="individual">pivot: individual</option>
-        <option value="active">pivot: active</option>
-      </select>
-      <Divider />
-      {/* #228 — transform orientation (Blender Global/Local). 'local' aligns the
-          gizmo handles to the object's own axes. */}
-      <Chip
-        active={gizmoOrientation === 'local'}
-        title={`Transform orientation: ${gizmoOrientation} (click to toggle Global/Local)`}
-        ariaLabel={
-          gizmoOrientation === 'local'
-            ? 'Switch to global orientation'
-            : 'Switch to local orientation'
-        }
-        testId="floating-toolbar-orientation"
-        onClick={toggleGizmoOrientation}
-      >
-        {gizmoOrientation === 'local' ? 'local' : 'global'}
-      </Chip>
-      <Divider />
-      <Chip
-        active={snapEnabled}
-        title="Toggle translation snap"
-        ariaLabel={snapEnabled ? 'Disable snap' : 'Enable snap'}
-        testId="floating-toolbar-snap-toggle"
-        onClick={toggleSnapEnabled}
-      >
-        snap
-      </Chip>
-      <input
-        type="number"
-        step="0.05"
-        min={0}
-        value={snapStep}
-        onChange={(e) => {
-          const n = parseFloat(e.target.value);
-          if (!Number.isNaN(n)) setSnapStep(n);
-        }}
-        data-testid="floating-toolbar-snap-step"
-        aria-label="Snap step value"
-        className="w-14 rounded border border-border bg-bg px-1.5 py-0.5 text-right text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        title="Snap step (world units)"
-      />
-      {/* #228 — Snapping ▸ Affect (Blender snapping.rst): which transform modes
-          the snap gates. Shown only while snap is on; Move snaps by default,
-          Rotate (5°) / Scale (0.1) are opt-in. */}
-      {snapEnabled ? (
-        <>
-          <Chip
-            active={snapAffect.move}
-            title="Snap moves (translate)"
-            ariaLabel={snapAffect.move ? 'Disable move snap' : 'Enable move snap'}
-            testId="floating-toolbar-snap-affect-move"
-            onClick={() => toggleSnapAffect('move')}
+          {inlineIds.map((id, i) => (
+            <div key={id} data-toolbar-group={id} className="flex items-center gap-1">
+              {i > 0 ? <Divider /> : null}
+              {renderGroup(id)}
+            </div>
+          ))}
+          <div ref={moreRef} className="flex items-center gap-1">
+            {inlineIds.length > 0 ? <Divider /> : null}
+            <ToolButton
+              buttonRef={moreButtonRef}
+              active={menuOpen}
+              title="More viewport controls"
+              ariaLabel="More viewport controls"
+              ariaExpanded={menuOpen}
+              testId="floating-toolbar-more"
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              ⋯
+            </ToolButton>
+          </div>
+        </div>
+        {menuOpen ? (
+          <div
+            data-testid="floating-toolbar-more-menu"
+            role="group"
+            aria-label="More viewport controls"
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return;
+              e.stopPropagation();
+              setMenuOpen(false);
+              moreButtonRef.current?.focus();
+            }}
+            style={{ maxHeight: menuMaxHeight }}
+            className="absolute right-0 top-full mt-1.5 grid w-[21rem] grid-cols-2 gap-x-3 gap-y-2 overflow-y-auto rounded-xl border border-border bg-bg-2/95 p-2 text-fg shadow-xl shadow-black/40 backdrop-blur-md"
           >
-            M
-          </Chip>
-          <Chip
-            active={snapAffect.rotate}
-            title="Snap rotations (5° increments)"
-            ariaLabel={snapAffect.rotate ? 'Disable rotate snap' : 'Enable rotate snap'}
-            testId="floating-toolbar-snap-affect-rotate"
-            onClick={() => toggleSnapAffect('rotate')}
-          >
-            R
-          </Chip>
-          <Chip
-            active={snapAffect.scale}
-            title="Snap scaling (0.1 increments)"
-            ariaLabel={snapAffect.scale ? 'Disable scale snap' : 'Enable scale snap'}
-            testId="floating-toolbar-snap-affect-scale"
-            onClick={() => toggleSnapAffect('scale')}
-          >
-            S
-          </Chip>
-        </>
-      ) : null}
-      <Divider />
-      {/* Timeline reveal — a toolbar-level toggle for the timeline drawer body.
-          The Timebar (with the Auto-Key indicator) stays always-visible below. */}
-      <ToolButton
-        active={timelineDrawerOpen}
-        title={timelineDrawerOpen ? 'Hide timeline' : 'Show timeline'}
-        ariaLabel={timelineDrawerOpen ? 'Hide timeline' : 'Show timeline'}
-        testId="floating-toolbar-timeline"
-        onClick={toggleTimelineDrawer}
-      >
-        ☰
-      </ToolButton>
-      <Divider />
-      {/* Status / export / present (folded from R3 RightCluster). The zoom
-          readout is a disabled button: §5.3 anatomy lists `[100% ▾]` as a
-          display, not an interactive zoom-input. */}
-      <button
-        type="button"
-        disabled
-        data-testid="top-toolbar-zoom"
-        title={`Viewport zoom — ${cameraZoom}%`}
-        aria-label={`Viewport zoom ${cameraZoom} percent`}
-        className="flex h-7 items-center gap-1 rounded-md border border-border bg-muted/30 px-2 text-[11px] font-medium text-fg-mute focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-      >
-        <span data-testid="top-toolbar-zoom-value">{cameraZoom}%</span>
-        <span aria-hidden>▾</span>
-      </button>
-      <BarButton
-        testId="top-toolbar-render"
-        title="Render image — current frame to PNG"
-        ariaLabel={rendering ? 'Rendering image' : 'Render image'}
-        onClick={() => void handleRenderImage()}
-        disabled={rendering}
-      >
-        <span aria-hidden>{rendering ? '⏳' : '📷'}</span>
-        <span>{rendering ? 'Rendering…' : 'Render'}</span>
-      </BarButton>
-      <BarButton testId="top-toolbar-export" title="Export DAG as JSON" onClick={exportDagJson}>
-        <span aria-hidden>⬇</span>
-        <span>Export</span>
-      </BarButton>
-      <BarButton
-        testId="top-toolbar-present"
-        title="Present — chrome-hidden viewport (Esc returns)"
-        onClick={() => togglePresentMode()}
-      >
-        <span aria-hidden>⛚</span>
-        <span>Present</span>
-      </BarButton>
+            {menuIds.map((id) => (
+              <div
+                key={id}
+                data-toolbar-menu-group={id}
+                onClick={(e) => {
+                  if (!KEEP_OPEN.has(id) && (e.target as HTMLElement).closest('button')) {
+                    setMenuOpen(false);
+                  }
+                }}
+                // A mode picked from a menu select (the armature's Object / Edit / Pose) is an
+                // action too: the menu gets out of the way of the viewport it changes.
+                onChange={(e) => {
+                  if (!KEEP_OPEN.has(id) && (e.target as HTMLElement).tagName === 'SELECT') {
+                    setMenuOpen(false);
+                  }
+                }}
+                className={`flex flex-col gap-1 ${WIDE_IN_MENU.has(id) ? 'col-span-2' : ''}`}
+              >
+                <div className="px-1 text-[10px] font-medium uppercase tracking-wide text-fg-mute">
+                  {labelOf.get(id)}
+                </div>
+                <div className="flex flex-wrap items-center gap-1">{renderGroup(id)}</div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

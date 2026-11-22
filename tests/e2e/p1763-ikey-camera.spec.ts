@@ -8,6 +8,7 @@
 // Observed on both sides: the keys in the DAG, and where the look-through camera actually looks.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 type V3 = [number, number, number];
 type Q = [number, number, number, number];
@@ -88,7 +89,7 @@ async function boot(
     w.__basher_time.getState().setTime(0);
     w.__basher_selection.getState().select('n_camera');
   }, opts);
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.waitForFunction(() =>
     Boolean((window as unknown as BasherWindow).__basher_camera_gizmo_grab),
   );

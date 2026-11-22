@@ -18,6 +18,7 @@
 
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -410,7 +411,7 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     //     change rebuilt the static layer — K13 step 3). This is a
     //     no-regression CHECK, NOT the proof of motion (the proof is 4c
     //     above; this row is explicitly NOT asserted as motion — H35).
-    await page.getByTestId('floating-toolbar-timeline').click();
+    await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
     await expect(page.getByTestId('timeline-canvas')).toBeVisible();
   });
 });

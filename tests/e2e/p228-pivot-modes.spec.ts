@@ -6,6 +6,7 @@
 // individual application. pivotPoint math is unit-tested in gizmoPivot.test.ts.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface W {
   __basher_dag: {
@@ -67,7 +68,7 @@ test('median / active / individual pivot modes drive the multi-gizmo', async ({ 
   expect(median!.pivot[0]).toBeCloseTo(2, 3);
 
   // Active → the primary node's origin (the clone at [4,0,0]).
-  await page.getByTestId('floating-toolbar-pivot').selectOption('active');
+  await (await toolbarControl(page, 'floating-toolbar-pivot')).selectOption('active');
   await page.waitForTimeout(300);
   const active = await page.evaluate(
     () => (window as unknown as W).__basher_gizmo_multi?.() ?? null,
@@ -76,7 +77,7 @@ test('median / active / individual pivot modes drive the multi-gizmo', async ({ 
   expect(active!.pivot[0]).toBeCloseTo(4, 3);
 
   // Individual → a rotate leaves each box at its OWN origin (rotate in place, no orbit).
-  await page.getByTestId('floating-toolbar-pivot').selectOption('individual');
+  await (await toolbarControl(page, 'floating-toolbar-pivot')).selectOption('individual');
   await page.waitForTimeout(300);
   await page.evaluate(() => (window as unknown as W).__basher_gizmo_grab('rotate', [0, 90, 0]));
   await page.waitForTimeout(300);

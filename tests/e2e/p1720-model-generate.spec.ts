@@ -16,6 +16,7 @@
 //      src/app/library/ModelVariants.tsx; src/viewport/GenerationPlaceholder.tsx.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface Node {
   id: string;
@@ -98,7 +99,7 @@ test('generate → variants → keep → details → regenerate from the SAME no
     (window as unknown as BasherWindow).__basher_modelgen!.useSlowStub(400),
   );
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   const library = page.getByTestId('library-pane');
   await library.getByTestId('library-generate-tile').click();
   await library.getByTestId('generate-kind-model').click();
@@ -214,7 +215,7 @@ test('generate → variants → keep → details → regenerate from the SAME no
   expect(reloaded.map((n) => n.id)).toEqual([node.id]);
   expect(reloaded[0].params).toEqual(saved);
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   const mineAgain = page.getByTestId('library-pane').getByTestId('library-popover-my-imports');
   await mineAgain.locator('[data-library-tile]').first().click();
   const generatedAgain = page.getByTestId('library-pane').getByTestId('library-details-generated');

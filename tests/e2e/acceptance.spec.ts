@@ -10,6 +10,7 @@ import { openInspectorSection } from './_inspectorSections';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -117,14 +118,14 @@ test('#3 chrome affordances: timeline reveal + present-mode chrome-hide (mode-fr
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'false');
 
   // Reveal the timeline body via the pill control; rest of chrome stays.
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('inspector')).toBeVisible();
 
   // Present mode (the re-home for the deleted `director`): chrome hides;
   // viewport takes the full window. tree-slot is the canonical chrome-
   // visibility check (it hides via display:none when presentMode is on).
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('inspector')).toBeHidden();
   await expect(page.getByTestId('tree-slot')).toBeHidden();
@@ -275,7 +276,7 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
   // render baseline).
   // P6 W7 (2026-05-14): shading group moved from R3 TransformToolbar to
   // R8 FloatingViewportToolbar per D-W7-3. testid migrated.
-  await page.getByTestId('floating-toolbar-shading-rendered').click();
+  await (await toolbarControl(page, 'floating-toolbar-shading-rendered')).click();
   // Wait for the canvas to have rendered at least one frame. We check by
   // polling for a non-empty pixel sample.
   await page.waitForFunction(() => {
@@ -321,8 +322,8 @@ test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async (
   // present (chrome hides). Present hides the chrome so we exit via Esc
   // (UI-SPEC §6.2 / acceptance #4 — Esc dismisses the topmost transient). If
   // any transition remounts the Canvas, the tag is gone.
-  await page.getByTestId('floating-toolbar-timeline').click();
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
   const tag = await page.evaluate(() => {

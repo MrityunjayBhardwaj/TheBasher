@@ -18,6 +18,7 @@
 
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -205,7 +206,7 @@ test.beforeEach(async ({ page }) => {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag);
   });
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
 });
 
 test.describe('P7.3 D-06 — gizmo proxy == evaluated render-walk (the #68 boundary-pair)', () => {

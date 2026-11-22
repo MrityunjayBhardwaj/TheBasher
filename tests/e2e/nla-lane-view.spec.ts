@@ -21,6 +21,7 @@ import {
   stripPlacedRange,
 } from '../../src/timeline/nlaLaneGeometry';
 import { DEFAULT_VIEW } from '../../src/timeline/timelineView';
+import { toolbarControl } from './_toolbar';
 
 interface DispatchResult {
   ok: boolean;
@@ -109,7 +110,7 @@ async function seedWalkStrip(page: Page) {
 }
 
 async function openNlaTab(page: Page) {
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.getByTestId('timeline-tab-nla').click();
   await expect(page.getByTestId('timeline-tab-nla')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');
@@ -286,7 +287,7 @@ test('NLA 5B#4 — the nla tab and the strip persist across reload', async ({ pa
 
   // Open the drawer: nla is still the active tab and the persisted DAG still
   // renders the strip.
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await expect(page.getByTestId('timeline-tab-nla')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');
   await expect(page.getByTestId('nla-strip-nla_s1')).toBeVisible();

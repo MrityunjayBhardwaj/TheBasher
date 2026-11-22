@@ -18,6 +18,7 @@
 //      §11 #14; memory/project_p6_w8_plan.md C5; D-W8-5, D-W8-7, D-W8-8.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -253,7 +254,7 @@ test('P6.W8#2b a selected node populates the NPanel with ≥1 tabbable element (
 
 test('P6.W8#3 present mode removes hidden chrome from the tab order (D-W8-8)', async ({ page }) => {
   // Enter present (same trigger pattern as P6.W7#8).
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
 
   // Skip-link still mounted, still tabbable (D-W8-5: all modes).
@@ -418,7 +419,8 @@ test('P6.W8#7 focus-visible:ring-accent is wired on every sampled chrome button 
     'floating-toolbar-sel', // R8
   ];
   for (const id of samples) {
-    const el = page.getByTestId(id);
+    // #1935 — Present lives behind ⋯; toolbarControl opens it when needed.
+    const el = await toolbarControl(page, id);
     await expect(el, `${id} should be visible`).toBeVisible();
     const className = await el.evaluate((node) => (node as HTMLElement).className);
     expect(className, `${id} should carry focus-visible:ring-* class`).toMatch(
@@ -430,7 +432,7 @@ test('P6.W8#7 focus-visible:ring-accent is wired on every sampled chrome button 
   // and confirm document.activeElement matches — ensures the element is
   // actually focusable in the live DOM (i.e., not disabled or hidden
   // by an unexpected ancestor style).
-  const present = page.getByTestId('top-toolbar-present');
+  const present = await toolbarControl(page, 'top-toolbar-present');
   await present.evaluate((el) => (el as HTMLElement).focus());
   const focusedTestId = await page.evaluate(() =>
     document.activeElement?.getAttribute('data-testid'),

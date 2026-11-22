@@ -7,6 +7,7 @@
 // drops Bone1 to what arrives from below — the skeleton's rest, which is the swing's 0 s pose — so
 // the skin at 0.5 s draws as it did at 0 s.
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface Node {
   type: string;
@@ -168,7 +169,7 @@ test('#1215 — a layer row’s gutter M mutes its curve (the skin drops to what
   const before = { 0: await drawnAt(0), 0.5: await drawnAt(0.5) };
   expect(maxDiff(before[0.5], before[0]), 'the swing bends the bar at 0.5 s').toBeGreaterThan(0.05);
 
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   const canvas = page.getByTestId('timeline-canvas').locator('canvas');
   await expect(canvas).toBeVisible();
   const { rowIndex, rowId } = await page.evaluate(

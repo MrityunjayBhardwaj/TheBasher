@@ -7,6 +7,7 @@
 // Subject: skinned-bar.glb through the product's native reader, dispatched directly (as p1215-layer-key-edit), the two-joint swing (3
 // poses, 0.5 s apart) bound onto it and NOT baked.
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -157,7 +158,7 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
       }));
     }, armature);
 
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   const host = page.getByTestId('timeline-canvas');
   const canvas = host.locator('canvas');
   await expect(canvas).toBeVisible();

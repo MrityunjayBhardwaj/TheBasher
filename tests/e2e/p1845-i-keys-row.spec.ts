@@ -3,6 +3,7 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -35,7 +36,7 @@ async function boot(page: Page, withTimeline: boolean) {
   await page.waitForFunction(() =>
     Boolean((window as unknown as Partial<W>).__basher_dag?.getState().state.outputs.scene),
   );
-  if (withTimeline) await page.getByTestId('floating-toolbar-timeline').click();
+  if (withTimeline) await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.evaluate(() => {
     const w = window as unknown as W;
     w.__basher_time.getState().pause();

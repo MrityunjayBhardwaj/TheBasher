@@ -22,6 +22,7 @@
 import { test, expect, type Page } from './_fixtures';
 import { spanToPercent, stripPlacedRange } from '../../src/timeline/nlaLaneGeometry';
 import { DEFAULT_VIEW } from '../../src/timeline/timelineView';
+import { toolbarControl } from './_toolbar';
 
 interface DispatchResult {
   ok: boolean;
@@ -123,7 +124,7 @@ async function seedBareRamp(page: Page) {
 }
 
 async function openNlaTab(page: Page) {
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.getByTestId('timeline-tab-nla').click();
   await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');
 }

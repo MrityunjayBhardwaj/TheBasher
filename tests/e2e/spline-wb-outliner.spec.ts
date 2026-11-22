@@ -11,6 +11,7 @@
 
 import { expect, test } from './_fixtures';
 import { openDrawerTab } from './_drawer';
+import { toolbarControl } from './_toolbar';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -68,6 +69,6 @@ test('WB#4 §196 — agent surface + Add/Assets create paths survive the redesig
   await expect(page.getByTestId('agent-dock')).toBeVisible();
   await expect(page.getByTestId('agent-chat')).toBeVisible();
   // Create paths still reachable on the floating toolbar.
-  await expect(page.getByTestId('top-toolbar-add')).toBeVisible();
-  await expect(page.getByTestId('top-toolbar-assets')).toBeVisible();
+  await expect(await toolbarControl(page, 'top-toolbar-add')).toBeVisible();
+  await expect(await toolbarControl(page, 'top-toolbar-assets')).toBeVisible();
 });

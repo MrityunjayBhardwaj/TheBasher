@@ -27,6 +27,7 @@
 
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -110,7 +111,7 @@ test('P6-W5#2 the visual ADD palette creates a real DAG node + auto-selects it',
   );
 
   // Open the Add menu on the floating pill → Mesh ▸ Cube. ONE addPrimitive path.
-  await page.getByTestId('top-toolbar-add').click();
+  await (await toolbarControl(page, 'top-toolbar-add')).click();
   await expect(page.getByTestId('add-menu')).toBeVisible();
   await page.getByTestId('add-menu-mesh').hover();
   await page.getByTestId('add-menu-item-Cube').click();

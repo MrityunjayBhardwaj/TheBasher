@@ -30,6 +30,7 @@
 //      the generated clip enters by); ref/architecture/ai-track.md phase A1.
 
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface DagWindow {
   __basher_dag?: {
@@ -55,7 +56,7 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => Boolean((window as unknown as DagWindow).__basher_dag));
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   const panel = page.getByTestId('generate-panel');
   await expect(panel).toBeVisible();
 
@@ -184,7 +185,7 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
 test('the image slot appears exactly where a road exists for it', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('generate-panel')).toBeVisible();
 
   // 🔑 Motion has NO image road in `motiongen`. A slot rendered there would be
@@ -203,7 +204,7 @@ test('an attached image satisfies submit on its own, and takes over from the pro
 }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('generate-kind-model').click();
 
   // Empty prompt, nothing attached: refused.
@@ -239,7 +240,7 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => Boolean((window as unknown as DagWindow).__basher_dag));
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
 
   await page.getByTestId('generate-kind-character').click();
   await page.getByTestId('generate-prompt').fill('a stocky dwarf blacksmith');

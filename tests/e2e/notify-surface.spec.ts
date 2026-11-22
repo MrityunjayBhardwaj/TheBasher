@@ -7,6 +7,7 @@
 // makes the toast absent and the assertion fail.
 
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 async function waitReady(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -27,7 +28,7 @@ test.describe('notification surface', () => {
     // not pre-existing state).
     await expect(page.getByTestId('toast-success')).toHaveCount(0);
 
-    await page.getByTestId('top-toolbar-render').click();
+    await (await toolbarControl(page, 'top-toolbar-render')).click();
 
     // The render completes and a success toast appears. Revert the wiring
     // (call the bare renderActiveProjectToPng that `void`s its result) → no
@@ -39,7 +40,7 @@ test.describe('notification surface', () => {
 
   test('the dismiss button removes a toast', async ({ page }) => {
     await waitReady(page);
-    await page.getByTestId('top-toolbar-render').click();
+    await (await toolbarControl(page, 'top-toolbar-render')).click();
     const toast = page.getByTestId('toast-success');
     await expect(toast).toBeVisible({ timeout: 10_000 });
 

@@ -16,6 +16,7 @@
 
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
@@ -219,7 +220,7 @@ test('#1704 C#7 the chat is in the video space too, and gone in present mode', a
   expect(video.x + video.width).toBeLessThanOrEqual(chat.x + 1);
 
   await page.getByTestId('space-switch-view3d').click();
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('agentdock-slot')).toBeHidden();
   await expect(page.getByTestId('chat-rail')).toBeHidden();
