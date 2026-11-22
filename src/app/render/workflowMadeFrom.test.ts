@@ -167,9 +167,9 @@ describe('#1717 — what a shot was made from covers every frame of the shot', (
   });
 
   it("moving shot 1's camera, the switch's own camera, marks only shot 1 stale", () => {
-    // The trap: the graph is evaluated without its channels, so a render pass's own hash films
-    // with the switch's authored camera at EVERY frame. Read through it, this move would mark all
-    // three shots stale.
+    // The trap: the graph is evaluated without its channels, so a render pass's own hash filmed
+    // with the switch's authored camera at EVERY frame until #1950. Read through that, this move
+    // would mark all three shots stale.
     const { state, shots } = film();
     const made = allMade(state, shots);
     const moved = apply(made, [

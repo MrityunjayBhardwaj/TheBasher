@@ -15,15 +15,17 @@
 //      and a move of the camera on screen in shot 2 does not reach it at all. Moving the
 //      switch's authored camera instead reaches it at every frame, marking every shot stale.
 //      (Measured on a 3-camera, 3-cut graph: moving shot 2's camera changed 0 of 90 pass hashes;
-//      moving the authored camera changed 90 of 90.)
+//      moving the authored camera changed 90 of 90.) #1950 put the camera on screen into the
+//      pass's own hash, through the read this file takes its camera from (`filmedCameraAt`); the
+//      keyed scene content below is still read here and not by the pass.
 //
 // So this reads a workflow the way its run reads it, frame by frame over the frames the run
 // makes (`runFrameEnd`: a still-only workflow makes one), and reads a render pass the way the
 // render draws it: the scene content at that frame (without the switch's authored camera), the
 // camera on screen at that frame through the resolver the render and the viewport use
-// (`resolveActiveCameraPoseAt`), and the samples, at that frame, of every keyframe channel on a
-// node the scene is built from. Moving one shot's camera then changes the frames that camera is
-// on screen for, and only those.
+// (`filmedCameraAt` → `resolveCameraPoseAt`), and the samples, at that frame, of every keyframe
+// channel on a node the scene is built from. Moving one shot's camera then changes the frames that
+// camera is on screen for, and only those.
 //
 // Everything else arrives as the evaluator gives it: a still or a picture with a stored file by
 // its own hash (a still workflow's edit reaches the shots it feeds by the wire, as in #1718), a
@@ -43,7 +45,7 @@
 //
 // REF: src/nodes/comfyWorkflowMade.ts (the states and the regenerate order, which take this hash);
 //      src/nodes/ComfyUIWorkflow.ts (the node's own hash rule this mirrors for non-pass inputs);
-//      src/app/activeCamera.ts (`resolveActiveCameraPoseAt`); src/render/dryRun.ts (`runFrameEnd`,
+//      src/app/filmedCamera.ts (`filmedCameraAt`); src/render/dryRun.ts (`runFrameEnd`,
 //      `workflowInputsAt`, the run's own reading of the inputs).
 
 import {
@@ -66,8 +68,8 @@ import {
 } from '../../nodes/comfyWorkflowMade';
 import type { ImageValue, KeyframeChannelValue } from '../../nodes/types';
 import { runFrameEnd } from '../../render/dryRun';
-import { resolveCameraPoseAt, selectActiveCameraNode } from '../activeCamera';
-import { cameraDataOf, cameraLensParams, isCameraNode } from '../cameraNode';
+import { isCameraNode } from '../cameraNode';
+import { filmedCameraAt } from '../filmedCamera';
 import { keyframeChannelsTargeting } from '../nodeChannels';
 import { sceneNodeId } from '../sceneRange';
 import { controllerValueReader } from './controllerValue';
@@ -106,7 +108,6 @@ interface PassReader {
 
 function passReader(state: DagState, pass: Node, cache: EvaluatorCache | undefined): PassReader {
   const sceneRef = refOf(pass.inputs.scene);
-  const cameraRef = refOf(pass.inputs.camera);
   // The channels on what the scene is built from, cameras aside (their pose arrives below).
   const channels: { id: NodeId; value: KeyframeChannelValue }[] = [];
   if (sceneRef) {
@@ -120,7 +121,6 @@ function passReader(state: DagState, pass: Node, cache: EvaluatorCache | undefin
       }
     }
   }
-  const viaSwitch = cameraRef ? state.nodes[cameraRef.node]?.type === 'CameraSelect' : false;
   return {
     at(frame) {
       const seconds = frame / FPS;
@@ -130,24 +130,12 @@ function passReader(state: DagState, pass: Node, cache: EvaluatorCache | undefin
         : undefined;
       // The switch's AUTHORED camera rides in the scene value; the camera on screen is below.
       const content = scene ? { ...scene, camera: null } : null;
-      const cameraId = !cameraRef
-        ? null
-        : viaSwitch
-          ? (selectActiveCameraNode(state, seconds)?.id ?? null)
-          : cameraRef.node;
-      const camera = cameraId
-        ? {
-            id: cameraId,
-            pose: resolveCameraPoseAt(state, cameraId, seconds, cache),
-            lens: cameraLensParams(state, cameraId) ?? state.nodes[cameraId]?.params ?? null,
-            data: cameraDataOf(state, cameraId)?.id ?? null,
-          }
-        : null;
       return {
         pass: PASS_OF_TYPE[pass.type],
         params: pass.params,
         content,
-        camera,
+        // #1950 — the read the pass's own hash takes its camera from.
+        camera: filmedCameraAt(state, pass.id, seconds, cache),
         channels: channels.map((c) => [c.id, c.value.mute === true, c.value.sample(seconds)]),
       };
     },
