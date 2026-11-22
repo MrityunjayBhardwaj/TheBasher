@@ -13,7 +13,7 @@
 // REF: THESIS §43; project_p5_context D-02; vyapti V2 + V3.
 
 import { z } from 'zod';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
+import { filmedCameraOf, type NodeDefinition, type ResolvedInputs } from '../core/dag/types';
 import {
   DEFAULT_IMAGE_DESCRIPTOR,
   type CameraValue,
@@ -34,6 +34,8 @@ export const NormalPassNode: NodeDefinition<NormalPassParams, ImageValue> = {
   type: 'NormalPass',
   version: 1,
   pure: true,
+  // #1950 — its hash follows the camera on screen at the time, not the switch's authored one.
+  filmsCamera: true,
   cost: 'cheap',
   paramSchema: NormalPassParams,
   mainInput: 'scene',
@@ -69,6 +71,7 @@ export const NormalPassNode: NodeDefinition<NormalPassParams, ImageValue> = {
         scene,
         camera,
         time,
+        filmed: filmedCameraOf(inputs),
       }),
       extent: RENDER_PASS_EXTENT,
     };

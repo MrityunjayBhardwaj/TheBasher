@@ -405,6 +405,8 @@ const TAKERS: string[] = [
   // #1763 — the keys I takes on a camera; the I key hands it the shared UI cache.
   'cameraInsertKeys@src/app/animate/keyCamera.ts',
   'cameraFocusTargetDistance@src/app/activeCamera.ts',
+  // #1950 — a render pass's camera on screen; the evaluator hands it the cache of the walk asking.
+  'filmedCameraAt@src/app/filmedCamera.ts',
   'cameraLocalOrientation@src/app/cameraTrackTo.ts',
   'cameraTrackToAim@src/app/cameraTrackTo.ts',
   'collectReferenceRigs@src/app/animate/referenceRigs.ts',

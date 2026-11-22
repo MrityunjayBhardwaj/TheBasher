@@ -97,6 +97,7 @@ import { registerStatefulReplay } from '../app/statefulOps';
 import { registerWorldFold } from '../app/objectWorld';
 import { registerWorldStepFold } from '../app/constraintChain';
 import { registerKeyedCook } from '../app/keyedCook';
+import { registerFilmedCamera } from '../app/filmedCamera';
 import { OwnWorldNode } from './OwnWorld';
 import { registerSceneDraw } from '../app/sceneMembership';
 
@@ -348,5 +349,7 @@ export function registerAllNodes(): void {
   registerWorldFold();
   registerWorldStepFold();
   registerKeyedCook();
+  // #1950 — a render pass hashes the camera on screen at the time, through the render's resolver.
+  registerFilmedCamera();
   registerSceneDraw();
 }

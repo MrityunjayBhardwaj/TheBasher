@@ -140,6 +140,9 @@ const CONSUMERS: Record<string, Decision> = {
   // #1811 — a chain step reads its settings through `resolveEvaluatedParam`, as a keyed value.
   'src/app/constraintChain.ts': authored('folds-its-own-overlays'),
   'src/app/keyedCook.ts': authored('folds-its-own-overlays'),
+  // #1950 — the camera a render pass films through: hands the authored state and the evaluator's
+  // cache to `resolveCameraPoseAt` (activeCamera.ts, its row above), which folds the camera's keys.
+  'src/app/filmedCamera.ts': authored('delegates-to-a-folding-resolver'),
   // #1829 — imports only the `EvaluatorCache` type: the drawn world read hands the authored state
   // and the caller's cache to `resolveWorldTransform`'s walk and the constraint resolvers (their
   // rows). Not a new road.
@@ -438,7 +441,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // above as fixed-ctx).
     // 75 → 77 at #1717: the shot clips and their Generate read that made state (declared above as
     // fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(77); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 77 → 78 at #1950: a render pass's camera on screen (declared above as
+    // delegates-to-a-folding-resolver).
+    expect(evaluatorConsumers()).toHaveLength(78); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

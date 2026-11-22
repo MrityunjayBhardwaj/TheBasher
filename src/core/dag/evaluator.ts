@@ -44,7 +44,7 @@ import {
   imageTakeOf,
   type ImageValueLike,
 } from './imageExtent';
-import { sourceIdsKey } from './types';
+import { FILMED_CAMERA_KEY, sourceIdsKey } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
 // former home imports THIS module, so without that move the edge would have closed the cycle
@@ -461,6 +461,23 @@ export function setKeyedParams(read: KeyedParams | null): void {
   keyedParams = read;
 }
 
+// #1950 — the camera a render pass films through, as it is ON SCREEN at the time being evaluated:
+// the camera a switch's cut puts there and that camera's pose with its keys, aim and parent folded.
+// Keys and cuts live off the graph, so a pass that hashed only its inputs saw the switch's AUTHORED
+// camera at every frame. The read lives above this module (it is the resolver the render and the
+// viewport film with) and is registered, as the fold above is. Hashed by its VALUE into the node's
+// cache key, so a frame whose camera did not move keeps its key and one whose camera did, misses.
+export type FilmedCamera = (
+  state: DagState,
+  nodeId: NodeId,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+) => unknown;
+let filmedCamera: FilmedCamera | null = null;
+export function setFilmedCamera(read: FilmedCamera | null): void {
+  filmedCamera = read;
+}
+
 /** #1810 — whether `socket` is `def`'s world output. */
 function isWorldOutput(def: NodeDefinition | undefined, socket: string): boolean {
   return def?.outputs[socket]?.world === true;
@@ -819,6 +836,13 @@ export function evaluate(
         resolved[socket] = arrive(into, binding, sub.value);
         inputHashes[socket] = `${binding.socket}:${sub.hash}`;
       }
+    }
+
+    // #1950 — a node that films hears which camera is on screen now, by value in its key.
+    if (def.filmsCamera === true && filmedCamera) {
+      const onScreen = filmedCamera(state as DagState, id, ctx, cache);
+      resolved[FILMED_CAMERA_KEY] = onScreen;
+      inputHashes[FILMED_CAMERA_KEY] = hashValue(onScreen);
     }
 
     onStack.delete(id);

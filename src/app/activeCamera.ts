@@ -118,6 +118,14 @@ export function selectActiveCameraNode(state: DagState, seconds?: number): Node 
   if (!ref || typeof ref !== 'object' || !('node' in ref)) return null;
   const id = (ref as { node?: string }).node;
   if (!id) return null;
+  return cameraNodeAt(state, id, seconds);
+}
+
+/** The camera node `id` puts on screen: a `CameraSelect` resolved to the camera its cut names at
+ *  `seconds` (its static `active` when `seconds` is omitted), any other node as itself. The one
+ *  step from a camera wire to a camera, for the scene's (`selectActiveCameraNode`) and for a render
+ *  pass's own camera wire (#1950, `filmedCameraAt`). */
+export function cameraNodeAt(state: DagState, id: string, seconds?: number): Node | null {
   const node = state.nodes[id] ?? null;
   if (node?.type === 'CameraSelect') return resolveActiveCameraFromSelect(state, node, seconds);
   return node;

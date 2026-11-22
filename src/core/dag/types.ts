@@ -478,6 +478,19 @@ export function sourceIdsKey(socket: string): string {
   return `${socket}#sourceIds`;
 }
 
+/** #1950 — where the evaluator puts a {@link NodeDefinition.filmsCamera} node's camera on screen.
+ *  `#` cannot start or sit in a socket name, so this never collides with a socket. */
+export const FILMED_CAMERA_KEY = '#filmedCamera';
+
+/**
+ * #1950 — the camera on screen at the time being evaluated, as the evaluator handed it to a
+ * {@link NodeDefinition.filmsCamera} node: `undefined` when none was handed over (no read
+ * registered, or `evaluate` called by hand), `null` when the read found no camera to film with.
+ */
+export function filmedCameraOf(inputs: ResolvedInputs): unknown {
+  return inputs[FILMED_CAMERA_KEY];
+}
+
 /**
  * #1668 — the id of the node behind each element of list socket `socket`, in wire order, when the
  * socket declared {@link InputDescriptor.sourceIds}; otherwise (not declared, or `evaluate` called
@@ -638,6 +651,15 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * (`setKeyedParams`), because keys live off the graph.
    */
   keyedCook?: boolean;
+  /**
+   * #1950 — this node films through a camera, and what it outputs depends on the camera ON SCREEN
+   * at the time being evaluated: the cut a switch's keys put there and that camera's keyed, aimed,
+   * parented pose. Keys live off the graph, so the evaluator asks a read registered above it
+   * (`setFilmedCamera`) and hands the answer over beside the inputs ({@link filmedCameraOf}), in
+   * the node's cache key by its value. The render passes declare it, so their `sourceHash` follows
+   * the camera the render draws with rather than the switch's authored one.
+   */
+  filmsCamera?: true;
   /**
    * #1811 — the bottom of a constraint chain: its world output is the world of the object this
    * param names BEFORE that object's chain (the parent's world times its own transform). A param
