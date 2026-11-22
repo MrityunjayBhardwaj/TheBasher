@@ -1,12 +1,14 @@
 // stackFrameModel — what the frame around the inspector's stacks shows (#1957, design board 14d).
 //
-// The frame is CHROME: a Modifiers · Constraints · Materials switch with counts, a flow strip in
+// The frame is one box: a Modifiers · Constraints · Materials switch with counts, a flow strip in
 // the order the stacks apply (Anim layers → Constraints → Modifiers), and the stack the switch picks,
-// drawn by the stack panels that already exist. This file answers, without a browser:
+// drawn inside it by the section bodies that drew it before (#1959). This file answers, without a
+// browser:
 //   - which object a selection's stacks hang off (the object, or the object a selected row is in);
 //   - which stacks apply to it, and how many rows each holds;
 //   - which stack a selected row belongs to, so picking a row keeps its stack up;
-//   - which stack shows: the selected row's, else the one last picked where it applies.
+//   - which stack shows: the selected row's, else the one last picked where it applies;
+//   - which inspector sections the frame takes in (#1959), so they are not drawn again outside it.
 //
 // A stack applies when its panel would draw something: modifiers and materials need a data lane
 // (`resolveDataKind`, the question their panels ask) whose kind can ever take them (not a camera
@@ -20,6 +22,7 @@
 //      src/app/stackTree.ts; src/timeline/animLayersModel.ts.
 
 import { getNodeType } from '../core/dag/registry';
+import type { SectionId } from './inspectorSections';
 import type { DagState } from '../core/dag/state';
 import { animLayersView } from '../timeline/animLayersModel';
 import { constraintStackEntries } from './constraintStack';
@@ -152,9 +155,45 @@ export function flowOf(view: StackFrameView): FlowStep[] {
   return out;
 }
 
-/** The stack that shows: the selected row's, else `stored` where it applies, else the first. */
-export function effectiveStack(view: StackFrameView, stored: StackKind): StackKind {
+/**
+ * The stack that shows: the selected row's, else `stored` where it applies, else the first.
+ *
+ * `drawable` (#1959) narrows "applies" to the stacks the inspector can draw for this selection: a
+ * selected data node carries its Material section but not its object's Modifier section, so a
+ * stored "Modifiers" would show an empty frame there. Left out, every offered stack counts.
+ */
+export function effectiveStack(
+  view: StackFrameView,
+  stored: StackKind,
+  drawable?: readonly StackKind[],
+): StackKind {
   if (view.member) return view.member;
-  if (view.stacks.some((s) => s.kind === stored)) return stored;
-  return view.stacks[0]?.kind ?? 'constraints';
+  const offered = view.stacks.map((s) => s.kind);
+  const candidates = drawable ? offered.filter((k) => drawable.includes(k)) : offered;
+  if (candidates.includes(stored)) return stored;
+  return candidates[0] ?? offered[0] ?? 'constraints';
+}
+
+/**
+ * The inspector sections that draw each stack (#1959): the frame draws these sections' bodies
+ * inside itself, and the inspector stops drawing them as separate cards. The constraints stack is
+ * two sections today (the classic edge-less list, and the stack panel on the object's lane).
+ */
+export const FRAME_SECTIONS: Record<StackKind, readonly SectionId[]> = {
+  modifiers: ['modifier'],
+  constraints: ['constraint', 'stack'],
+  materials: ['material'],
+};
+
+/**
+ * The stack whose frame takes `section` in, or null when the section stays a card of its own:
+ * no frame shows, the section draws no stack, or the frame does not offer that stack (a camera's
+ * frame has no Modifiers, so its Modifier section keeps saying why it stays empty).
+ */
+export function frameStackOf(view: StackFrameView | null, section: SectionId): StackKind | null {
+  if (!view) return null;
+  for (const stack of view.stacks) {
+    if (FRAME_SECTIONS[stack.kind].includes(section)) return stack.kind;
+  }
+  return null;
 }

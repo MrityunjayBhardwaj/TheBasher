@@ -14,7 +14,13 @@ import { attachStepOps } from '../core/dag/chainEdit';
 import { buildAddConstraintOps } from './constraintStack';
 import { buildAddMaterialOpOps, buildAddModifierOps, resolveStackBase } from './operatorStack';
 import { addLayerPlan } from '../timeline/animLayersModel';
-import { effectiveStack, flowOf, stackFrameOf as frameOf } from './stackFrameModel';
+import {
+  effectiveStack,
+  flowOf,
+  FRAME_SECTIONS,
+  frameStackOf,
+  stackFrameOf as frameOf,
+} from './stackFrameModel';
 import { resolveDataKind } from './modifierGeometry';
 
 const stackFrameOf = (state: DagState, id: string | null) =>
@@ -162,5 +168,58 @@ describe('effectiveStack — which stack shows', () => {
     expect(effectiveStack(member, 'modifiers')).toBe('constraints');
     const cameraLike = { ...view, stacks: view.stacks.filter((s) => s.kind === 'constraints') };
     expect(effectiveStack(cameraLike, 'modifiers')).toBe('constraints');
+  });
+});
+
+// #1959 — the frame holds the stack it shows: the sections that draw each stack go inside it.
+describe('frameStackOf — which inspector sections the frame takes in', () => {
+  it('takes the Modifier, Constraint, Constraint Stack and Material sections for the stacks it offers', () => {
+    const { state, box } = dressedBox();
+    const view = stackFrameOf(state, box)!;
+    expect(frameStackOf(view, 'modifier')).toBe('modifiers');
+    expect(frameStackOf(view, 'constraint')).toBe('constraints');
+    expect(frameStackOf(view, 'stack')).toBe('constraints');
+    expect(frameStackOf(view, 'material')).toBe('materials');
+    // Every other section stays a section of its own.
+    for (const other of ['transform', 'driver', 'mesh', 'slots', 'camera', 'light'] as const) {
+      expect(frameStackOf(view, other)).toBeNull();
+    }
+  });
+
+  it('leaves a section alone where the frame does not show, or does not offer its stack', () => {
+    expect(frameStackOf(null, 'modifier')).toBeNull();
+    const { state, box } = dressedBox();
+    const view = stackFrameOf(state, box)!;
+    // A camera's frame offers constraints only: its Modifier section keeps saying why.
+    const cameraLike = { ...view, stacks: view.stacks.filter((s) => s.kind === 'constraints') };
+    expect(frameStackOf(cameraLike, 'modifier')).toBeNull();
+    expect(frameStackOf(cameraLike, 'material')).toBeNull();
+    expect(frameStackOf(cameraLike, 'constraint')).toBe('constraints');
+  });
+
+  it('every stack the switch offers has a section to draw it', () => {
+    for (const kind of ['modifiers', 'constraints', 'materials'] as const) {
+      expect(FRAME_SECTIONS[kind].length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('effectiveStack — with the stacks the inspector can draw for this selection', () => {
+  it('shows a stack the selection can draw when the stored one cannot be drawn here', () => {
+    const { state, box, base } = dressedBox();
+    // The box's data node selected: only its material section is on screen.
+    const view = stackFrameOf(state, base)!;
+    expect(view.object).toBe(box);
+    expect(effectiveStack(view, 'modifiers', ['materials'])).toBe('materials');
+    expect(effectiveStack(view, 'materials', ['materials'])).toBe('materials');
+    // The object selected draws them all: the stored one wins.
+    const objectView = stackFrameOf(state, box)!;
+    expect(
+      effectiveStack(objectView, 'constraints', ['modifiers', 'constraints', 'materials']),
+    ).toBe('constraints');
+    // A selected row's stack wins whatever is drawn.
+    expect(effectiveStack({ ...objectView, member: 'modifiers' }, 'materials', ['materials'])).toBe(
+      'modifiers',
+    );
   });
 });

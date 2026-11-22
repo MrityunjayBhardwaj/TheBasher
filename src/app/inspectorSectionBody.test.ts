@@ -20,6 +20,7 @@ import { SECTION_IDS, paramToSection, type SectionId } from './inspectorSections
 import {
   SECTION_CONTROLS,
   SectionBody,
+  activeControlKeys,
   controlOwnedRowKeys,
   declaredParamKeys,
   makeSectionCtx,
@@ -295,6 +296,7 @@ function emitted(
   sectionId: Parameters<typeof SectionBody>[0]['sectionId'],
   ctx: SectionCtx,
   rows: readonly (readonly [string, unknown])[] = [],
+  skipControls?: ReadonlySet<ControlKey>,
 ): string[] {
   const out: string[] = [];
   const walk = (n: unknown): void => {
@@ -319,10 +321,45 @@ function emitted(
       rows: rows.map(([key, value]) => ({ key, value })),
       renderers: STUB_RENDERERS,
       renderRow: ({ key }) => `row:${key}`,
+      skipControls,
     }),
   );
   return out;
 }
+
+// #1959 — the stack frame draws one section from two nodes (the object's Modifier section, and
+// its data block's, which carries the modifiers' rows), and draws the list once.
+describe('#1959 skipControls — a control drawn already is not drawn again; its rows stay owned', () => {
+  const ctx = (type: string) =>
+    makeSectionCtx({ id: 'n', type, version: 1, params: {}, inputs: {} }, 'n', false);
+
+  it('activeControlKeys names exactly the controls the body draws', () => {
+    expect([...activeControlKeys('modifier', ctx('Object'))]).toEqual(['modifierStack']);
+    expect([...activeControlKeys('constraint', ctx('Object'))]).toEqual(['constraintStack']);
+    expect([...activeControlKeys('stack', ctx('Object'))]).toEqual(['constraintChain']);
+  });
+
+  it('drops the skipped control and keeps the rest of the body', () => {
+    const rows: [string, unknown][] = [['count', 2]];
+    expect(emitted('modifier', ctx('ArrayModifier'), rows)).toEqual([
+      'modifierStack(n,n)',
+      'row:count',
+    ]);
+    expect(
+      emitted('modifier', ctx('ArrayModifier'), rows, activeControlKeys('modifier', ctx('Object'))),
+    ).toEqual(['row:count']);
+  });
+
+  it('keeps a skipped control’s rows omitted, so they cannot surface as stray rows', () => {
+    const rows: [string, unknown][] = [
+      ['points', []],
+      ['closed', false],
+    ];
+    expect(emitted('curve', ctx('CurveData'), rows, new Set<ControlKey>(['curvePoints']))).toEqual([
+      'row:closed',
+    ]);
+  });
+});
 
 describe('#458 the shared dispatcher emits the same body for a data half as for a whole node', () => {
   /** The linked half of a split: params on the data node, pose on the Object. */

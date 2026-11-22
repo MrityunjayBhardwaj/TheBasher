@@ -365,6 +365,13 @@ function activeControls(sectionId: SectionId, ctx: SectionCtx): readonly Section
   return SECTION_CONTROLS[sectionId].filter((c) => c.applies(ctx));
 }
 
+/** The controls a section draws for `ctx`, by key. #1959: the stack frame draws one section's
+ *  body from two nodes (the object's and its data's), and passes the first body's keys to the
+ *  second as `skipControls`, so a stack list both would draw is drawn once. */
+export function activeControlKeys(sectionId: SectionId, ctx: SectionCtx): ReadonlySet<ControlKey> {
+  return new Set(activeControls(sectionId, ctx).map((c) => c.key));
+}
+
 /**
  * Which of a section's generic rows survive its custom controls.
  *
@@ -503,14 +510,17 @@ export function SectionBody<R extends SectionBodyRow>({
   rows,
   renderers,
   renderRow,
+  skipControls,
 }: {
   sectionId: SectionId;
   ctx: SectionCtx;
   rows: readonly R[];
   renderers: SectionControlRenderers;
   renderRow: (row: R) => ReactNode;
+  /** Controls drawn elsewhere already (#1959). Not drawn here; the rows they own stay omitted. */
+  skipControls?: ReadonlySet<ControlKey>;
 }) {
-  const active = activeControls(sectionId, ctx);
+  const active = activeControls(sectionId, ctx).filter((c) => !skipControls?.has(c.key));
   const { suppressAllRows, omitted } = sectionRowFilter(sectionId, ctx);
   const draw = (c: SectionControl) => <Fragment key={c.key}>{renderers[c.key](ctx)}</Fragment>;
   const at = (placement: 'before' | 'after') =>

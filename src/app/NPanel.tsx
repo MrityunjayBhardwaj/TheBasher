@@ -152,13 +152,16 @@ import {
 } from './inspectorSections';
 import {
   SectionBody,
+  activeControlKeys,
   controlOwnedRowKeys,
   makeSectionCtx,
+  type ControlKey,
   type SectionControlRenderers,
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { ComfyWorkflowSection } from './ComfyWorkflowSection';
-import { StackFrame } from './StackFrame';
+import { StackFrame, useStackFrameView } from './StackFrame';
+import { FRAME_SECTIONS, frameStackOf, type StackKind } from './stackFrameModel';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { WrapInRigConnector } from './animate/WrapInRigConnector';
@@ -3985,6 +3988,119 @@ function SectionCard({
   );
 }
 
+/** No sections: a stable reference for a selection with no linked data node. */
+const NO_SECTIONS: readonly SectionId[] = [];
+
+/**
+ * The cards the linked-data block draws: the base node's declared list, plus any section a row
+ * actually routes to that the base does not declare. Without the union an operator declaring a
+ * section its base does not — a material operator over a curve, say — would contribute rows to a
+ * card that is never drawn, and they would vanish with no signal. The base's order is preserved and
+ * the extras follow, so the common case (an operator declaring `material`, which every mesh data
+ * node already declares) is byte-identical.
+ *
+ * #394 P7 — a promoted control's home counts toward the card union for exactly the reason an
+ * operator's section does: a card that is never drawn is a row that vanishes, and a control is the
+ * one row whose disappearance also strands its drives.
+ *
+ * #1959 — a function of its own because the inspector asks it too: the stack frame draws the
+ * block's stack sections, and has to know which of them the block would draw.
+ */
+function linkedCardsOf(
+  declared: readonly SectionId[],
+  rows: readonly DerivedParam[],
+  promoted: readonly PromotedParam[],
+): readonly SectionId[] {
+  const { bySection } = groupExposedRows(rows);
+  const promotedSections = promoted
+    .map((r) => r.home.section)
+    .filter((s): s is SectionId => s !== null);
+  const extraSections = [...new Set([...bySection.keys(), ...promotedSections])].filter(
+    (s) => !declared.includes(s),
+  );
+  return extraSections.length ? [...declared, ...extraSections] : declared;
+}
+
+/**
+ * One card body of the linked-data block: the section's controls, its rows, and the promoted
+ * controls homed into it. Drawn inside the block's card, or (#1959) inside the stack frame for a
+ * stack section — the same body either way, so a row looks and edits the same in both places.
+ */
+function LinkedSectionBody({
+  sectionId,
+  dataNodeId,
+  objectNodeId,
+  canApply,
+  rows,
+  promoted,
+  skipControls,
+}: {
+  sectionId: SectionId;
+  dataNodeId: string;
+  objectNodeId: string;
+  canApply: boolean;
+  rows: readonly DerivedParam[];
+  promoted: readonly PromotedParam[];
+  /** Controls the frame already drew from the object's own section (#1959). */
+  skipControls?: ReadonlySet<ControlKey>;
+}) {
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dataNode = nodes[dataNodeId] ?? null;
+  if (!dataNode) return null;
+  const { bySection } = groupExposedRows(rows);
+  // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
+  // only while every row in this block came from the base — see the note on the `rows`
+  // prop of LinkedDataSections. (#518)
+  const valueOf = (row: DerivedParam) =>
+    (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
+  return (
+    <>
+      {/* #458 — the SAME table the main-node block dispatches through, which
+          is the whole point: a data node's custom section control can no
+          longer exist on one road and silently render nothing on the other.
+          This block used to carry a hand-copied `'curve'` arm, so CurveData
+          worked and every other custom section would have rendered empty.
+          Two ids: the data half owns these params, the Object poses it. */}
+      <SectionBody
+        sectionId={sectionId}
+        ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
+        rows={(bySection.get(sectionId) ?? []).map((row) => ({
+          key: row.paramPath,
+          value: valueOf(row),
+          // Two nodes in one card, and two operators in one lane can both own a
+          // `color` — so identity is the row's chain address, not its param name.
+          rowKey: row.relPath,
+          nodeId: row.nodeId,
+          maskedBy: row.maskedBy,
+          suppliedBy: row.suppliedBy,
+        }))}
+        renderers={SECTION_CONTROL_RENDERERS}
+        skipControls={skipControls}
+        renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
+          <ParamRow
+            key={rowKey}
+            nodeId={nodeId}
+            paramPath={key}
+            value={value}
+            maskedBy={maskedBy}
+            suppliedBy={suppliedBy}
+            // #529 — resolved from the ROW's node, not the selected one. These rows
+            // belong to the base data node AND to every operator above it.
+            overrideInfo={overrideInfoFor(nodes[nodeId], key)}
+          />
+        )}
+      />
+      {/* #394 P7 — the controls homed into this card. Drawn after the params so a
+          knob reads as standing in front of the rows it drives, not among them. */}
+      {promoted
+        .filter((r) => r.home.section === sectionId)
+        .map((r) => (
+          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+        ))}
+    </>
+  );
+}
+
 /**
  * #365 Phase 5a (Slice 1c) — the object↔data split reach for the inspector. A split Object's
  * geometry + material live on the BoxData it points at (its `data` input), NOT on the Object,
@@ -4001,6 +4117,7 @@ function LinkedDataSections({
   canApply,
   promoted,
   rows,
+  skip,
 }: {
   dataNodeId: string;
   objectNodeId: string;
@@ -4025,6 +4142,8 @@ function LinkedDataSections({
    *  as a separate prop from `rows` for the same reason `rows` is narrowed: they are drawn
    *  by a different component and must not be reachable from the derived path. */
   promoted: readonly PromotedParam[];
+  /** #1959 — the sections the stack frame draws inside itself, not drawn here again. */
+  skip?: (sectionId: SectionId) => boolean;
 }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dataNode = nodes[dataNodeId] ?? null;
@@ -4035,7 +4154,7 @@ function LinkedDataSections({
   // #386 — un-sectioned params render in an `unrouted` bucket rather than vanishing (the
   // H189 parity gap). That bucket is now the projection's `section: null` rows: it is a
   // real destination in the model, not an absence, which is why it survived the move.
-  const { bySection, unrouted } = groupExposedRows(rows);
+  const { unrouted } = groupExposedRows(rows);
 
   // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
   // only while every row in this block came from the base — see the note on the `rows`
@@ -4043,24 +4162,10 @@ function LinkedDataSections({
   const valueOf = (row: DerivedParam) =>
     (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
 
-  // Sections to draw: the base node's declared list, plus any section a row actually
-  // routes to that the base does not declare. Without the union an operator declaring a
-  // section its base does not — a material operator over a curve, say — would contribute
-  // rows to a card that is never drawn, and they would vanish with no signal. The base's
-  // order is preserved and the extras follow, so the common case (an operator declaring
-  // `material`, which every mesh data node already declares) is byte-identical.
-  // #394 P7 — a promoted control's home counts toward the card union for exactly the
-  // reason an operator's section does: a card that is never drawn is a row that vanishes,
-  // and a control is the one row whose disappearance also strands its drives.
-  const promotedSections = promoted
-    .map((r) => r.home.section)
-    .filter((s): s is SectionId => s !== null);
-  const extraSections = [...new Set([...bySection.keys(), ...promotedSections])].filter(
-    (s) => !declared.includes(s),
-  );
-  const cards: readonly SectionId[] = extraSections.length
-    ? [...declared, ...extraSections]
-    : declared;
+  const cards = linkedCardsOf(declared, rows, promoted).filter((id) => !skip?.(id));
+  // #1959 — every card of the block may be drawn by the stack frame instead (a glTF data node
+  // declares only 'material'); a block left with nothing to draw draws no "Data ·" label either.
+  if (cards.length === 0 && unrouted.length === 0) return null;
 
   return (
     <div data-testid="inspector-linked-data" className="flex flex-col">
@@ -4074,47 +4179,14 @@ function LinkedDataSections({
           sectionId={sectionId}
           declaredSections={declared}
         >
-          {/* #458 — the SAME table the main-node block dispatches through, which
-              is the whole point: a data node's custom section control can no
-              longer exist on one road and silently render nothing on the other.
-              This block used to carry a hand-copied `'curve'` arm, so CurveData
-              worked and every other custom section would have rendered empty.
-              Two ids: the data half owns these params, the Object poses it. */}
-          <SectionBody
+          <LinkedSectionBody
             sectionId={sectionId}
-            ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
-            rows={(bySection.get(sectionId) ?? []).map((row) => ({
-              key: row.paramPath,
-              value: valueOf(row),
-              // Two nodes in one card, and two operators in one lane can both own a
-              // `color` — so identity is the row's chain address, not its param name.
-              rowKey: row.relPath,
-              nodeId: row.nodeId,
-              maskedBy: row.maskedBy,
-              suppliedBy: row.suppliedBy,
-            }))}
-            renderers={SECTION_CONTROL_RENDERERS}
-            renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
-              <ParamRow
-                key={rowKey}
-                nodeId={nodeId}
-                paramPath={key}
-                value={value}
-                maskedBy={maskedBy}
-                suppliedBy={suppliedBy}
-                // #529 — resolved from the ROW's node, not the selected one. These rows
-                // belong to the base data node AND to every operator above it.
-                overrideInfo={overrideInfoFor(nodes[nodeId], key)}
-              />
-            )}
+            dataNodeId={dataNodeId}
+            objectNodeId={objectNodeId}
+            canApply={canApply}
+            rows={rows}
+            promoted={promoted}
           />
-          {/* #394 P7 — the controls homed into this card. Drawn after the params so a
-              knob reads as standing in front of the rows it drives, not among them. */}
-          {promoted
-            .filter((r) => r.home.section === sectionId)
-            .map((r) => (
-              <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-            ))}
         </SectionCard>
       ))}
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
@@ -5437,7 +5509,132 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
   const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
     overrideInfoFor(node, paramPath);
 
+  // #1959 — the stack frame draws the picked stack INSIDE itself, through the same section bodies
+  // the cards below drew it with, so those cards are not drawn again for this selection. A section
+  // the frame does not take (no frame shows, or its stack is not offered) stays a card as before.
+  const frameView = useStackFrameView(nodeId);
+  const linkedDeclared = useDagStore((s) =>
+    linkedDataId ? sectionsOf(s.state, linkedDataId) : NO_SECTIONS,
+  );
+  const framed = (sectionId: SectionId) => frameStackOf(frameView, sectionId) !== null;
+
   if (!node) return null;
+
+  // Group params by section. Params that don't route into any declared section land in a
+  // "raw" bucket rendered after the declared sections (typed under (complex — Pro mode) or
+  // string display — preserves zero param hiding while keeping unrouted params visible).
+  // #458 — this node is not the linked half of anything, so it plays both roles: it owns the
+  // params AND it is the posing object.
+  const sectionCtx = makeSectionCtx(node, node.id, canApply);
+  const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
+  const grouped: Map<SectionId, [string, unknown][]> = new Map();
+  const unrouted: [string, unknown][] = [];
+  for (const [key, value] of Object.entries((node.params ?? {}) as Record<string, unknown>)) {
+    if (isInputBinding(value)) continue; // socket binding, not param
+    if (refKeys?.has(key)) continue; // ref params render in the block above
+    // A param a custom control renders is never ALSO a row. Asked of the shared table rather
+    // than restated here, and asked before grouping because such a key need not route to any
+    // section at all — the per-submesh slot index does not, and would otherwise land in the
+    // unrouted bucket beside the selector that owns it.
+    if (ownedRowKeys.has(key)) continue;
+    const section = paramToSection(key, declared, node.type);
+    if (section === null) {
+      unrouted.push([key, value]);
+    } else {
+      if (!grouped.has(section)) grouped.set(section, []);
+      grouped.get(section)!.push([key, value]);
+    }
+  }
+  /** One of this node's section bodies: its controls, its rows, and the controls homed in it. */
+  const mainBody = (sectionId: SectionId) => (
+    <>
+      <SectionBody
+        sectionId={sectionId}
+        ctx={sectionCtx}
+        rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({ key, value }))}
+        renderers={SECTION_CONTROL_RENDERERS}
+        renderRow={({ key, value }) => (
+          <ParamRow
+            key={key}
+            nodeId={node.id}
+            paramPath={key}
+            value={value}
+            overrideInfo={makeOverrideInfo(key)}
+          />
+        )}
+      />
+      {/* #394 P7 — controls homed into THIS node's sections, drawn after the params they
+          stand in front of. */}
+      {promotedMain
+        .filter((r) => r.home.section === sectionId)
+        .map((r) => (
+          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+        ))}
+    </>
+  );
+  // The stack sections each block would draw, which the frame draws instead.
+  //
+  // The data block also grows a card for a section only its operators' rows route to: with
+  // modifiers on the box, a "Modifier" card under "Data · BoxData" carrying every modifier's own
+  // rows, unlabelled, one after another (collapsed by default). Inside the frame those rows would
+  // stand under the list with nothing saying which modifier each belongs to, and each is already
+  // its row's own settings, one pick away ("Pick a row: its settings open below"), and the
+  // object's own section already draws the list. So where the selected node draws a stack section
+  // itself, the frame drops the data block's operator-only card for it, unless a promoted control
+  // is homed in it (a control that vanishes strands its drives). An operator-only card for a
+  // section nothing else draws stays: a material operator over a curve has its rows nowhere else.
+  const mainFramed = declared.filter(framed);
+  const linkedFramed =
+    linkedDataId && linkedDeclared.length > 0
+      ? linkedCardsOf(linkedDeclared, linkedRows, promotedLinked)
+          .filter(framed)
+          .filter(
+            (id) =>
+              linkedDeclared.includes(id) ||
+              !mainFramed.includes(id) ||
+              promotedLinked.some((r) => r.home.section === id),
+          )
+      : [];
+  const drawable = [
+    ...new Set([...mainFramed, ...linkedFramed].map((id) => frameStackOf(frameView, id)!)),
+  ];
+  const renderStack = (kind: StackKind) => (
+    <>
+      {FRAME_SECTIONS[kind]
+        .filter((id) => mainFramed.includes(id))
+        .map((id) => (
+          <div key={`main-${id}`} data-testid={`stack-frame-section-${id}`} data-node={node.id}>
+            {mainBody(id)}
+          </div>
+        ))}
+      {linkedDataId
+        ? FRAME_SECTIONS[kind]
+            .filter((id) => linkedFramed.includes(id))
+            .map((id) => (
+              <div
+                key={`linked-${id}`}
+                data-testid={`stack-frame-section-${id}`}
+                data-node={linkedDataId}
+              >
+                <LinkedSectionBody
+                  sectionId={id}
+                  dataNodeId={linkedDataId}
+                  objectNodeId={node.id}
+                  canApply={canApply}
+                  rows={linkedRows}
+                  promoted={promotedLinked}
+                  // The same section drawn from both nodes (the object's Modifier section, and
+                  // the data block's, which carries the modifiers' own rows): its list once.
+                  skipControls={
+                    mainFramed.includes(id) ? activeControlKeys(id, sectionCtx) : undefined
+                  }
+                />
+              </div>
+            ))
+        : null}
+    </>
+  );
+
   return (
     <>
       <div className="border-b border-border px-3 py-2 text-fg/60">
@@ -5470,7 +5667,7 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
       <InspectorProposed nodeId={node.id} />
       <SelectedBoneSection />
       {/* #1957 — the frame around the stacks: which stack shows, and the order they apply in. */}
-      <StackFrame nodeId={node.id} />
+      <StackFrame nodeId={node.id} view={frameView} drawable={drawable} renderStack={renderStack} />
       {refParamMeta && (
         // The general node-ref picker block — one NodeRefField per declared ref param,
         // shown regardless of section mode (and even when the ref is unset).
@@ -5505,89 +5702,33 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
             ))}
         </div>
       ) : (
-        (() => {
-          // Group params by section. Params that don't route into
-          // any declared section land in a "raw" bucket rendered
-          // after the declared sections (typed under (complex —
-          // Pro mode) or string display — preserves zero param
-          // hiding while keeping unrouted params visible).
-          // #458 — this node is not the linked half of anything, so it plays
-          // both roles: it owns the params AND it is the posing object.
-          const sectionCtx = makeSectionCtx(node, node.id, canApply);
-          const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
-          const grouped: Map<SectionId, [string, unknown][]> = new Map();
-          const unrouted: [string, unknown][] = [];
-          for (const [key, value] of Object.entries(
-            (node.params ?? {}) as Record<string, unknown>,
-          )) {
-            if (isInputBinding(value)) continue; // socket binding, not param
-            if (refKeys?.has(key)) continue; // ref params render in the block above
-            // A param a custom control renders is never ALSO a row. Asked of
-            // the shared table rather than restated here, and asked before
-            // grouping because such a key need not route to any section at
-            // all — the per-submesh slot index does not, and would otherwise
-            // land in the unrouted bucket beside the selector that owns it.
-            if (ownedRowKeys.has(key)) continue;
-            const section = paramToSection(key, declared, node.type);
-            if (section === null) {
-              unrouted.push([key, value]);
-            } else {
-              if (!grouped.has(section)) grouped.set(section, []);
-              grouped.get(section)!.push([key, value]);
-            }
-          }
-          return (
-            <>
-              {declared.map((sectionId) => (
-                <SectionCard
-                  key={sectionId}
-                  nodeType={node.type}
-                  sectionId={sectionId}
-                  declaredSections={declared}
-                >
-                  <SectionBody
-                    sectionId={sectionId}
-                    ctx={sectionCtx}
-                    rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({
-                      key,
-                      value,
-                    }))}
-                    renderers={SECTION_CONTROL_RENDERERS}
-                    renderRow={({ key, value }) => (
-                      <ParamRow
-                        key={key}
-                        nodeId={node.id}
-                        paramPath={key}
-                        value={value}
-                        overrideInfo={makeOverrideInfo(key)}
-                      />
-                    )}
-                  />
-                  {/* #394 P7 — controls homed into THIS node's sections, drawn after
-                      the params they stand in front of. */}
-                  {promotedMain
-                    .filter((r) => r.home.section === sectionId)
-                    .map((r) => (
-                      <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-                    ))}
-                </SectionCard>
+        <>
+          {declared
+            .filter((sectionId) => !framed(sectionId))
+            .map((sectionId) => (
+              <SectionCard
+                key={sectionId}
+                nodeType={node.type}
+                sectionId={sectionId}
+                declaredSections={declared}
+              >
+                {mainBody(sectionId)}
+              </SectionCard>
+            ))}
+          {unrouted.length > 0 ? (
+            <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
+              {unrouted.map(([key, value]) => (
+                <ParamRow
+                  key={key}
+                  nodeId={node.id}
+                  paramPath={key}
+                  value={value}
+                  overrideInfo={makeOverrideInfo(key)}
+                />
               ))}
-              {unrouted.length > 0 ? (
-                <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
-                  {unrouted.map(([key, value]) => (
-                    <ParamRow
-                      key={key}
-                      nodeId={node.id}
-                      paramPath={key}
-                      value={value}
-                      overrideInfo={makeOverrideInfo(key)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </>
-          );
-        })()
+            </div>
+          ) : null}
+        </>
       )}
       {/* #365 Phase 5a (Slice 1c) — a split Object owns only the transform; its geometry +
           material live on the BoxData it points at via `data`. Render that data node's
@@ -5600,6 +5741,7 @@ export function NodeParams({ nodeId }: { nodeId: string }) {
           canApply={canApply}
           rows={linkedRows}
           promoted={promotedLinked}
+          skip={framed}
         />
       ) : null}
       {/* #394 P7 — a control neither block could place: its home names no section this
