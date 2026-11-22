@@ -6,7 +6,6 @@
 //
 // REF: issue #1817 and the mockup on #1815; src/app/stackTree.ts; src/app/stackEdit.ts.
 
-import { inputsOfNode } from '../core/dag/instanceSockets';
 import { getNodeType, listNodeTypes, mainInputOfType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { TEMPLATE_DEFINITION_TYPE, templatesOf } from '../core/dag/templates';
@@ -137,7 +136,7 @@ export function emptySockets(state: DagState, row: StackNodeRow): string[] {
   const node = state.nodes[row.nodeId];
   const def = getNodeType(row.nodeType);
   if (!node || !def) return [];
-  return Object.entries(inputsOfNode(def, node.params))
+  return Object.entries(def.inputs ?? {})
     .filter(([socket, input]) => !input.available && !input.body && !node.inputs[socket])
     .map(([socket]) => socket);
 }
