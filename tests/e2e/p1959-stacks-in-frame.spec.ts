@@ -4,8 +4,8 @@
 // frame, and the switch swaps what the frame draws.
 //
 // The box gets a Track To, an Array and a Bevel, and a material operator, through the panels' own
-// builders. A Null has no frame, so its Constraint sections stay cards; a camera's frame offers no
-// Modifiers, so its Modifier card keeps saying why it stays empty.
+// builders. A Null has no frame, so its Constraint sections stay cards; a camera's frame shows its
+// Modifiers as a tab it cannot take (#1960), so no Modifier card stays for it either.
 
 import type { Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
@@ -154,7 +154,7 @@ test('a row in the frame still selects, and its settings still edit', async ({ p
   await expect(page.getByTestId('inspector-section-modifier')).toHaveCount(0);
 });
 
-test('a node with no frame keeps its sections; a stack the frame does not offer keeps its card', async ({
+test('a node with no frame keeps its sections; a camera keeps no Modifier card', async ({
   page,
 }) => {
   // A Null is not an Object: no frame, so its Constraint and Constraint Stack stay cards.
@@ -175,14 +175,18 @@ test('a node with no frame keeps its sections; a stack the frame does not offer 
   await expect(page.getByTestId('inspector-section-constraint')).toBeVisible();
   await expect(page.getByTestId('inspector-section-stack')).toBeVisible();
 
-  // The camera's frame offers Constraints only. They are drawn in the frame; its Modifier card
-  // stays, saying why it is empty.
+  // The camera's frame opens on Constraints, drawn in the frame. Since #1960 its Modifiers are a
+  // tab it cannot take, inside the frame, so no Modifier card stays either.
   await select(page, 'n_camera');
   const frame = page.getByTestId('stack-frame');
   await expect(frame).toBeVisible();
   await expect(page.getByTestId('stack-frame-body')).toHaveAttribute('data-stack', 'constraints');
   await expect(page.getByTestId('inspector-section-constraint')).toHaveCount(0);
-  await expect(page.getByTestId('inspector-section-modifier')).toBeVisible();
+  await expect(frame.getByTestId('stack-frame-tab-modifiers')).toHaveAttribute(
+    'data-available',
+    'false',
+  );
+  await expect(page.getByTestId('inspector-section-modifier')).toHaveCount(0);
 });
 
 test('a selected data node shows the stack it carries, and another stack goes to the object', async ({

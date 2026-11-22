@@ -52,6 +52,12 @@ export interface StackSummary {
   readonly count: number;
   /** The node ids of the stack's rows, to tell which stack a selected row belongs to. */
   readonly members: readonly string[];
+  /**
+   * False where the object can never take this stack (#1960): a camera or a light has no mesh for
+   * a modifier to reshape. The switch still shows the tab, so the note saying why has a home inside
+   * the frame, but the frame never falls back to it and the flow strip leaves it out.
+   */
+  readonly available: boolean;
 }
 
 export interface StackFrameView {
@@ -93,7 +99,7 @@ function constraintSummary(state: DagState, object: string): StackSummary {
     .filter((row) => row.kind === 'node' && row.nodeType !== 'OwnWorld')
     .map((row) => row.nodeId);
   const members = [...new Set([...edgeless, ...wired])];
-  return { kind: 'constraints', count: members.length, members };
+  return { kind: 'constraints', count: members.length, members, available: true };
 }
 
 /** What a data node is (`resolveDataKind`, which evaluates); the caller supplies it with its cache. */
@@ -109,19 +115,36 @@ export function stackFrameOf(
   if (object === null) return null;
   const base = resolveStackBase(state, object);
   const kind = base !== object ? dataKindOf(state, base) : null;
-  // Where the panel could only say "never" (a camera, a light), the stack is not offered at all.
-  const offered = (section: 'modifier' | 'material') =>
-    kind !== null && dataSectionCapability(kind, section).state !== 'never';
+  // Where the panel could only say "never" (a camera, a light), the stack cannot be taken.
+  const never = (section: 'modifier' | 'material') =>
+    kind !== null && dataSectionCapability(kind, section).state === 'never';
+  const offered = (section: 'modifier' | 'material') => kind !== null && !never(section);
   const ids = (entries: readonly { nodeId: string }[]) => entries.map((e) => e.nodeId);
   const stacks: StackSummary[] = [];
   if (offered('modifier')) {
     const modifiers = ids(enumerateModifierStack(state, base));
-    stacks.push({ kind: 'modifiers', count: modifiers.length, members: modifiers });
+    stacks.push({
+      kind: 'modifiers',
+      count: modifiers.length,
+      members: modifiers,
+      available: true,
+    });
+  } else if (never('modifier')) {
+    // #1960 — the Object declares a Modifier section whatever its data, and that section's note
+    // ("Modifiers reshape mesh data…") is the answer to "why no modifiers here?". The frame owns
+    // it as a tab the object cannot take, so the inspector has one home for its stacks. Materials
+    // need no such tab: a camera's or a light's data declares no Material section at all.
+    stacks.push({ kind: 'modifiers', count: 0, members: [], available: false });
   }
   stacks.push(constraintSummary(state, object));
   if (offered('material')) {
     const materials = ids(enumerateMaterialStack(state, base));
-    stacks.push({ kind: 'materials', count: materials.length, members: materials });
+    stacks.push({
+      kind: 'materials',
+      count: materials.length,
+      members: materials,
+      available: true,
+    });
   }
   const layers = animLayersView(state, object);
   return {
@@ -149,7 +172,7 @@ export function flowOf(view: StackFrameView): FlowStep[] {
     out.push({ kind: 'animLayers', label: 'Anim layers', count: view.animLayers.count });
   }
   for (const kind of ['constraints', 'modifiers'] as const) {
-    const stack = view.stacks.find((s) => s.kind === kind);
+    const stack = view.stacks.find((s) => s.kind === kind && s.available);
     if (stack) out.push({ kind, label: STACK_LABELS[kind], count: stack.count });
   }
   return out;
@@ -161,15 +184,24 @@ export function flowOf(view: StackFrameView): FlowStep[] {
  * `drawable` (#1959) narrows "applies" to the stacks the inspector can draw for this selection: a
  * selected data node carries its Material section but not its object's Modifier section, so a
  * stored "Modifiers" would show an empty frame there. Left out, every offered stack counts.
+ *
+ * A stack the object cannot take (#1960) is never fallen back to, and a stored pick does not reach
+ * it: a camera opens on its Constraints even when a box's Modifiers were picked last. It shows only
+ * while `peek` names it, which is the frame saying the director picked that tab on this object.
  */
 export function effectiveStack(
   view: StackFrameView,
   stored: StackKind,
   drawable?: readonly StackKind[],
+  peek?: StackKind | null,
 ): StackKind {
   if (view.member) return view.member;
-  const offered = view.stacks.map((s) => s.kind);
-  const candidates = drawable ? offered.filter((k) => drawable.includes(k)) : offered;
+  const canDraw = (k: StackKind) => !drawable || drawable.includes(k);
+  if (peek && view.stacks.some((s) => s.kind === peek && !s.available) && canDraw(peek)) {
+    return peek;
+  }
+  const offered = view.stacks.filter((s) => s.available).map((s) => s.kind);
+  const candidates = offered.filter(canDraw);
   if (candidates.includes(stored)) return stored;
   return candidates[0] ?? offered[0] ?? 'constraints';
 }
@@ -187,8 +219,9 @@ export const FRAME_SECTIONS: Record<StackKind, readonly SectionId[]> = {
 
 /**
  * The stack whose frame takes `section` in, or null when the section stays a card of its own:
- * no frame shows, the section draws no stack, or the frame does not offer that stack (a camera's
- * frame has no Modifiers, so its Modifier section keeps saying why it stays empty).
+ * no frame shows, the section draws no stack, or the frame does not show that stack at all. A
+ * stack the object cannot take is still shown, as an unavailable tab (#1960), so a camera's
+ * Modifier section, with its note saying why the stack stays empty, is drawn inside the frame.
  */
 export function frameStackOf(view: StackFrameView | null, section: SectionId): StackKind | null {
   if (!view) return null;

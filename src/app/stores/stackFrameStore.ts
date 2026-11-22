@@ -42,16 +42,32 @@ function readPersisted(): StackKind {
   }
 }
 
+/** A tab the object cannot take, picked on that object (#1960). Not persisted: it shows the note
+ *  saying why the stack stays empty, and is no pick to come back to. */
+export interface StackFramePeek {
+  readonly object: string;
+  readonly stack: StackKind;
+}
+
 export interface StackFrameStore {
   stack: StackKind;
+  peek: StackFramePeek | null;
+  /** Pick a stack the object can take. Clears any peek. */
   setStack: (stack: StackKind) => void;
+  /** Pick a stack `object` cannot take, to read why. The stored pick is left as it was. */
+  setPeek: (peek: StackFramePeek | null) => void;
 }
 
 export const useStackFrameStore = create<StackFrameStore>((set) => ({
   stack: readPersisted(),
+  peek: null,
   setStack(stack) {
     if (!isStackKind(stack)) return;
-    set({ stack });
+    set({ stack, peek: null });
     safeSetItem(STORAGE_KEY, JSON.stringify({ stack }));
+  },
+  setPeek(peek) {
+    if (peek !== null && !isStackKind(peek.stack)) return;
+    set({ peek });
   },
 }));

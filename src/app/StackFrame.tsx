@@ -12,10 +12,15 @@
 // keeps its stack on. A stack this selection cannot draw (a selected data node carries only its
 // Material section) is reached by going back to the object, as picking another row's stack does.
 //
+// A stack the object cannot take (#1960: a camera's or a light's Modifiers) stays a tab, dimmed and
+// counted as not applicable. Picking it shows the Modifier section's note inside the frame, so a
+// camera has one home for its stacks; the pick is a look (not remembered), and the frame never
+// opens on it by itself.
+//
 // No stack presets exist yet, so there is no presets bar (one with nothing to offer would be a
 // dead control). The blend/influence bar and the per-row tools belong to the shared stack panel.
 //
-// REF: issues #1957, #1959; design board 14d; src/app/stackFrameModel.ts.
+// REF: issues #1957, #1959, #1960; design board 14d; src/app/stackFrameModel.ts.
 
 import { useMemo, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
@@ -65,12 +70,20 @@ export function StackFrame({
   const state = useDagStore((s) => s.state);
   const stored = useStackFrameStore((s) => s.stack);
   const setStack = useStackFrameStore((s) => s.setStack);
+  const peek = useStackFrameStore((s) => s.peek);
+  const setPeek = useStackFrameStore((s) => s.setPeek);
   if (!view) return null;
-  const shown = effectiveStack(view, stored, drawable);
+  const peeked = peek !== null && peek.object === view.object ? peek.stack : null;
+  const shown = effectiveStack(view, stored, drawable, peeked);
 
   function go(kind: StackKind) {
     if (!view) return;
-    setStack(kind);
+    // A stack the object cannot take (#1960) is a look at why, not a pick to remember.
+    if (view.stacks.some((s) => s.kind === kind && !s.available)) {
+      setPeek({ object: view.object, stack: kind });
+    } else {
+      setStack(kind);
+    }
     // A selected row keeps its own stack up; picking another stack goes back to the object. So does
     // a stack this selection carries no section for (a selected data node has no Modifier section).
     const otherRow = view.member !== null && view.member !== kind;
@@ -106,14 +119,31 @@ export function StackFrame({
             type="button"
             role="tab"
             aria-selected={shown === s.kind}
+            // #1960 — a stack this object cannot take: still a tab you can pick (it shows the note
+            // saying why), so not aria-disabled; dimmed, and counted as not applicable, not 0.
+            data-available={s.available}
+            title={
+              s.available
+                ? undefined
+                : `${nodeDisplayName(state.nodes, view.object)} cannot take ${STACK_LABELS[s.kind].toLowerCase()}`
+            }
             data-testid={`stack-frame-tab-${s.kind}`}
             onClick={() => go(s.kind)}
-            className={`${TAB} ${shown === s.kind ? 'bg-muted text-fg' : 'text-fg-dim hover:text-fg'}`}
+            className={`${TAB} ${
+              !s.available
+                ? // Italic and dim (fg-dim, as the contrast audit requires of a control's text),
+                  // even when picked: it reads as "not for this object" beside the stacks it takes.
+                  `italic text-fg-dim ${shown === s.kind ? 'bg-muted' : ''}`
+                : shown === s.kind
+                  ? 'bg-muted text-fg'
+                  : 'text-fg-dim hover:text-fg'
+            }`}
           >
             {STACK_LABELS[s.kind]}{' '}
             <span data-testid={`stack-frame-count-${s.kind}`} className="tabular-nums">
-              {s.count}
+              {s.available ? s.count : '–'}
             </span>
+            {s.available ? null : <span className="sr-only"> (not applicable)</span>}
           </button>
         ))}
       </div>
@@ -153,11 +183,14 @@ export function StackFrame({
           </ol>
         </nav>
       ) : null}
-      <p data-testid="stack-frame-selected" className="text-[11px] text-fg-dim">
-        {memberName !== null
-          ? `${memberName} · ${STACK_LABELS[shown]}: its settings follow below.`
-          : 'Pick a row: its settings open below.'}
-      </p>
+      {/* A stack the object cannot take has no rows to pick: its note says why instead. */}
+      {view.stacks.some((s) => s.kind === shown && !s.available) ? null : (
+        <p data-testid="stack-frame-selected" className="text-[11px] text-fg-dim">
+          {memberName !== null
+            ? `${memberName} · ${STACK_LABELS[shown]}: its settings follow below.`
+            : 'Pick a row: its settings open below.'}
+        </p>
+      )}
       <div data-testid="stack-frame-body" data-stack={shown} className="-mx-3 flex flex-col">
         {renderStack(shown)}
       </div>

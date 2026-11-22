@@ -113,8 +113,34 @@ describe('stackFrameOf', () => {
         state.nodes[(n.inputs.data as { node?: string } | undefined)?.node ?? '']?.type ===
           'CameraData',
     );
-    if (!camera) return; // the default scene's camera is not split: nothing to check
-    expect(stackFrameOf(state, camera.id)?.stacks.map((s) => s.kind)).toEqual(['constraints']);
+    if (!camera) throw new Error('the default scene has no split camera to check');
+    // #1960 — Modifiers stays as a tab the camera cannot take, so its note lives in the frame.
+    expect(
+      stackFrameOf(state, camera.id)?.stacks.map((s) => [s.kind, s.count, s.available]),
+    ).toEqual([
+      ['modifiers', 0, false],
+      ['constraints', 0, true],
+    ]);
+  });
+
+  it('a light, like a camera: an unavailable Modifiers tab, Constraints, and no Materials', () => {
+    const state = buildDefaultDagState();
+    const light = Object.values(state.nodes).find(
+      (n) =>
+        n.type === 'Object' &&
+        state.nodes[(n.inputs.data as { node?: string } | undefined)?.node ?? '']?.type ===
+          'LightData',
+    );
+    if (!light) throw new Error('the default scene has no split light to check');
+    expect(stackFrameOf(state, light.id)?.stacks.map((s) => [s.kind, s.available])).toEqual([
+      ['modifiers', false],
+      ['constraints', true],
+    ]);
+  });
+
+  it('a box can take every stack', () => {
+    const { state, box } = boxScene();
+    expect(stackFrameOf(state, box)?.stacks.every((s) => s.available)).toBe(true);
   });
 
   it('a character counts its pose layers above the base', async () => {
@@ -169,6 +195,29 @@ describe('effectiveStack — which stack shows', () => {
     const cameraLike = { ...view, stacks: view.stacks.filter((s) => s.kind === 'constraints') };
     expect(effectiveStack(cameraLike, 'modifiers')).toBe('constraints');
   });
+
+  // #1960 — a stack the object cannot take shows only while its tab is picked on that object.
+  it('never falls back to a stack the object cannot take; a peek at it shows it', () => {
+    const { state, box } = dressedBox();
+    const view = stackFrameOf(state, box)!;
+    const camera = {
+      ...view,
+      stacks: view.stacks
+        .filter((s) => s.kind !== 'materials')
+        .map((s) =>
+          s.kind === 'modifiers' ? { ...s, count: 0, members: [], available: false } : s,
+        ),
+    };
+    const drawable = ['modifiers', 'constraints'] as const;
+    expect(effectiveStack(camera, 'modifiers', drawable)).toBe('constraints');
+    expect(effectiveStack(camera, 'materials', drawable)).toBe('constraints');
+    expect(effectiveStack(camera, 'constraints', drawable, 'modifiers')).toBe('modifiers');
+    // A peek at a stack that is available, or that this selection cannot draw, changes nothing.
+    expect(effectiveStack(view, 'constraints', undefined, 'modifiers')).toBe('constraints');
+    expect(effectiveStack(camera, 'constraints', ['constraints'], 'modifiers')).toBe('constraints');
+    // The flow strip leaves an unavailable stack out.
+    expect(flowOf(camera).map((f) => f.kind)).toEqual(['constraints']);
+  });
 });
 
 // #1959 — the frame holds the stack it shows: the sections that draw each stack go inside it.
@@ -190,11 +239,27 @@ describe('frameStackOf — which inspector sections the frame takes in', () => {
     expect(frameStackOf(null, 'modifier')).toBeNull();
     const { state, box } = dressedBox();
     const view = stackFrameOf(state, box)!;
-    // A camera's frame offers constraints only: its Modifier section keeps saying why.
-    const cameraLike = { ...view, stacks: view.stacks.filter((s) => s.kind === 'constraints') };
-    expect(frameStackOf(cameraLike, 'modifier')).toBeNull();
-    expect(frameStackOf(cameraLike, 'material')).toBeNull();
-    expect(frameStackOf(cameraLike, 'constraint')).toBe('constraints');
+    // A frame without a Materials stack leaves the Material section alone.
+    const constraintsOnly = {
+      ...view,
+      stacks: view.stacks.filter((s) => s.kind === 'constraints'),
+    };
+    expect(frameStackOf(constraintsOnly, 'modifier')).toBeNull();
+    expect(frameStackOf(constraintsOnly, 'material')).toBeNull();
+    expect(frameStackOf(constraintsOnly, 'constraint')).toBe('constraints');
+  });
+
+  it("takes a camera's Modifier section in, as the unavailable tab that carries its note (#1960)", () => {
+    const state = buildDefaultDagState();
+    const camera = Object.values(state.nodes).find(
+      (n) =>
+        n.type === 'Object' &&
+        state.nodes[(n.inputs.data as { node?: string } | undefined)?.node ?? '']?.type ===
+          'CameraData',
+    )!;
+    const view = stackFrameOf(state, camera.id);
+    expect(frameStackOf(view, 'modifier')).toBe('modifiers');
+    expect(frameStackOf(view, 'material')).toBeNull();
   });
 
   it('every stack the switch offers has a section to draw it', () => {

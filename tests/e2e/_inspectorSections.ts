@@ -30,8 +30,9 @@
 // moved INTO the inspector's stack frame for a selection that has one: no card, no toggle;
 // the frame's switch picks which stack it draws. So "open the Material section" now means
 // "pick Materials in the frame" there, and still means "expand the card" where no frame shows
-// (a Null's constraints) or the frame does not offer the stack (a camera's modifiers). The
-// helper asks the page which of the two it is, rather than each spec guessing.
+// (a Null's constraints). Since #1960 a camera's or a light's modifiers are in the frame too, as a
+// tab the object cannot take. The helper asks the page which of the two it is, rather than each
+// spec guessing.
 
 import { expect, type Locator, type Page } from '@playwright/test';
 

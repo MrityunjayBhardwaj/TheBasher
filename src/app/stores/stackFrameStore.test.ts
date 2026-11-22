@@ -50,4 +50,17 @@ describe('stackFrameStore', () => {
     store.getState().setStack('nope' as never);
     expect(store.getState().stack).toBe('constraints');
   });
+
+  // #1960 — a tab the object cannot take is a look, not a pick: never saved, cleared by a pick.
+  it('a peek is not persisted, leaves the pick alone, and a pick clears it', async () => {
+    const store = await fresh();
+    store.getState().setStack('constraints');
+    store.getState().setPeek({ object: 'n_camera', stack: 'modifiers' });
+    expect(store.getState().peek).toEqual({ object: 'n_camera', stack: 'modifiers' });
+    expect(store.getState().stack).toBe('constraints');
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ stack: 'constraints' });
+    store.getState().setStack('materials');
+    expect(store.getState().peek).toBeNull();
+    expect((await fresh()).getState().peek).toBeNull();
+  });
 });
