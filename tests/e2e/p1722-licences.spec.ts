@@ -91,6 +91,10 @@ test.beforeEach(async ({ page }) => {
 test('a commercial compositor export lists the non-commercial model, and exports only once confirmed', async ({
   page,
 }) => {
+  // An export renders every frame of the comp (150), and CI renders in software: in one CI run the
+  // PNG export finished just past the default 60 s budget, its download notice already on screen.
+  // The work is real, so the budget triples (test.slow) rather than the work being skipped.
+  test.slow();
   await addNonCommercialMotion(page);
   await page.getByTestId('space-switch-video').click();
   await page.getByTestId('video-mode-new-comp').click();
@@ -150,7 +154,7 @@ test('a commercial compositor export lists the non-commercial model, and exports
   await page.getByTestId('video-mode-export-mp4').click();
   await expect(warning).toBeVisible();
   const [download] = await Promise.all([
-    page.waitForEvent('download', { timeout: 60_000 }),
+    page.waitForEvent('download', { timeout: 150_000 }),
     page.getByTestId('licence-warning-confirm').click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/\.(mp4|zip)$/);
@@ -182,6 +186,7 @@ test('File ▸ Render Animation raises the same warning, and a cancelled render 
 });
 
 test('with commercial use off, an export raises no warning', async ({ page }) => {
+  test.slow(); // the same 150-frame export as above
   await addNonCommercialMotion(page);
   await page.getByTestId('space-switch-video').click();
   await page.getByTestId('video-mode-new-comp').click();
@@ -196,7 +201,7 @@ test('with commercial use off, an export raises no warning', async ({ page }) =>
   });
   await page.getByTestId('video-mode-export').click();
   const [download] = await Promise.all([
-    page.waitForEvent('download', { timeout: 60_000 }),
+    page.waitForEvent('download', { timeout: 150_000 }),
     page.getByTestId('video-mode-export-png').click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/\.zip$/);
