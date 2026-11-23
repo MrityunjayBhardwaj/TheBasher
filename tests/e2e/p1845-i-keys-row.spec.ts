@@ -220,7 +220,9 @@ test('I over a field with no key says it cannot be keyed', async ({ page }) => {
   await boot(page, false);
   await select(page, 'e_f');
   // The curve name row's field, and the follow row: a field no diamond belongs to.
-  const field = page.locator('input[type="text"], select').first();
+  // Scoped to the inspector: the 2D View keeps its tabs mounted while hidden, and since #1718
+  // its Generated tab carries a select that comes first in the page.
+  const field = page.getByTestId('inspector').locator('input[type="text"], select').first();
   await field.hover();
   const before = await keyCount(page);
   await page.keyboard.press('i');

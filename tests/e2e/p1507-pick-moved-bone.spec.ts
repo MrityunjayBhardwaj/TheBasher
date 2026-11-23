@@ -51,10 +51,23 @@ async function clickBone(page: Page, name: string) {
         new THREE.Matrix4().fromArray(d.view),
       ),
     );
-  await page.mouse.click(
-    box.x + ((ndc.x + 1) / 2) * box.width,
-    box.y + ((1 - ndc.y) / 2) * box.height,
+  const cx = box.x + ((ndc.x + 1) / 2) * box.width;
+  const cy = box.y + ((1 - ndc.y) / 2) * box.height;
+  // #1708 — editor chrome (the live shot preview, the toolbars) floats over the viewport. A click
+  // that lands on it picks nothing and reads as "the bone was not picked": say what covers it.
+  const covered = await page.evaluate(
+    ([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      if (!el || el.tagName === 'CANVAS') return null;
+      return el.closest('[data-testid]')?.getAttribute('data-testid') ?? el.tagName;
+    },
+    [cx, cy] as const,
   );
+  expect(
+    covered,
+    `"${name}" at (${cx.toFixed(0)}, ${cy.toFixed(0)}) is under ${covered}`,
+  ).toBeNull();
+  await page.mouse.click(cx, cy);
 }
 const picked = (page: Page) =>
   page.evaluate(() => (window as unknown as W).__basher_bone.getState().boneName);
@@ -63,6 +76,12 @@ test('#1507 — a bone grown past where the rig first stood is still picked by a
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  // #1708 — the live shot preview floats over the bottom of the viewport, and at this framing its
+  // panel covers the first bone's middle. Collapsed to its caption, as acceptance #7 does, so the
+  // clicks reach the canvas.
+  await page.addInitScript(() =>
+    localStorage.setItem('basher.livePreview.v1', JSON.stringify({ collapsed: true })),
+  );
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
   // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.

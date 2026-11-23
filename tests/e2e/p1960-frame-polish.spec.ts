@@ -222,22 +222,27 @@ test("#1961 the pick-a-row line sits under the list, above the picked row's sett
   }
 });
 
-/** Every + Add button of `prefix` lies inside the inspector, and the rows are inset from its left. */
+/** Every + Add button of `prefix` lies inside the inspector, and the rows are inset from its left.
+ *
+ * #1967 — read in ONE round-trip. Each Playwright call costs ~1 s on CI's software renderer, and a
+ * call per button (box, label, box again) spent 31 s on the Modifiers stack alone, so the test ran
+ * out of its 60 s inside the third stack. The boxes are the same numbers either way. */
 async function expectInsideAndInset(page: Page, prefix: string, rowTestId: string | null) {
   const panel = (await page.getByTestId('inspector').boundingBox())!;
-  const buttons = page.locator(`[data-testid^="${prefix}-add-"]`);
-  const n = await buttons.count();
+  const buttons = await page.locator(`[data-testid^="${prefix}-add-"]`).evaluateAll((els) =>
+    els.map((el) => {
+      const r = el.getBoundingClientRect();
+      return { label: el.textContent, x: r.x, width: r.width, height: r.height };
+    }),
+  );
   // A zero here would make the edge check vacuous: every stack this spec dresses offers buttons.
-  expect(n, `${prefix}: + Add buttons`).toBeGreaterThan(1);
-  for (let i = 0; i < n; i++) {
-    const b = (await buttons.nth(i).boundingBox())!;
-    const label = await buttons.nth(i).textContent();
-    expect(b.x + b.width, `${label} right edge`).toBeLessThanOrEqual(panel.x + panel.width);
-    expect(b.x, `${label} left edge`).toBeGreaterThan(panel.x + 4);
+  expect(buttons.length, `${prefix}: + Add buttons`).toBeGreaterThan(1);
+  for (const b of buttons) {
+    expect(b.x + b.width, `${b.label} right edge`).toBeLessThanOrEqual(panel.x + panel.width);
+    expect(b.x, `${b.label} left edge`).toBeGreaterThan(panel.x + 4);
   }
   // Wrapped, not squeezed: each button keeps its label on one line.
-  const heights = new Set<number>();
-  for (let i = 0; i < n; i++) heights.add(Math.round((await buttons.nth(i).boundingBox())!.height));
+  const heights = new Set(buttons.map((b) => Math.round(b.height)));
   expect(heights.size, `${prefix}: one button height`).toBe(1);
   if (rowTestId) {
     const row = (await page.getByTestId(rowTestId).boundingBox())!;

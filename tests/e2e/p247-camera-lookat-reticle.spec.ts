@@ -73,6 +73,37 @@ async function rotationOf(page: import('@playwright/test').Page, objectId: strin
   }, objectId);
 }
 
+/** The canvas pixel the editor camera draws world point `p` at. */
+async function screenOf(
+  page: import('@playwright/test').Page,
+  p: [number, number, number],
+): Promise<[number, number]> {
+  const box = (await page.locator('canvas').first().boundingBox())!;
+  const m = await page.evaluate(() => {
+    const cam = (
+      window as unknown as {
+        __basher_three: {
+          getState: () => {
+            camera: {
+              projectionMatrix: { elements: number[] };
+              matrixWorldInverse: { elements: number[] };
+            };
+          };
+        };
+      }
+    ).__basher_three.getState().camera;
+    return { proj: [...cam.projectionMatrix.elements], view: [...cam.matrixWorldInverse.elements] };
+  });
+  const ndc = new THREE.Vector3(...p).applyMatrix4(
+    new THREE.Matrix4().multiplyMatrices(
+      new THREE.Matrix4().fromArray(m.proj),
+      new THREE.Matrix4().fromArray(m.view),
+    ),
+  );
+  expect(Math.abs(ndc.x) < 1 && Math.abs(ndc.y) < 1, 'the point is on the canvas').toBe(true);
+  return [box.x + ((ndc.x + 1) / 2) * box.width, box.y + ((1 - ndc.y) / 2) * box.height];
+}
+
 /** Where a camera at `position` with euler-degree `rotation` looks (its −Z). */
 function forwardOf(rotation: [number, number, number]): THREE.Vector3 {
   const e = new THREE.Euler(...rotation.map((d) => THREE.MathUtils.degToRad(d)), 'XYZ');
@@ -107,12 +138,16 @@ test.describe('#247 camera lookAt reticle', () => {
       (window as unknown as BasherWindow).__basher_camera_gizmo!(),
     );
     g0.aim!.forEach((v) => expect(v).toBeCloseTo(0, 3));
-    // The reticle sits at the world origin — screen-centre of the viewport — and is
-    // occluded by the cube, proving the depth-independent pick works.
-    await page.mouse.move(640, 394);
+    // The reticle sits at the world origin and is occluded by the cube, proving the
+    // depth-independent pick works. #1952 — where the origin lands on screen depends on the
+    // layout (the side panels start as rails, so the viewport is wider than it was), so the
+    // press is aimed by projecting the origin through the editor camera onto the canvas,
+    // not at a fixed pixel.
+    const [ox, oy] = await screenOf(page, [0, 0, 0]);
+    await page.mouse.move(ox, oy);
     await page.mouse.down();
-    await page.mouse.move(760, 300, { steps: 8 });
-    await page.mouse.move(800, 280, { steps: 8 });
+    await page.mouse.move(ox + 120, oy - 94, { steps: 8 });
+    await page.mouse.move(ox + 160, oy - 114, { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(120);
     // The camera turned: its own rotation moved…
