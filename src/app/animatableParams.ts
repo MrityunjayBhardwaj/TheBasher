@@ -113,6 +113,7 @@ export function animatableSubjectOf(state: DagState, nodeId: string): string | n
     projection?: unknown;
     kind?: unknown;
     rotationMode?: unknown;
+    materialSlots?: unknown;
   };
   // #1259 — a node in quaternion mode composes its `quaternion` and overwrites `rotation` with
   // it (`withResolvedRotation`), so the same param answers differently in each mode: it is a
@@ -123,8 +124,14 @@ export function animatableSubjectOf(state: DagState, nodeId: string): string | n
     const data = animatableSubjectOf(state, dataId);
     return data ? `Object<${data}>${mode}` : null;
   }
+  // #1928 — a data value with a material-slot TABLE is a different subject from a single-material
+  // one. The renderer reads `materialSlots ?? [material]`, so when the table is present `material.*`
+  // renders base-only (still) and `materialSlots.N.*` is what paints — the exact opposite of a
+  // single-material mesh, where `material.*` paints and there is no slot table. One census block
+  // cannot hold both answers for `material.*`, so the presence of the table splits the subject.
+  const slots = Array.isArray(params.materialSlots) ? '+slots' : '';
   const kind = params.lightKind ?? params.projection ?? params.kind;
-  return (typeof kind === 'string' ? `${node.type}:${kind}` : node.type) + mode;
+  return (typeof kind === 'string' ? `${node.type}:${kind}` : node.type) + slots + mode;
 }
 
 /**

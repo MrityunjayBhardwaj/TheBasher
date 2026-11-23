@@ -408,20 +408,36 @@ test(TITLE, async ({ page }) => {
       }
       // #1259 — an IMPORTED mesh: the importer writes rotation keys as quaternion channels onto
       // it, so a Quat channel's picker must be able to offer one. Only the importer makes a
-      // PolyMeshData, so the census imports a small static glTF (one embedded mesh, no animation,
+      // PolyMeshData, so the census imports small static glTFs (one embedded mesh, no animation,
       // no skin) through the door File ▸ Import uses, and refuses to go on if that door did not
       // produce an Object over a PolyMeshData.
+      //
+      // #1928 — TWO imports, because a material-slot TABLE makes a different subject. A
+      // single-material mesh (`cube.gltf`) renders `material.*` and has no slot table; a
+      // multi-material one (`two-material-quad.gltf`) renders `materialSlots.N.*` and reads
+      // `material.*` base-only (`materialSlots ?? [material]`). The picker must offer the slot
+      // paths on the second and not the dead `material.*`, so both subjects are measured here.
       {
-        const bytes = new Uint8Array(await (await fetch('/assets/cube.gltf')).arrayBuffer());
-        await w.__basher_ingestGltfFolder([{ relativePath: 'cube.gltf', bytes }], 'census-import');
-        await frames();
+        for (const file of ['cube.gltf', 'two-material-quad.gltf']) {
+          const bytes = new Uint8Array(await (await fetch(`/assets/${file}`)).arrayBuffer());
+          await w.__basher_ingestGltfFolder([{ relativePath: file, bytes }], `census-import-${file}`);
+          await frames();
+        }
         const nodes = dag().state.nodes as Record<string, Loose>;
         const imported = Object.entries(nodes).filter(
           ([, n]) => n.type === 'Object' && nodes[n.inputs?.data?.node]?.type === 'PolyMeshData',
         );
-        if (imported.length !== 1)
+        if (imported.length !== 2)
           throw new Error(
-            `the census import made ${imported.length} Objects over a PolyMeshData, expected 1`,
+            `the census import made ${imported.length} Objects over a PolyMeshData, expected 2`,
+          );
+        // One carries a slot table and one does not, or the two-subject split is not exercised.
+        const slotted = imported.filter(
+          ([, n]) => Array.isArray(nodes[n.inputs?.data?.node]?.params?.materialSlots),
+        ).length;
+        if (slotted !== 1)
+          throw new Error(
+            `the census needs exactly one slotted import and one single-material one, got ${slotted} slotted of 2`,
           );
       }
       /** The frame each composition composites at the playhead, hashed. */
