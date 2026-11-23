@@ -300,11 +300,20 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
     // The floating viewport toolbar is editor chrome over the viewport (now
     // top-anchored) — mask it for the same reason, so its position/contents
     // never tip the pure-DAG beauty diff.
+    // #1967 — the editor shell moved the outliner, inspector, toolbar band and timeline around
+    // on purpose (#1704 #1707 #1935 #1952), and each move tipped this beauty diff although the
+    // render was unchanged. Every island the shell floats over the viewport is masked, so the
+    // diff compares only the DAG render (the orbit gizmo is drawn in the canvas and stays in).
     mask: [
       page.getByTestId('fps-meter'),
       page.getByTestId('viewport-empty-hint'),
       page.getByTestId('floating-viewport-toolbar'),
+      page.getByTestId('floating-toolbar-band'),
       page.getByTestId('live-preview'),
+      page.getByTestId('tree-slot'),
+      page.getByTestId('inspector-slot'),
+      page.getByTestId('timeline-slot'),
+      page.getByTestId('projection-toggle'),
     ],
   });
 });
