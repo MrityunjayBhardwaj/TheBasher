@@ -67,7 +67,7 @@ export async function openInspectorSection(page: Page, sectionId: string): Promi
 }
 
 /** The stack each stack section is drawn in, inside the frame (#1959; `FRAME_SECTIONS`). */
-const FRAME_STACK: Readonly<Record<string, 'modifiers' | 'constraints' | 'materials'>> = {
+export const FRAME_STACK: Readonly<Record<string, 'modifiers' | 'constraints' | 'materials'>> = {
   modifier: 'modifiers',
   constraint: 'constraints',
   stack: 'constraints',
@@ -97,4 +97,54 @@ export function inspectorSectionBody(page: Page, sectionId: string): Locator {
     .getByTestId(`inspector-section-body-${sectionId}`)
     .or(page.getByTestId(`stack-frame-section-${sectionId}`))
     .first();
+}
+
+/** One section body the frame draws: its section id and the node it was drawn from. */
+export interface FrameDrawnSection {
+  readonly id: string;
+  readonly node: string | null;
+}
+
+/**
+ * Every section the stack frame draws for the current selection, across all its stacks (#1966):
+ * picks each tab in turn and reads the `stack-frame-section-*` bodies it draws. Empty where no
+ * frame shows. `undrawn` names the tabs that, picked, still leave another stack on show (the
+ * frame offers a stack the inspector draws no section for, e.g. a curve's Materials with no
+ * material operator on it). Leaves the frame on the stack it was showing.
+ */
+export async function frameDrawnSections(
+  page: Page,
+): Promise<{ sections: FrameDrawnSection[]; undrawn: string[] }> {
+  const frame = page.getByTestId('stack-frame');
+  const body = page.getByTestId('stack-frame-body');
+  if (!(await frame.isVisible())) return { sections: [], undrawn: [] };
+  const before = await body.getAttribute('data-stack');
+  const tabs = await frame
+    .locator('[data-testid^="stack-frame-tab-"]')
+    .evaluateAll((els) =>
+      els.map((el) => (el.getAttribute('data-testid') ?? '').replace('stack-frame-tab-', '')),
+    );
+  const sections: FrameDrawnSection[] = [];
+  const undrawn: string[] = [];
+  for (const tab of tabs) {
+    await frame.getByTestId(`stack-frame-tab-${tab}`).click();
+    // One committed render after the click: the frame has either switched or stayed.
+    await page.evaluate(
+      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+    );
+    if ((await body.getAttribute('data-stack')) !== tab) {
+      undrawn.push(tab);
+      continue;
+    }
+    sections.push(
+      ...(await frame.locator('[data-testid^="stack-frame-section-"]').evaluateAll((els) =>
+        els.map((el) => ({
+          id: (el.getAttribute('data-testid') ?? '').replace('stack-frame-section-', ''),
+          node: el.getAttribute('data-node'),
+        })),
+      )),
+    );
+  }
+  if (before && tabs.includes(before)) await frame.getByTestId(`stack-frame-tab-${before}`).click();
+  return { sections, undrawn };
 }

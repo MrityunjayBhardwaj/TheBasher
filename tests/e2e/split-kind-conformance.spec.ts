@@ -73,7 +73,9 @@
 //      src/app/nodeChannels.ts + src/timeline/NlaLanePane.tsx + dispatchMutator.ts (R8's
 //      two sides); issues #471, #387.
 
+import type { Locator } from '@playwright/test';
 import { test, expect, type Page } from './_fixtures';
+import { frameDrawnSections } from './_inspectorSections';
 import {
   dataIdFor,
   OBJECT_SECTIONS,
@@ -860,32 +862,65 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       // rendered. The registry gate already pins the descriptor to the declaration; what
       // it cannot see is whether the declaration reaches the DOM, and for the data half
       // that reach crosses the linked-data block rather than the selected node's own.
-      const { objectId } = await buildRow(page, kind);
+      const { objectId, dataId } = await buildRow(page, kind);
       await selectNode(page, objectId);
+      await expect(page.getByTestId('inspector-section-header-transform')).toBeVisible();
+
+      // #1959 moved the stack sections (Modifier, Constraint, Constraint Stack, Material) out of
+      // their cards and into the inspector's stack frame, which draws one stack at a time. So a
+      // declared section renders in exactly one of two places: its card's header, or a body the
+      // frame draws under one of its tabs. Read both, the frame across every tab it offers, and
+      // keep which node each frame body was drawn from: that is the reach the data half's rows
+      // are about.
+      const cardHeaders = async (scope: Locator) =>
+        scope
+          .locator('[data-testid^="inspector-section-header-"]')
+          .evaluateAll((els) =>
+            els.map((el) =>
+              (el.getAttribute('data-testid') ?? '').replace('inspector-section-header-', ''),
+            ),
+          );
+      const cards = await cardHeaders(page.locator('body'));
+      const { sections: framed, undrawn } = await frameDrawnSections(page);
+      if (undrawn.length > 0) {
+        // Recorded, not failed: the declared lists below are what this road pins, and a tab that
+        // draws nothing adds no section. Visible in the report so it is not lost.
+        test.info().annotations.push({
+          type: 'frame tabs that draw no section',
+          description: `${kind}: ${undrawn.join(', ')}`,
+        });
+      }
+      const framedFrom = (node: string) => framed.filter((f) => f.node === node).map((f) => f.id);
 
       // The Object's own sections come from the selected node directly. Same list for every
       // kind, so a failure here is the split's shared half breaking, not this kind's.
       for (const id of OBJECT_SECTIONS) {
-        await expect(
-          page.getByTestId(`inspector-section-${id}`),
-          `${kind}: the Object declares "${id}" but the inspector renders no such header`,
-        ).toBeVisible();
+        expect(
+          cards.includes(id) || framedFrom(objectId).includes(id),
+          `${kind}: the Object declares "${id}" but the inspector renders no such header, and the ` +
+            `stack frame draws no "${id}" section from the Object under any tab ` +
+            `(cards: ${JSON.stringify(cards)}; frame: ${JSON.stringify(framed)})`,
+        ).toBe(true);
       }
 
-      // The data half's sections have to arrive through the linked-data block — scoped to
-      // it deliberately. An unscoped lookup would pass if the section rendered anywhere on
-      // the panel, including from the Object's own list, and the reach is the claim.
+      // The data half's sections have to arrive through the linked-data block, or through a
+      // frame body drawn from the DATA node, scoped to it deliberately. An unscoped lookup would
+      // pass if the section rendered anywhere on the panel, including from the Object's own list,
+      // and the reach is the claim.
       const linked = page.getByTestId('inspector-linked-data');
       await expect(
         linked,
         `${kind}: no linked-data block, so nothing the data half declares can reach the panel`,
       ).toBeVisible();
+      const linkedCards = await cardHeaders(linked);
       for (const id of spec.dataSections) {
-        await expect(
-          linked.getByTestId(`inspector-section-${id}`),
-          `${kind}: ${spec.dataType} declares "${id}" but it does not render inside the ` +
-            `linked-data block — the section reaches the panel for the box and not for this kind`,
-        ).toBeVisible();
+        expect(
+          linkedCards.includes(id) || framedFrom(dataId).includes(id),
+          `${kind}: ${spec.dataType} declares "${id}" but it renders neither inside the ` +
+            `linked-data block nor as a frame section drawn from ${dataId} — the section reaches ` +
+            `the panel for the box and not for this kind ` +
+            `(linked cards: ${JSON.stringify(linkedCards)}; frame: ${JSON.stringify(framed)})`,
+        ).toBe(true);
       }
 
       // And nothing BEYOND the two declared lists. Without this the row would be satisfied
@@ -895,19 +930,20 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       // `inspector-section-` — the card, the header, the body and the toggle — so matching
       // the common prefix and subtracting the ones with a sub-prefix means the check has to
       // know the full list of families, and silently absorbs the next one added. One exact
-      // family has no such ambiguity, and the header is the thing this road is about.
-      const rendered = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('[data-testid^="inspector-section-header-"]')).map(
-          (el) => (el.getAttribute('data-testid') ?? '').replace('inspector-section-header-', ''),
-        ),
-      );
+      // family has no such ambiguity, and the header is the thing this road is about. The
+      // frame's bodies have one family of their own, `stack-frame-section-`.
       expect(
-        rendered.length,
+        cards.length,
         `${kind}: no section headers at all — the completeness check below would pass ` +
           `vacuously if the panel rendered nothing`,
       ).toBeGreaterThan(0);
+      const framedIds = framed.map((f) => f.id);
       expect(
-        [...new Set(rendered)].sort(),
+        [...new Set(cards)].filter((id) => framedIds.includes(id)),
+        `${kind}: a section is drawn both as a card and inside the stack frame`,
+      ).toEqual([]);
+      expect(
+        [...new Set([...cards, ...framedIds])].sort(),
         `${kind}: the panel renders sections the pair does not declare`,
       ).toEqual([...new Set([...OBJECT_SECTIONS, ...spec.dataSections])].sort());
     });
