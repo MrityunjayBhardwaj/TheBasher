@@ -41,10 +41,12 @@
 // that pipeline; the value lanes are the head.
 //
 // #1928 BOUNDARY (T1): a value row's RENDER road may apply only the BASE value, not the folded one.
-// Each row carries `rendersBaseOnly` — material params (`material.*`) are flagged true, so a surface
-// presents them with that caveat and never as a plain row (the one silent read≠render class this arc
-// kills). glTF-child TRS is a NAMED, deferred gap (no cheap imported-child predicate — see
-// `rendersBaseOnly`). Flips to all-false when #1928 wires those render roads to fold.
+// Each row carries `rendersBaseOnly` — material params (`material.*` / `materialSlots.*`) are flagged
+// true, so a surface presents them with that caveat and never as a plain row (the one silent
+// read≠render class this arc kills). glTF-child TRS was once listed here as a deferred gap; it is NOT
+// one — a native import's TRS folds and renders like any object's (the clone road that drew an Empty
+// is retired, #1053). Material is the single base-only case, and it flips to false when its render
+// road (`resolveMeshMaterial`) is wired to fold. See `rendersBaseOnly` for the full reasoning.
 //
 // read == render, cache-forwarded: the value adapters call `resolveEvaluatedParam` with the SAME
 // forwarded cache (`cache`), opening no cold eval origin of their own (#1386) — the surface stays a
