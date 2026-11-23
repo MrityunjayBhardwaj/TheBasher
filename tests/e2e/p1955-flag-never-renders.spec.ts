@@ -124,7 +124,7 @@ test('a flagged step shows in the viewport, never in a render or the live previe
   expect(p.diff / p.total, `preview differs on ${p.diff} of ${p.total} px`).toBeLessThan(0.002);
 
   await page.screenshot({
-    path: '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad/p1955-flagged.png',
+    path: test.info().outputPath('p1955-flagged.png'),
   });
 
   // A real click on the step the viewport shows selects the object (not its stand-in).

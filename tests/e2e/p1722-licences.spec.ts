@@ -17,9 +17,6 @@ import { openDrawerTab } from './_drawer';
 import { aBlockedRecord } from '../../src/core/licensing/blockedModelForTests';
 import { MODEL_RECORDS } from '../../src/core/licensing/allowedModels';
 
-const SHOTS =
-  '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad';
-
 /** A real checkpoint name the manifest blocks. */
 const BLOCKED = aBlockedRecord().name.split(',')[0]!.trim();
 const CLIP_NAME = 'Hero walk';
@@ -132,7 +129,7 @@ test('a commercial compositor export lists the non-commercial model, and exports
   await expect(
     warning.locator('[data-testid="licence-warning-part"][data-commercial="unknown"]'),
   ).toHaveCount(1);
-  await page.screenshot({ path: `${SHOTS}/p1722-export-warning.png` });
+  await page.screenshot({ path: test.info().outputPath('p1722-export-warning.png') });
 
   // Nothing renders while the warning waits — and Cancel keeps it that way.
   await page.waitForTimeout(1_000);
@@ -243,7 +240,7 @@ test('every Library tile shows its licence, and the details give the credit it n
     shelfRecord.attribution!,
   );
   await expect(details.getByTestId('library-details-licence-commercial')).toHaveText('Allowed');
-  await page.screenshot({ path: `${SHOTS}/p1722-library-credit.png` });
+  await page.screenshot({ path: test.info().outputPath('p1722-library-credit.png') });
 
   // An import is unknown — amber, never allowed — until its director says what it is.
   const mineBadge = page.getByTestId('library-licence-user-imports/my-walk/my-walk.bvh');
@@ -253,7 +250,7 @@ test('every Library tile shows its licence, and the details give the credit it n
   await expect(details.getByTestId('library-details-licence-commercial')).toHaveText(
     'Unknown — check the terms',
   );
-  await page.screenshot({ path: `${SHOTS}/p1722-library-badges.png` });
+  await page.screenshot({ path: test.info().outputPath('p1722-library-badges.png') });
   await details.getByTestId('library-details-licence-set').selectOption('cc-by');
   const credit = details.getByTestId('library-details-licence-credit-input');
   await credit.fill('“My walk” by A. Mover, CC BY 4.0');
@@ -262,5 +259,5 @@ test('every Library tile shows its licence, and the details give the credit it n
   await expect(details.getByTestId('library-details-licence-credit')).toHaveText(
     '“My walk” by A. Mover, CC BY 4.0',
   );
-  await page.screenshot({ path: `${SHOTS}/p1722-library-set-licence.png` });
+  await page.screenshot({ path: test.info().outputPath('p1722-library-set-licence.png') });
 });

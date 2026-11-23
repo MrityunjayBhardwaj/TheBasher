@@ -36,9 +36,6 @@ interface W {
   __basher_mesh_world_bounds: (id: string) => [number, number, number] | null;
 }
 
-const SHOTS =
-  '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad';
-
 async function boot(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
@@ -131,7 +128,7 @@ test('a node shows its values; editing one changes the scene, and I keys it', as
   await values.locator('[data-graph-value="size"]').hover();
   await page.keyboard.press('i');
   await expect.poll(keysOn).toBe(1);
-  await page.screenshot({ path: `${SHOTS}/p1953-values.png` });
+  await page.screenshot({ path: test.info().outputPath('p1953-values.png') });
 });
 
 test('N toggles the tab’s own panel, which lists the selected node’s settings', async ({
@@ -157,7 +154,7 @@ test('N toggles the tab’s own panel, which lists the selected node’s setting
       .getByTestId('graph-view-values-n_light_data')
       .getByTestId('inspector-input-n_light_data-decay'),
   ).toHaveCount(0);
-  await page.screenshot({ path: `${SHOTS}/p1953-panel.png` });
+  await page.screenshot({ path: test.info().outputPath('p1953-panel.png') });
 
   // N, with the Nodes tab the pane last worked in: folds it, and again unfolds it.
   await page.keyboard.press('n');
@@ -229,7 +226,7 @@ test('the view flag shows that node’s result in the viewport', async ({ page }
   // keeps its finished three for every render, hidden from the viewport while the step shows.
   await expect.poll(() => widthOf('n_box~viewing')).toBeLessThan(final / 2);
   expect(await width()).toBeCloseTo(final, 3);
-  await page.screenshot({ path: `${SHOTS}/p1953-viewing.png` });
+  await page.screenshot({ path: test.info().outputPath('p1953-viewing.png') });
   // Back to the scene: no stand-in, the final result again.
   await graph(page).getByTestId('graph-view-flag-n_box_data').click();
   await expect.poll(() => widthOf('n_box~viewing')).toBeNull();

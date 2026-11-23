@@ -22,9 +22,6 @@ import { toolbarControl } from './_toolbar';
 // #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
 test.use({ sidePanels: 'open' });
 
-const SHOTS =
-  '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad';
-
 interface DagNode {
   type: string;
   inputs: Record<string, { node?: string } | undefined>;
@@ -232,7 +229,7 @@ test('dragging a waypoint marks exactly that strip stale, and Re-cook clears it 
   expect((await drawnAt(page, 1)).matrices).toBe(drawnBefore.matrices);
   await drawnAt(page, 0);
   expect(calls).toHaveLength(2);
-  await page.screenshot({ path: `${SHOTS}/p1721-stale.png` });
+  await page.screenshot({ path: test.info().outputPath('p1721-stale.png') });
 
   // Now B's path moves too, so BOTH runs are behind: a Re-cook that cooked the scene rather than
   // the strip it sits on would show up here as a second call.
@@ -255,7 +252,7 @@ test('dragging a waypoint marks exactly that strip stale, and Re-cook clears it 
   expect((await nodesOf(page))[b.clip].params.sourceHash).toBe(bHash);
   await expect(stripB).toHaveAttribute('data-stale', 'true');
   await expect(page.getByTestId(`nla-gen-status-${a.clip}`)).toHaveText('up to date');
-  await page.screenshot({ path: `${SHOTS}/p1721-recooked.png` });
+  await page.screenshot({ path: test.info().outputPath('p1721-recooked.png') });
 
   // B's own Re-cook: one more call, B's.
   await page.getByTestId(`nla-gen-recook-${b.clip}`).click();

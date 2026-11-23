@@ -76,7 +76,7 @@ test('a fresh start shows both side panels as rails, the viewport filling the sp
   expect(clear / vp.width, 'the viewport fills the space between them').toBeGreaterThan(0.9);
 
   await page.screenshot({
-    path: '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad/p1952-fresh-rails.png',
+    path: test.info().outputPath('p1952-fresh-rails.png'),
   });
 });
 
@@ -148,7 +148,7 @@ test('opening a rail and reloading keeps it open; the other stays a rail', async
   await expect(page.getByTestId('inspector')).toHaveAttribute('data-collapsed', 'false');
   expect(await saved(page)).toEqual({ inspectorCollapsed: false });
   await page.screenshot({
-    path: '/private/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/eda82755-8702-4c9c-a8d7-95247e70fa04/scratchpad/p1952-inspector-opened.png',
+    path: test.info().outputPath('p1952-inspector-opened.png'),
   });
 
   await page.reload();
