@@ -65,6 +65,26 @@ function boxWithMaterialChannel(): DagState {
   ] as Op[]).next;
 }
 
+/** The REAL #425 scenario: the default box is split-native (`n_box` Object → `n_box_data` data), and
+ *  the inspector authors a material channel against the DATA node — not the Object. The director
+ *  selects the Object; the panel must still draw the row by reaching through the split. */
+const BOX_DATA_ID = 'n_box_data';
+function boxWithDataHalfMaterialChannel(): DagState {
+  return applyOps(buildDefaultDagState(), [
+    {
+      type: 'addNode',
+      nodeId: 'ch_dmetal',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'dataMetal',
+        target: BOX_DATA_ID,
+        paramPath: 'material.base.metalness',
+        keyframes: [{ time: 0, value: 0.4, easing: 'linear' }],
+      },
+    },
+  ] as Op[]).next;
+}
+
 describe('ObjectLayerSurfacePanel — the read-only surface reaches the DOM', () => {
   it('a bare object shows the empty line and no groups', () => {
     show(buildDefaultDagState(), BOX_ID);
@@ -79,6 +99,13 @@ describe('ObjectLayerSurfacePanel — the read-only surface reaches the DOM', ()
     expect(el('object-layer-group-channel')).not.toBeNull();
     expect(el('object-layer-row-channel')?.textContent).toContain('metal');
     expect(el('object-layer-row-base-only')).not.toBeNull(); // material renders base (#1928)
+  });
+
+  it('a data-half material channel still draws the channel group on the Object — reaches through (#425)', () => {
+    show(boxWithDataHalfMaterialChannel(), BOX_ID); // selected = the Object, channel on the data half
+    expect(el('object-layer-group-channel')).not.toBeNull();
+    expect(el('object-layer-row-channel')?.textContent).toContain('dataMetal');
+    expect(el('object-layer-row-base-only')).not.toBeNull(); // still the #1928 base-only caveat
   });
 
   it('a structural object (crate: modifiers + constraints) draws those groups, no caveat', () => {
