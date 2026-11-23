@@ -135,12 +135,13 @@ const STATIC_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
  *     that narrow copy silently misses `materialSlots.`, which reads as "no animated materials"
  *     (the exact bug that helper was centralised to prevent) and is a silent read≠render on the
  *     multi-material imported object #1928 calls out.
- *   - glTF-child transforms — DEFERRED, ON PURPOSE. There is no cheap runtime predicate for "this
- *     node is an imported glTF child", and a loose detector would MISLABEL honest rows (worse than a
- *     named gap). So a glTF-child TRS row is a KNOWN, documented gap until a child detector lands,
- *     guarded by a test that reds the day it becomes detectable (a decision you cannot take yet is a
- *     test that reds when it becomes takeable).
- * Flips to all-false when #1928 wires these render roads to fold.
+ *   - glTF-child transforms — NO GAP on the live road (#1053, re-measured). A native import is an
+ *     ordinary Object over a PolyMeshData, and its TRS folds and renders like any object's: the
+ *     census measures Object<PolyMeshData> position/rotation/scale (and quaternion in that mode) at
+ *     reach `scene`. The base-only concern was the RETIRED clone road, whose kept import draws an
+ *     Empty — nothing to render, so nothing to flag. A TRS path is therefore never base-only here,
+ *     and `rendersBaseOnly` correctly returns false for it (no imported-child detector needed).
+ * Material is the one base-only case; it flips to false when #1928 wires its render road to fold.
  */
 function rendersBaseOnly(paramPath: string): boolean {
   return isImportedChildMaterialPath(paramPath);

@@ -37,6 +37,8 @@ import type { EvalCtx, Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildCrateMockup } from '../test-utils/crateMockup';
+import { cylinderMesh } from '../test-utils/cylinderMesh';
+import { packMeshData } from './meshGeometryData';
 import { objectLayerSurface, type LaneGroup } from './objectLayerSurface';
 
 /** The default box Object, and a numeric data param the fold reads (default 0). */
@@ -509,11 +511,40 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
     for (const g of structural) for (const row of g.rows) expect(row.rendersBaseOnly).toBe(false);
   });
 
-  // glTF-child TRS renders base-only too (#1928), but there is no cheap runtime predicate for an
-  // imported glTF child, and a loose detector would mislabel honest rows. V208: this is the
-  // decision we cannot take yet — when a child predicate lands, add the glTF-child arm to
-  // `rendersBaseOnly` and make this a live assertion.
-  it.todo(
-    'flags a glTF-child TRS row rendersBaseOnly once an imported-child predicate exists (#1928)',
-  );
+  // #1928 TRS half — RESOLVED (V208: the decision is now takeable). The old todo deferred flagging
+  // a glTF-child TRS row base-only "once a child predicate exists". Re-measured: there is NO gap on
+  // the live road. A native import is an ordinary Object over a PolyMeshData whose TRS folds and
+  // renders (the census measures Object<PolyMeshData> position/rotation/scale at reach `scene`);
+  // the base-only case was the RETIRED clone road, whose kept import draws an Empty (#1053). So a
+  // native import's TRS row is correctly NOT flagged — and this reds if a future loose child
+  // detector wrongly flags honest native TRS.
+  it('a native import (Object over PolyMeshData) TRS row is NOT base-only — it renders (#1928)', () => {
+    const base = buildDefaultDagState();
+    const material = (base.nodes.n_box_data.params as { material: unknown }).material;
+    const state = applyOps(base, [
+      {
+        type: 'addNode',
+        nodeId: 'imp_data',
+        nodeType: 'PolyMeshData',
+        params: { mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })), material },
+      },
+      { type: 'addNode', nodeId: 'imp', nodeType: 'Object', params: {} },
+      { type: 'connect', from: { node: 'imp_data', socket: 'out' }, to: { node: 'imp', socket: 'data' } },
+      {
+        type: 'addNode',
+        nodeId: 'ch_imp_pos',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'impPos',
+          target: 'imp',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: 0, easing: 'linear' }],
+        },
+      },
+    ] as Op[]).next;
+    const channel = groupNamed(objectLayerSurface(state, 'imp', ctxAt(0)).groups, 'channel');
+    expect(channel).toBeDefined();
+    expect(channel!.rows[0].tag).toBe('position');
+    expect(channel!.rows[0].rendersBaseOnly).toBe(false);
+  });
 });
