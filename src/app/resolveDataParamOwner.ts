@@ -54,8 +54,17 @@ export function linkedDataNodeId(state: DagState, id: string): string | null {
  * the duplicate-path contract (a shared/fan-out data node cannot be created by any UI today).
  */
 export function posingObjectId(state: DagState, dataId: string): string | null {
-  if (!dataId || !state.nodes[dataId]) return null;
-  return posers(state.nodes).get(dataId) ?? null;
+  return posingObjectIdOf(state.nodes, dataId);
+}
+
+/**
+ * The nodes-table form of {@link posingObjectId}, for readers that hold only the node table and not
+ * the full state — the dopesheet's row builder, which labels a data-half channel by the Object that
+ * poses it. Same single `posers` projection; null when `dataId` is unknown or nothing poses it.
+ */
+export function posingObjectIdOf(nodes: DagState['nodes'], dataId: string): string | null {
+  if (!dataId || !nodes[dataId]) return null;
+  return posers(nodes).get(dataId) ?? null;
 }
 
 // #1757 — data id → the first node (in table order) that poses it, built once per node table

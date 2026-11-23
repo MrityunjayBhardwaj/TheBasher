@@ -181,6 +181,34 @@ describe('collectChannelRows', () => {
     expect(byId.box_pos_ch).toBe('n_box — position');
   });
 
+  it('labels a data-half channel by its posing Object, not the raw data id (#425)', () => {
+    // A split object: the Object `n_box` poses `n_box_data` via `data`. A material channel targets the
+    // DATA node (material lives there), so the label used to resolve the unnamed data id — a token
+    // that appears nowhere in the outliner and cannot be selected. It must read as the Object instead.
+    const obj = {
+      id: 'n_box',
+      type: 'Object',
+      inputs: { data: { node: 'n_box_data' } },
+      params: {},
+    } as unknown as Node;
+    const data = { id: 'n_box_data', type: 'BoxData', inputs: {}, params: {} } as unknown as Node;
+    const ch = {
+      id: 'mat_ch',
+      type: 'KeyframeChannelNumber',
+      inputs: {},
+      params: {
+        name: 'material.metalness',
+        paramPath: 'material.metalness',
+        target: 'n_box_data',
+        keyframes: [{ time: 0 }],
+      },
+    } as unknown as Node;
+    const rows = collectChannelRows({ n_box: obj, n_box_data: data, mat_ch: ch });
+    const row = rows.find((r) => r.channelId === 'mat_ch');
+    expect(row?.name).toBe('n_box — material.metalness'); // the posing Object, not the data id
+    expect(row?.name).not.toContain('n_box_data');
+  });
+
   it('leaves an already-qualified channel name untouched (baked-clip convention)', () => {
     // A baked bone channel carries a descriptive name (name !== paramPath); it
     // must NOT be re-qualified into "Skeleton — bone_1 — position".
