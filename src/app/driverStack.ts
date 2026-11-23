@@ -113,6 +113,36 @@ export function driverBandsForTarget(state: DagState, targetId: string): DriverB
     }));
 }
 
+/**
+ * The both-halves counterpart of {@link driverBandsForTarget} for a SPLIT object (#425): the
+ * driven bands on the Object AND on the data node it poses, merged by param path. A driver on a
+ * data-half param (material/size) targets the DATA id while a read surface is asked about the
+ * Object the director selected, so the exact-id form silently misses it. `dataId` is the caller's
+ * already-resolved `linkedDataNodeId` — this function stays free of the reach, mirroring
+ * `bareChannelNodesForSubject`; a null `dataId` (or one equal to `subjectId`) is a fused object and
+ * this reduces to `driverBandsForTarget`. Bands stay sorted by param path; the rare shared path
+ * concatenates (object entries first), so no param ever renders two sections.
+ */
+export function driverBandsForSubject(
+  state: DagState,
+  subjectId: string,
+  dataId: string | null,
+): DriverBand[] {
+  const own = driverBandsForTarget(state, subjectId);
+  if (!dataId || dataId === subjectId) return own;
+  const byPath = new Map<string, DriverBand>();
+  for (const band of [...own, ...driverBandsForTarget(state, dataId)]) {
+    const existing = byPath.get(band.paramPath);
+    byPath.set(
+      band.paramPath,
+      existing
+        ? { paramPath: band.paramPath, entries: [...existing.entries, ...band.entries] }
+        : band,
+    );
+  }
+  return [...byPath.values()].sort((a, b) => a.paramPath.localeCompare(b.paramPath));
+}
+
 /** Bypass / un-bypass a driver. (`mute` — same param name the constraint twin uses; the
  *  geometry modifier spells the same idea `muted`. The shared row component takes a
  *  normalized boolean, and each builder writes its own field.) */

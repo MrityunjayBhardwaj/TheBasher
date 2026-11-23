@@ -36,6 +36,7 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx, Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
+import { driverBandsForTarget } from './driverStack';
 import { buildCrateMockup } from '../test-utils/crateMockup';
 import { cylinderMesh } from '../test-utils/cylinderMesh';
 import { packMeshData } from './meshGeometryData';
@@ -546,5 +547,78 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
     expect(channel).toBeDefined();
     expect(channel!.rows[0].tag).toBe('position');
     expect(channel!.rows[0].rendersBaseOnly).toBe(false);
+  });
+
+  // #425 — the "what changes this" surface must reach through the object↔data split. A channel
+  // authored against the DATA half (material/size — its target is the data node, not the Object the
+  // director selected) renders through the fold but used to produce NO row here, so the surface was
+  // INCOMPLETE for a split object. The both-halves enumeration (linkedDataNodeId) closes it. Reds on
+  // the exact-id walk, which never sees the data node's channel.
+  it('a split object: a channel on the DATA half shows a row — the surface reaches through (#425)', () => {
+    const base = buildDefaultDagState();
+    const material = (base.nodes.n_box_data.params as { material: unknown }).material;
+    const state = applyOps(base, [
+      {
+        type: 'addNode',
+        nodeId: 'imp_data',
+        nodeType: 'PolyMeshData',
+        params: { mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })), material },
+      },
+      { type: 'addNode', nodeId: 'imp', nodeType: 'Object', params: {} },
+      { type: 'connect', from: { node: 'imp_data', socket: 'out' }, to: { node: 'imp', socket: 'data' } },
+      {
+        type: 'addNode',
+        nodeId: 'ch_mat',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'impSpec',
+          target: 'imp_data',
+          paramPath: 'material.specular.weight',
+          keyframes: [{ time: 0, value: 1, easing: 'linear' }],
+        },
+      },
+    ] as Op[]).next;
+    const channel = groupNamed(objectLayerSurface(state, 'imp', ctxAt(0)).groups, 'channel');
+    expect(channel).toBeDefined();
+    const row = channel!.rows.find((r) => r.tag === 'material.specular.weight');
+    expect(row).toBeDefined();
+    // read == render: the row's amount is the FOLDED data-half value (resolveEvaluatedParam reaches
+    // through the split), not a null placeholder — the row is complete, not just present.
+    expect(row!.influence).not.toBeNull();
+    // And it carries the #1928 honesty caveat: a material param renders base-only (resolveMeshMaterial
+    // reads the base), so the reached-through row is flagged, not silently presented as live.
+    expect(row!.rendersBaseOnly).toBe(true);
+  });
+
+  // #425 — the driver lane of the same surface. A ParamDriver on a DATA-half param targets the data
+  // node, so the exact-id enumeration (`driverBandsForTarget(state, objectId)`) is empty for the
+  // Object — the row can only appear via the both-halves reach. Asserting that emptiness keeps the
+  // test non-vacuous: it proves the driver truly lives on the data half.
+  it('a split object: a driver on the DATA half shows a row — the surface reaches through (#425)', () => {
+    const base = buildDefaultDagState();
+    const material = (base.nodes.n_box_data.params as { material: unknown }).material;
+    const state = applyOps(base, [
+      {
+        type: 'addNode',
+        nodeId: 'imp_data',
+        nodeType: 'PolyMeshData',
+        params: { mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })), material },
+      },
+      { type: 'addNode', nodeId: 'imp', nodeType: 'Object', params: {} },
+      { type: 'connect', from: { node: 'imp_data', socket: 'out' }, to: { node: 'imp', socket: 'data' } },
+      { type: 'addNode', nodeId: 'c_m', nodeType: 'Clamp', params: { min: 0.3, max: 1 } },
+      {
+        type: 'addNode',
+        nodeId: 'd_m',
+        nodeType: 'ParamDriver',
+        params: { target: 'imp_data', paramPath: 'material.metalness', blendMode: 'replace', order: 0 },
+      },
+      { type: 'connect', from: { node: 'c_m', socket: 'out' }, to: { node: 'd_m', socket: 'in' } },
+    ] as Op[]).next;
+    // The Object itself owns no driver — the row can only come from reaching the data half.
+    expect(driverBandsForTarget(state, 'imp')).toEqual([]);
+    const driver = groupNamed(objectLayerSurface(state, 'imp', ctxAt(0)).groups, 'driver');
+    expect(driver).toBeDefined();
+    expect(driver!.rows.some((r) => r.tag === 'material.metalness')).toBe(true);
   });
 });

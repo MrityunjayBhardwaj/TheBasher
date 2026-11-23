@@ -29,8 +29,8 @@
 // THE VALUE LANES (T0b, #1940): channel / strip / driver are NOT nodes in the `stackOf` walk —
 // they are folds inside `resolveEvaluatedParam` (`:98-156`, base → channels → strips → drivers →
 // mute, render-identical), each enumerated by its OWN function off the object id, not by walking
-// edges. So they need a per-lane ADAPTER rather than `layerView`: `channelEntriesFromNodes`,
-// `stripChannelValuesForTarget` and `driverBandsForTarget` each yield that lane's contributors, and
+// edges. So they need a per-lane ADAPTER rather than `layerView`: `bareChannelNodesForSubject`,
+// `stripChannelValuesForTarget` and `driverBandsForSubject` each yield that lane's contributors, and
 // the adapter maps each to the SAME `RowView` the structural lanes use. A value row's displayed
 // amount is the FOLDED param value — `resolveEvaluatedParam(state, objectId, paramPath, ctx, cache)`,
 // the render's own read — so read == render holds through each lane's native read, not one call.
@@ -54,19 +54,21 @@
 //      src/app/layerView.ts; src/app/stackTree.ts (`stackOf`); src/app/operatorStack.ts
 //      (`resolveStackObject`); src/app/operatorChain.ts (`rowLaneOfType`);
 //      src/app/resolveEvaluatedParam.ts (the value fold); src/app/driverStack.ts
-//      (`driverBandsForTarget`); src/app/layeredChannels.ts (`stripChannelValuesForTarget`);
-//      src/app/nodeChannels.ts (`channelEntriesFromNodes` / `directChannelNodesForTarget`).
+//      (`driverBandsForSubject`); src/app/layeredChannels.ts (`stripChannelValuesForTarget`);
+//      src/app/nodeChannels.ts (`channelEntriesFromNodes` / `bareChannelNodesForSubject`);
+//      src/app/resolveDataParamOwner.ts (`linkedDataNodeId`, the object↔data reach, #425).
 
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, SocketTypeName } from '../core/dag/types';
-import { driverBandsForTarget } from './driverStack';
+import { driverBandsForSubject } from './driverStack';
 import { isImportedChildMaterialPath } from './importedChild';
 import { formatValue, layerView, type RowView } from './layerView';
 import { stripChannelValuesForTarget } from './layeredChannels';
-import { channelEntriesFromNodes, directChannelNodesForTarget } from './nodeChannels';
+import { bareChannelNodesForSubject, channelEntriesFromNodes } from './nodeChannels';
 import { rowLaneOfType } from './operatorChain';
 import { resolveStackObject } from './operatorStack';
+import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { stackOf, type StackNodeRow, type StackRow } from './stackTree';
 import { stripTargetsOf } from './stripTargetIndex';
@@ -180,15 +182,15 @@ function valueRow(
  * the forwarded `cache`, the render's own read (read == render). A lane with no contributor yields
  * no group (no empty group). No kind is named: the three enumerators are the dispatch (G3).
  *
- * KNOWN LIMITATION (#425, the object↔data split — out of this surface's scope): the three value
- * enumerators key off the EXACT `objectId` (`directChannelNodesForTarget`, `driverBandsForTarget`,
- * `stripChannelValuesForTarget`), while the FOLDED value reads via `resolveEvaluatedParam`, which
- * DOES reach through the split (it folds a data-half channel into render). So on a SPLIT object
- * (imported glTF child, an explicit object↔data split) a channel/driver authored against the DATA
- * half renders but produces NO row here — "what changes this object" is INCOMPLETE for that object,
- * not wrong on a shown row. The fix is the both-halves form (`bareChannelValuesForSubject` + the
- * data id, `nodeChannels.ts:294`) and its driver/strip counterparts; it belongs with #425, not here,
- * so it is a named gap, not a silent one.
+ * THE SPLIT (#425): a channel or driver authored against a DATA-half param (material/size) targets
+ * the DATA node, while the surface is asked about the Object the director selected — so an exact-id
+ * enumeration would render but produce NO row, leaving "what changes this object" INCOMPLETE on a
+ * split object (imported mesh, an explicit object↔data split). The channel and driver lanes reach
+ * through with the both-halves form (`bareChannelNodesForSubject` / `driverBandsForSubject` + the
+ * `linkedDataNodeId` reach), the SAME pair the render fold uses, so the rows match what renders. The
+ * STRIP lane needs no reach: a Strip carries ONE `target` and management always mints it on the
+ * Object (V112 — animation aggregates under the Object; see `posingObjectId`), so a data-half strip
+ * does not exist.
  */
 function valueLaneGroups(
   state: DagState,
@@ -204,12 +206,17 @@ function valueLaneGroups(
     return resolved ? formatValue(resolved.value) : null;
   };
 
-  // channel — every KEYED KeyframeChannel targeting the object, normalized to its declared value
-  // (name, param path and mute read off `KeyframeChannelValue`, never an inline cast of raw params),
-  // one row per channel. A channel with no keyframes contributes nothing, so it is no contributor.
-  // Symmetric with the strip path below — both read the normalized value the fold consumes.
+  // The data half this object poses (null when fused), so the channel and driver lanes reach through
+  // the object↔data split exactly as the render fold does (#425).
+  const dataId = linkedDataNodeId(state, objectId);
+
+  // channel — every KEYED KeyframeChannel targeting the object OR its data half, normalized to its
+  // declared value (name, param path and mute read off `KeyframeChannelValue`, never an inline cast
+  // of raw params), one row per channel. A channel with no keyframes contributes nothing, so it is
+  // no contributor. Symmetric with the strip path below — both read the normalized value the fold
+  // consumes.
   const channelRows = channelEntriesFromNodes(
-    directChannelNodesForTarget(state.nodes, objectId),
+    bareChannelNodesForSubject(state.nodes, objectId, dataId),
   ).map(({ node, value: v }) =>
     valueRow('channel', v.name, v.paramPath, v.mute === true, folded(v.paramPath), node.id),
   );
@@ -224,9 +231,9 @@ function valueLaneGroups(
       )
     : [];
 
-  // driver — every driven param BAND, one row per contributor (its driver source name + its own
-  // node), the SAME bottom → top order `DriverStackControls` renders.
-  const driverRows = driverBandsForTarget(state, objectId).flatMap((band) =>
+  // driver — every driven param BAND on the object OR its data half, one row per contributor (its
+  // driver source name + its own node), the SAME bottom → top order `DriverStackControls` renders.
+  const driverRows = driverBandsForSubject(state, objectId, dataId).flatMap((band) =>
     band.entries.map((e) =>
       valueRow('driver', e.label, band.paramPath, e.muted, folded(band.paramPath), e.nodeId),
     ),
