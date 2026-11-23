@@ -49,6 +49,19 @@ export function seedTestRegistry(): void {
     },
   });
 
+  // #1963 — a node with an ARRAY param, so a setParam into an array index can be exercised. The
+  // schema is `z.array`, so a write that turned the array into an object is REJECTED here.
+  registerNodeType<{ rows: { v: number }[] }, number>({
+    type: 'TestArray',
+    version: 1,
+    pure: true,
+    cost: 'cheap',
+    paramSchema: z.object({ rows: z.array(z.object({ v: z.number() })) }),
+    inputs: {},
+    outputs: { out: { type: 'Number', cardinality: 'single' } },
+    evaluate: (params) => params.rows.reduce((acc, r) => acc + r.v, 0),
+  });
+
   let counter = 0;
   registerNodeType<Record<string, unknown>, number>({
     type: 'TestImpureCounter',

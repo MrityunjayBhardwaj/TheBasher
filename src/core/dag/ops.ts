@@ -101,8 +101,12 @@ function setAtPath(obj: unknown, path: string, value: unknown): unknown {
   for (let i = 0; i < parts.length - 1; i++) {
     const key = parts[i];
     const existing = cur[key];
-    const cloned: Record<string, unknown> =
-      existing && typeof existing === 'object' && !Array.isArray(existing)
+    // #1963 — preserve an array AS an array (shallow clone) so a numeric segment indexes it
+    // rather than replacing it with a fresh object (which drops every entry and fails the
+    // schema). This mirrors the render-side path writer `writeAt`/`copyForWrite`.
+    const cloned: Record<string, unknown> = Array.isArray(existing)
+      ? ([...existing] as unknown as Record<string, unknown>)
+      : existing && typeof existing === 'object'
         ? { ...(existing as Record<string, unknown>) }
         : {};
     cur[key] = cloned;
