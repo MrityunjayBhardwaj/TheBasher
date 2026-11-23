@@ -241,11 +241,14 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     ]);
   });
 
-  it('`mute` — the SECOND vocabulary — is declared twelve times in source, eleven on node types', () => {
+  it('`mute` — the SECOND vocabulary — is declared fourteen times in source, twelve on node types', () => {
     // Two spellings of one concept, and nothing anywhere relates them. A new operator that
     // picks the wrong one gets a mute button that does nothing.
     expect(zodDeclarations('mute').map(([path]) => path)).toEqual([
-      // NOT a node declaration: an agent mutator's INPUT schema — a consumer of the field.
+      // NOT node declarations: agent mutators' INPUT schemas — consumers of the field.
+      // #1927 — setPoseLayerState sets a PoseLayer's weight/mute/solo; it takes the animation
+      // layer's word `mute` (PoseLayer's own vocabulary), not the operators' `muted`.
+      'src/agent/mutators/builders/setPoseLayerState.ts',
       'src/agent/mutators/builders/setTrackState.ts',
       'src/nodes/FollowPath.ts',
       'src/nodes/KeyframeChannelColor.ts',
@@ -280,7 +283,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 24 -> 25 at #1240, on the `mute` side: `PoseLayer` is an animation layer, not an operator.
     // 25 -> 26 at #1353, on the `muted` side: `CaptureModifier` names the param its bypass names.
     // 26 -> 27 at #1879, on the `muted` side: `Layer` names the param its bypass names.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(27);
+    // 27 -> 28 at #1927, on the `mute` side: `setPoseLayerState`, an agent mutator consuming a
+    // PoseLayer's `mute` — NOT a node type, so `registeredDeclaring('mute')` is unchanged.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(28);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);

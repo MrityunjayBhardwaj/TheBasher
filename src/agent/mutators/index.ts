@@ -55,6 +55,7 @@ import { setTrackStateMutator } from './builders/setTrackState';
 import { setComponentScopeMutator } from './builders/setComponentScope';
 import { poseBoneMutator } from './builders/poseBone';
 import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
+import { setPoseLayerStateMutator } from './builders/setPoseLayerState';
 import { renameBoneMutator } from './builders/renameBone';
 import { editSkeletonMutator } from './builders/editSkeleton';
 import { addIkMutator } from './builders/addIk';
@@ -97,6 +98,7 @@ export {
   setComponentScopeMutator,
   poseBoneMutator,
   setPoseMemberModeMutator,
+  setPoseLayerStateMutator,
   renameBoneMutator,
   editSkeletonMutator,
   addIkMutator,
@@ -199,6 +201,9 @@ export function registerAllMutators(): void {
   registerMutator(poseBoneMutator);
   // #1242 — a pose layer member's rotation mode, converted or resampled.
   registerMutator(setPoseMemberModeMutator);
+  // #1927 — a pose LAYER's weight / mute / solo (the stack row's layer state).
+  // requiredNodeTypes:['PoseLayer'] is the honest V14 discriminator vs setPoseMemberMode / setTrackState.
+  registerMutator(setPoseLayerStateMutator);
   // #1201 — rename a bone, and every record that names it.
   registerMutator(renameBoneMutator);
   registerMutator(editSkeletonMutator);
