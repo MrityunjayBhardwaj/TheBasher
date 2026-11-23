@@ -124,22 +124,25 @@ describe('editing through the panel', () => {
     expect(dag()).toBe(before);
   });
 
-  // Apply order, first applied on top (2026-11-09): the data lane reads Box, Bevel, Array, Mirror.
-  it('a run reads in apply order, and its ends cannot move past themselves', () => {
+  // Last applied on top (2026-11-22): the data lane reads Mirror, Array, Bevel, Box top to bottom.
+  it('a run reads last-applied on top, and its ends cannot move past themselves', () => {
     show(m.crate);
     const rows = [...container.querySelectorAll('[data-testid^="s-row-"]')].map((e) =>
       e.getAttribute('data-testid')!.slice('s-row-'.length),
     );
     const box = (dag().nodes.bevel.inputs.target as NodeRef).node;
-    const lane = rows.filter((id) => [box, 'bevel', 'array', 'mirror'].includes(id));
-    expect(lane).toEqual([box, 'bevel', 'array', 'mirror']);
-    expect((el(`s-up-${box}`) as HTMLButtonElement).disabled).toBe(true);
-    expect((el('s-down-mirror') as HTMLButtonElement).disabled).toBe(true);
+    const lane = rows.filter((id) => ['mirror', 'array', 'bevel', box].includes(id));
+    expect(lane).toEqual(['mirror', 'array', 'bevel', box]);
+    // Mirror (last applied) sits at the top: it cannot move further up. Box (the base) at the
+    // bottom: it cannot move further down.
+    expect((el('s-up-mirror') as HTMLButtonElement).disabled).toBe(true);
+    expect((el(`s-down-${box}`) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('▲ moves a row earlier in apply order, by one undo', () => {
+  it('▼ moves a row earlier in apply order, by one undo', () => {
     show(m.crate);
-    click('s-up-mirror');
+    // Mirror is on top (the output); ▼ moves it one place earlier in apply order.
+    click('s-down-mirror');
     expect((dag().nodes[m.crate.node].inputs.data as NodeRef).node).toBe('array');
     expect((dag().nodes.array.inputs.target as NodeRef).node).toBe('mirror');
     act(() => useDagStore.getState().undo());

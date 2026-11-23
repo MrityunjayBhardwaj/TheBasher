@@ -335,15 +335,15 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
             <span
               className={`items-center gap-1 ${active ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'}`}
             >
-              {/* Drawn in apply order, so ▲ is earlier: one place further from the output, which
-                  is a higher index in the edit's run (0 = the row the output reads). */}
+              {/* Drawn last-applied on top, so ▲ is LATER: one place toward the output, which is a
+                  lower index in the edit's run (0 = the row the output reads, the top row). */}
               <button
                 type="button"
                 data-testid={`${p}-up-${row.key}`}
                 className={BTN}
-                disabled={index === run_.length - 1}
-                title="Move up (applied earlier)"
-                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
+                disabled={index === 0}
+                title="Move up (applied later)"
+                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
               >
                 ▲
               </button>
@@ -351,9 +351,9 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                 type="button"
                 data-testid={`${p}-down-${row.key}`}
                 className={BTN}
-                disabled={index === 0}
-                title="Move down (applied later)"
-                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
+                disabled={index === run_.length - 1}
+                title="Move down (applied earlier)"
+                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
               >
                 ▼
               </button>
@@ -472,13 +472,13 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
   }
 
   /**
-   * A flat run in apply order: what is applied first on top, read top to bottom as a person reads
-   * (the user's decision, 2026-11-09, as Blender's Modifier and Constraint tabs list them). The tree
-   * holds a run output-first, so it is drawn reversed, and each row keeps its index in the tree's
-   * order, which is what the edits speak.
+   * A flat run, LAST applied on top, read top to bottom (the user's decision, 2026-11-22,
+   * superseding the 2026-11-09 first-on-top order). The tree already holds a run output-first — the
+   * last-applied step's output is the run's result — so it is drawn in tree order, and each row
+   * keeps its index in the tree's order, which is what the edits speak.
    */
   function renderRun(list: readonly StackRow[], named: string | null = null): ReactNode {
-    const applied = list.map((row, i) => ({ row, i })).reverse();
+    const applied = list.map((row, i) => ({ row, i }));
     return (
       <div className="flex flex-col gap-0.5">
         {applied.map(({ row, i }) =>
