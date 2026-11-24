@@ -343,8 +343,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
-      'Layer', // #1879
       'FollowPath', // #1894 S0b — the second constraint step, now a chain declarer
+      'Layer', // #1879
       'MaskModifier',
       'MaterialOverride',
       'MaterialOverrideOp',

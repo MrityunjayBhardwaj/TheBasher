@@ -183,8 +183,8 @@ describe('#396 — the chain spine is declared, not named', () => {
       'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
-      'Layer', // image lane — a composition's layer stack (#1879, the first with a SIDE picture)
       'FollowPath', // constraint lane — Matrix4 (#1894 S0b, carried on `world`)
+      'Layer', // image lane — a composition's layer stack (#1879, the first with a SIDE picture)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material

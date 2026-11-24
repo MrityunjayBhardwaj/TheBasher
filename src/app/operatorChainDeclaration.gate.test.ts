@@ -94,8 +94,8 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
-      'Layer', // image lane — a composition's layer stack (#1879)
       'FollowPath', // constraint lane — Matrix4 (#1894 S0b, the second worldStep step)
+      'Layer', // image lane — a composition's layer stack (#1879)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
@@ -273,20 +273,21 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     expect(noneBypass.filter((t) => !noneSection.includes(t))).toEqual(['FollowPath', 'TrackTo']); // the constraints
   });
 
-  it('MIX is declared: the two constraint steps are `wrap`, every other operator is `none`', () => {
+  it('MIX is declared: the constraint steps `wrap`, the Image Layer is `own`, the rest `none`', () => {
     // #1894 S0a declared all 13 then-operators `none` (none blends). S0b adds the two constraint
     // steps as the FIRST `wrap` members — constraint influence lives in small nodes around the
-    // step (#1811), which is exactly what `wrap` names. Still no `own` (the composite Image Layer,
-    // #1879, is the first; it is not in this tree yet). The KIND is the finding, not a guess —
-    // each declarer was read and matched to what it already does.
+    // step (#1811), which is exactly what `wrap` names. The composite Image Layer (#1879) is the
+    // first and only `own`: its own `opacity` + `blendMode` ARE the blend. The KIND is the finding,
+    // not a guess — each declarer was read and matched to what it already does.
     const wrap = ['FollowPath', 'TrackTo'];
+    const own = ['Layer'];
     expect(where((c) => c.mix.kind === 'wrap')).toEqual(wrap);
     expect(where((c) => c.mix.kind === 'none')).toEqual(
       operators()
         .map(([type]) => type)
-        .filter((type) => !wrap.includes(type)),
+        .filter((type) => !wrap.includes(type) && !own.includes(type)),
     );
-    expect(where((c) => c.mix.kind === 'own')).toEqual([]);
+    expect(where((c) => c.mix.kind === 'own')).toEqual(own);
 
     // The two that carry an `opacity` param say so APART from the rest: that opacity is the
     // material's OWN transparency, not a layer blend over the stack — the exact trap the issue
