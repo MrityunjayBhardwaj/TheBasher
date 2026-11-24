@@ -8,6 +8,10 @@
 // (setMaterialColor/scale/randomize reach the BoxData) with the pixel side.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 type V3 = [number, number, number];
 interface UiWindow {
@@ -62,13 +66,10 @@ test('recolouring a split cube through the inspector reaches its BoxData and rep
   expect(objId, 'Add ▸ Cube created an Object').toBeTruthy();
   expect(dataId, 'the Object points at a BoxData via `data`').toBeTruthy();
 
-  // The linked-data sections render for the selected Object; expand Material so its hex input
-  // is interactable (default-collapsed for a mesh-primary node).
+  // The linked-data sections render for the selected Object; show Material so its hex input
+  // is interactable (#1959: in the stack frame, on its Materials stack).
   await expect(page.getByTestId('inspector-linked-data')).toBeVisible();
-  const materialSection = page.getByTestId('inspector-section-material');
-  if ((await materialSection.getAttribute('data-collapsed')) === 'true') {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  await openInspectorSection(page, 'material');
 
   // Edit the base colour to red through the linked BoxData's material editor.
   const hex = page.getByTestId(`inspector-colorhex-${dataId}-material.base.color`);

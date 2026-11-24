@@ -20,6 +20,7 @@
 // V8 (file-rooted dispatch — this component reads, runWorkflow seam
 // dispatches); H22 isolation rule unchanged.
 
+import { controllerValueReader } from './controllerValue';
 import { useCallback, useEffect, useState } from 'react';
 import type { ComfyUICapability } from '../../core/comfy';
 import { useDagStore } from '../../core/dag/store';
@@ -102,6 +103,7 @@ export function CostPreview({ workflowNodeId, deps }: CostPreviewProps) {
         capability: deps.capability,
         storage: deps.storage,
         compileWorkflow: deps.compileWorkflow,
+        controllerValue: controllerValueReader(state, workflowNodeId),
       });
       const imageUrl = await readAsBlobUrl(deps.storage, report.samplePath);
       setEstimate({ status: 'ready', report, imageUrl });

@@ -7,8 +7,8 @@
 // stack engine; the lift is just the socket type + this NodeDefinition.
 //
 // Like MediaClip, evaluate is PURE metadata (V2): the ImageValue is lazy P4 data,
-// so the actual pixel grade happens at the compositor's decode seam
-// (compositeDecode.applyEffects) — evaluate only forwards the upstream descriptor
+// so the actual pixel grade happens when the composite draws (#1883: on the GPU, in linear
+// light — src/app/video/gpuComposite.ts GRADE_FRAG) — evaluate only forwards the upstream descriptor
 // and folds the colour params into the `sourceHash` (so a param change invalidates
 // the cached frame, and the agent can describe the graded result by its handle).
 // `muted` bypasses (passes the source through unchanged) — the V58 stack mute,
@@ -18,8 +18,8 @@
 //
 // REF: docs/COMPOSITOR-DESIGN.md §5 (effects = operators); src/app/operatorStack.ts
 //      (the shared sub-chain — EFFECT_NODE_TYPES); src/nodes/ArrayModifier.ts (the
-//      geometry sibling); src/app/video/compositeDecode.ts (applyEffects, the pixel
-//      pass); vyapti V58 + V2 + V83.
+//      geometry sibling); src/app/video/gpuComposite.ts (the pixel pass); vyapti V58 +
+//      V2 + V83.
 
 import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';
@@ -27,9 +27,9 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ImageValue } from './types';
 
 export const ColorCorrectParams = z.object({
-  /** Brightness multiplier (1 = identity). Maps to canvas `brightness()`. */
+  /** Brightness: a gain on linear light (1 = identity, 0.5 = one stop down). */
   brightness: z.number().min(0).default(1),
-  /** Contrast multiplier (1 = identity). Maps to canvas `contrast()`. */
+  /** Contrast: a power about 18% grey in linear light (1 = identity, 0 = flat grey). */
   contrast: z.number().min(0).default(1),
   /** Saturation multiplier (1 = identity, 0 = greyscale). Maps to `saturate()`. */
   saturation: z.number().min(0).default(1),

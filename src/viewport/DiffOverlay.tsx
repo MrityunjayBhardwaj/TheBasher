@@ -7,10 +7,12 @@
 //
 // REF: THESIS.md §19 (Diff-first), krama K3, vyapti V7.
 
-import { useMemo } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import { useDiffStore } from '../agent/diff';
+import { proposedNodeIds } from '../agent/diff/proposalLines';
 import { evaluate, createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
+import { PROPOSAL_AMBER } from '../app/proposalStyle';
 import { resolveConstraintPosition, resolveConstraintRotation } from '../app/nodeConstraints';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
@@ -18,6 +20,20 @@ import { degVec3ToRad } from './rotation';
 import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type { RenderOutputValue, CameraValue, LightValue, SceneObject } from '../nodes/types';
 import { sceneChildRefs } from '../app/sceneMembership';
+
+/**
+ * #1706 — is this ghost (or the top-level child it belongs to) one the proposal changes? A changed
+ * object's ghost is drawn amber, so the viewport outlines what the proposal touches
+ * rather than re-drawing the whole scene in one even ghost. Nested ghosts inherit it.
+ */
+const ProposedTint = createContext(false);
+
+/** A ghost material's colour and opacity, amber when the proposal changes it. */
+function useGhostLook(color: string, opacity: number): { color: string; opacity: number } {
+  // Colour only: the ghost's opacity is its signature (p352 / p1153 find a ghost by it), so a
+  // changed ghost keeps it and turns amber.
+  return useContext(ProposedTint) ? { color: PROPOSAL_AMBER, opacity } : { color, opacity };
+}
 
 export function DiffOverlay() {
   const pendingDiff = useDiffStore((s) => s.pendingDiff);
@@ -53,6 +69,8 @@ function DiffOverlayInner({
   // recover pick ids (SceneFromDAG.tsx). Read from the FORK: the proposal's scene.
   // #1823 — the scene's children as it draws them (`sceneChildRefs`).
   const childRefs = sceneChildRefs(diff.forkState);
+  // #1706 — the objects the (ticked) proposal changes, outlined amber below.
+  const changed = proposedNodeIds(diff, 'viewport');
 
   return (
     // editorChrome: agent-diff ghost preview is an editor overlay, never part
@@ -64,10 +82,20 @@ function DiffOverlayInner({
         <GhostLight key={`ghost-light:${i}`} value={light} />
       ))}
       {value.scene.children.map((child, i) => (
-        <GhostChild
+        <ProposedTint.Provider
           key={`ghost-child:${i}`}
-          value={applyGhostPoseBand(diff.forkState, childRefs[i]?.node ?? null, child, ctx, cache)}
-        />
+          value={changed.has(childRefs[i]?.node ?? '')}
+        >
+          <GhostChild
+            value={applyGhostPoseBand(
+              diff.forkState,
+              childRefs[i]?.node ?? null,
+              child,
+              ctx,
+              cache,
+            )}
+          />
+        </ProposedTint.Provider>
       ))}
     </group>
   );
@@ -174,6 +202,12 @@ const GHOSTLESS_KINDS = [
 ] as const satisfies readonly SceneObject['kind'][];
 
 function GhostChild({ value: raw }: { value: SceneObject }) {
+  const look = {
+    character: useGhostLook('#88aaff', 0.35),
+    null: useGhostLook('#9ad0ff', 0.4),
+    curve: useGhostLook('#d98a2b', 0.6),
+  };
+  const meshLook = useGhostLook('', 0.35);
   // #1153 — the ghost draws its own tree and never passes through MeshChild, so it resolves the
   // rotation mode itself, after the pose band (whose aim already drops the mode). Recursion into
   // a Group's children comes back through here, so a nested quaternion-mode child resolves too.
@@ -246,8 +280,8 @@ function GhostChild({ value: raw }: { value: SceneObject }) {
           <boxGeometry args={[0.4, 1, 0.4]} />
           <meshBasicMaterial
             transparent
-            opacity={0.35}
-            color="#88aaff"
+            opacity={look.character.opacity}
+            color={look.character.color}
             depthWrite={false}
             wireframe
           />
@@ -263,8 +297,8 @@ function GhostChild({ value: raw }: { value: SceneObject }) {
           <sphereGeometry args={[0.12, 10, 8]} />
           <meshBasicMaterial
             transparent
-            opacity={0.4}
-            color="#9ad0ff"
+            opacity={look.null.opacity}
+            color={look.null.color}
             depthWrite={false}
             wireframe
           />
@@ -294,7 +328,12 @@ function GhostChild({ value: raw }: { value: SceneObject }) {
                   args={[new Float32Array((data.samples ?? []).flat()), 3]}
                 />
               </bufferGeometry>
-              <lineBasicMaterial transparent opacity={0.6} color="#d98a2b" depthWrite={false} />
+              <lineBasicMaterial
+                transparent
+                opacity={look.curve.opacity}
+                color={look.curve.color}
+                depthWrite={false}
+              />
             </line>
           </group>
         );
@@ -359,8 +398,8 @@ function GhostChild({ value: raw }: { value: SceneObject }) {
           {geom}
           <meshBasicMaterial
             transparent
-            opacity={0.35}
-            color={color}
+            opacity={meshLook.opacity}
+            color={meshLook.color || color}
             depthWrite={false}
             wireframe
           />

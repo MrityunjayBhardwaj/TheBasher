@@ -18,6 +18,10 @@
 // inspector proves the N panel's walk had something to label.
 
 import { expect, test } from './_fixtures';
+import { openStackInFrame } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 const OBJ = 'n_nativeObject_843e4bd5';
 const OVR = 'p1394_ovr';
@@ -115,6 +119,9 @@ test('the material-owner walk re-uses the retarget the viewport already evaluate
         await act('clear', null);
         rows.push([`${phase}: select ${target} (pass ${rep})`, await act('select', target)]);
         if (rep === 1 && target === OBJ) {
+          // #1959 — the override's row is drawn inside the stack frame, under its Materials tab.
+          // Picked once, the frame keeps showing Materials for the selections that follow.
+          await openStackInFrame(page, 'materials');
           await expect(page.getByTestId(`inspector-input-${OVR}-roughness`)).toBeVisible();
         }
         rows.push([

@@ -40,6 +40,7 @@ import { useThreeRef } from './character/threeRef';
 import { downloadBlob } from './downloadBlob';
 import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
 import { useRenderAnimationStore } from './stores/renderAnimationStore';
+import { confirmLicencesForExport } from './licence/exportLicenceGate';
 import { advance } from '@react-three/fiber';
 
 /** Frozen evaluation time — only the STATIC RenderOutput config is read here
@@ -244,6 +245,12 @@ export function renderAnimationResultToToast(result: RenderAnimationResult): Not
 export async function renderAnimationWithFeedback(
   format: RenderAnimationFormat,
 ): Promise<RenderAnimationResult> {
+  // #1722 — a film marked for commercial use lists its uncleared parts before a frame renders.
+  if (!(await confirmLicencesForExport())) {
+    const declined: RenderAnimationResult = { ok: false, cancelled: true };
+    useNotificationStore.getState().notify(renderAnimationResultToToast(declined));
+    return declined;
+  }
   const result = await renderAnimationToFile(format);
   useNotificationStore.getState().notify(renderAnimationResultToToast(result));
   return result;

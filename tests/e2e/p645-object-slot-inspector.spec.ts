@@ -42,6 +42,9 @@
 import { expect, test, type Page } from './_fixtures';
 import type { Op } from '../../src/core/dag/types';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_dag: {
     getState: () => {

@@ -9,6 +9,24 @@ import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { type CompileWorkflowFn } from './dryRun';
 import { runComfyUIWorkflow, type RunComfyUIWorkflowReport } from './runComfyUIWorkflow';
+import { BLACK_FRAME_PNG, compileWorkflowFrame, uploadKeyOf } from './compileWorkflowFrame';
+import type { ComfyApiJson } from '../core/comfy/comfyGraph';
+
+/** #1715 — a workflow file: a frames input `beauty`, a text input `prompt`, an input fed with the
+ *  output's previous frame, and one frames output `out`. */
+const FILE: ComfyApiJson = {
+  '1': { class_type: 'basher_controller', inputs: { name: 'beauty', kind: 'video' } },
+  '2': {
+    class_type: 'basher_controller',
+    inputs: { name: 'prompt', kind: 'string', values_json: '[""]' },
+  },
+  '3': {
+    class_type: 'basher_controller',
+    inputs: { name: 'previous', kind: 'image', image: '', feedback_of: 'out' },
+  },
+  '4': { class_type: 'KSampler', inputs: { positive: ['2', 0], latent_image: ['3', 0] } },
+  '5': { class_type: 'basher_export', inputs: { name: 'out', kind: 'video', images: ['4', 0] } },
+};
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -21,7 +39,6 @@ function buildWorkflowState(
     frameStart?: number;
     frameEnd?: number;
     lastGoodFrame?: number;
-    presetId?: string;
   } = {},
 ) {
   let s = emptyDagState();
@@ -69,7 +86,7 @@ function buildWorkflowState(
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: opts.presetId ?? 'stylizedRealism',
+      graph: { apiJson: FILE, meta: { name: 'test', importedAt: 'x', fps: 30, frames: 1 } },
       frameStart: opts.frameStart ?? 0,
       frameEnd: opts.frameEnd ?? 4,
       lastGoodFrame: opts.lastGoodFrame ?? -1,
@@ -84,7 +101,7 @@ function buildWorkflowState(
   s = applyOp(s, {
     type: 'connect',
     from: { node: 'beauty', socket: 'out' },
-    to: { node: 'cw', socket: 'pass-input' },
+    to: { node: 'cw', socket: 'beauty' },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -95,36 +112,26 @@ function buildWorkflowState(
 }
 
 /**
- * Stub compiler that records the prevFrameStylizedPath it observed per
- * frame so tests can assert temporal coherence wiring without taking a
- * dependency on a real preset.
+ * Stub compiler that records the fed path it observed per frame so tests can assert the
+ * feedback wiring without reading pass bytes.
  */
 function makeRecordingCompiler(): {
   compile: CompileWorkflowFn;
   observed: { frame: number; prev: string | null }[];
 } {
   const observed: { frame: number; prev: string | null }[] = [];
-  const compile: CompileWorkflowFn = async ({
-    presetId,
-    prompt,
-    passes,
-    frame,
-    prevFrameStylizedPath,
-  }) => {
-    observed.push({ frame, prev: prevFrameStylizedPath ?? null });
+  const compile: CompileWorkflowFn = async ({ apiJson, frame, inputs, fed }) => {
+    observed.push({ frame, prev: fed['3'] ?? null });
+    const prompt = inputs.prompt as { text?: string } | undefined;
+    const beauty = inputs.beauty as { passKind: string; sourceHash: string } | undefined;
     const workflowJson: ComfyWorkflowJson = {
-      preset: presetId,
-      frame,
-      promptText: prompt.text,
-      passKinds: passes.map((p) => p.passKind),
+      ...apiJson,
+      _test: { frame, promptText: prompt?.text, beauty: beauty?.passKind },
     };
     const images: Record<string, Uint8Array> = {};
-    for (const p of passes) images[p.passKind] = new TextEncoder().encode(p.sourceHash);
-    const inputs: ComfyInputs = {
-      images,
-      scalars: { prompt: prompt.text, frame, prev: prevFrameStylizedPath ?? '__zero__' },
-    };
-    return { workflowJson, inputs };
+    if (beauty) images.beauty = new TextEncoder().encode(beauty.sourceHash);
+    const compiled: ComfyInputs = { images, scalars: { frame } };
+    return { workflowJson, inputs: compiled };
   };
   return { compile, observed };
 }
@@ -157,7 +164,7 @@ describe('runComfyUIWorkflow (Wave B1 — execute side)', () => {
     expect(onFrameComplete.mock.calls.map((c) => c[0])).toEqual([0, 1, 2, 3, 4]);
   });
 
-  it('first frame in the run sees prevFrameStylizedPath=null; subsequent frames see frame N-1 path (temporal coherence)', async () => {
+  it("#1715 — a fed input sees null on the first frame, then its output's frame N-1 path", async () => {
     const state = buildWorkflowState({ frameStart: 0, frameEnd: 2 });
     const recorded = makeRecordingCompiler();
     await runComfyUIWorkflow('cw', state, {
@@ -206,8 +213,8 @@ describe('runComfyUIWorkflow (Wave B1 — execute side)', () => {
     // shape — instead, use successful submits then one failure.
     const cap = new StubComfyUICapability({ errorQueue: [] });
     let callCount = 0;
-    const wrappedSubmit = cap.submit.bind(cap);
-    cap.submit = async (...args) => {
+    const wrappedSubmit = cap.submitBatch.bind(cap);
+    cap.submitBatch = async (...args) => {
       callCount += 1;
       if (callCount === 3) throw new Error('comfy crashed');
       return wrappedSubmit(...args);
@@ -253,8 +260,8 @@ describe('runComfyUIWorkflow (Wave B1 — execute side)', () => {
     const state = buildWorkflowState({ frameStart: 0, frameEnd: 4 });
     const cap = new StubComfyUICapability();
     let count = 0;
-    const wrapped = cap.submit.bind(cap);
-    cap.submit = async (...args) => {
+    const wrapped = cap.submitBatch.bind(cap);
+    cap.submitBatch = async (...args) => {
       count += 1;
       if (count === 2) throw new Error('flake');
       return wrapped(...args);
@@ -326,24 +333,82 @@ describe('runComfyUIWorkflow (Wave B1 — execute side)', () => {
     }
   });
 
-  it('sanitizes presetId in output path (THREE-reserved-chars defense-in-depth)', async () => {
-    // Construct a workflow whose params have a presetId with a colon —
-    // simulating a future preset id format. The Mutator should prevent
-    // this; runComfyUIWorkflow's sanitizer is the second guard.
-    let s = buildWorkflowState();
-    s = applyOp(s, {
+  it('#1715 — throws when the node holds no workflow file', async () => {
+    const s = applyOp(buildWorkflowState(), {
       type: 'setParam',
       nodeId: 'cw',
-      paramPath: 'outputPath',
-      value: 'renders/job1/stylized_some_preset',
+      paramPath: 'graph',
+      value: null,
     }).next;
-    const report = await runComfyUIWorkflow('cw', s, {
-      capability: new StubComfyUICapability(),
-      storage: new MemoryStorage(),
-      compileWorkflow: makeRecordingCompiler().compile,
+    await expect(
+      runComfyUIWorkflow('cw', s, {
+        capability: new StubComfyUICapability(),
+        storage: new MemoryStorage(),
+        compileWorkflow: makeRecordingCompiler().compile,
+        onFrameComplete: () => {},
+      }),
+    ).rejects.toThrow(/no workflow file/);
+  });
+});
+
+describe('#1715 — feedback through the real frame compiler and the stub', () => {
+  it("frame 1's fed input is frame 0's output; frame 0's is the fallback (black)", async () => {
+    const state = buildWorkflowState({ frameStart: 0, frameEnd: 1 });
+    const storage = new MemoryStorage();
+    // The beauty pass's frames, where a render job writes them (beside the output path).
+    for (const f of [0, 1]) {
+      await storage.write(`renders/job1/beauty_000${f}.png`, Uint8Array.of(7, f));
+    }
+    const cap = new StubComfyUICapability();
+    const sent: ComfyInputs[] = [];
+    const submitBatch = cap.submitBatch.bind(cap);
+    cap.submitBatch = async (wf, inputs, onEvent) => {
+      sent.push(inputs);
+      return submitBatch(wf, inputs, onEvent);
+    };
+    const report = await runComfyUIWorkflow('cw', state, {
+      capability: cap,
+      storage,
+      compileWorkflow: compileWorkflowFrame({ storage }),
       onFrameComplete: () => {},
     });
-    expect(report.outputs[0]).not.toMatch(/:/);
+    const fedKey = uploadKeyOf('3');
+    expect(sent).toHaveLength(2);
+    expect(sent[0].images[fedKey]).toEqual(BLACK_FRAME_PNG);
+    const frame0 = await storage.read(report.outputs[0]);
+    expect(sent[1].images[fedKey]).toEqual(frame0);
+    // And the frames input carried that frame's beauty pass each time.
+    expect(sent[0].images[uploadKeyOf('1')]).toEqual(Uint8Array.of(7, 0));
+    expect(sent[1].images[uploadKeyOf('1')]).toEqual(Uint8Array.of(7, 1));
+  });
+
+  it('the fed marker keeps its own file on the first frame when it names one', async () => {
+    const own = structuredClone(FILE);
+    (own['3'].inputs as Record<string, unknown>).image = 'start.png';
+    let state = buildWorkflowState({ frameStart: 0, frameEnd: 0 });
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'cw',
+      paramPath: 'graph',
+      value: { apiJson: own, meta: { name: 'test', importedAt: 'x', fps: 30, frames: 1 } },
+    }).next;
+    const storage = new MemoryStorage();
+    await storage.write('renders/job1/beauty_0000.png', Uint8Array.of(1));
+    const cap = new StubComfyUICapability();
+    const sent: { wf: unknown; inputs: ComfyInputs }[] = [];
+    const submitBatch = cap.submitBatch.bind(cap);
+    cap.submitBatch = async (wf, inputs, onEvent) => {
+      sent.push({ wf, inputs });
+      return submitBatch(wf, inputs, onEvent);
+    };
+    await runComfyUIWorkflow('cw', state, {
+      capability: cap,
+      storage,
+      compileWorkflow: compileWorkflowFrame({ storage }),
+      onFrameComplete: () => {},
+    });
+    expect(sent[0].inputs.images[uploadKeyOf('3')]).toBeUndefined();
+    expect((sent[0].wf as ComfyApiJson)['3'].inputs.image).toBe('start.png');
   });
 });
 

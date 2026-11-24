@@ -1,4 +1,5 @@
-// ShotsPanel — the film's shots, one row each, in the left sidebar (#1595).
+// ShotsPanel — the film's shots, one row each, in the bottom drawer's Shots tab (#1595; moved
+// out of the left sidebar by #1703).
 //
 // The rows are DERIVED from the keys on the active camera (`shots.ts`); nothing here stores a
 // shot. Each edit is one undo step written as those keys (`shotOps.ts`), the same data the agent
@@ -6,7 +7,10 @@
 //
 //   row     — Shot N · its time range · the camera that films it (a picker) · its speed · remove
 //             its cut
-//   click   — look through the camera and put the playhead on the shot's first frame
+//   click   — select the shot's camera and put the playhead on the shot's first frame; the view
+//             stays where it is (#1708: look-through is a viewport setting, not a side effect)
+//   double-click — the same, and look through the camera (Numpad 0 / Esc / an orbit drag toggle
+//             it back)
 //   footer  — cut at the playhead to a chosen camera · a new camera from the current view ·
 //             keep length (a speed change leaves the shot's length alone)
 //
@@ -16,14 +20,18 @@
 //
 // V8 file-rooted: src/app/. Reads the DAG + time stores; writes only through dispatchAtomic.
 
+import { useProposedNodeIds } from '../agent/diff/useProposal';
+import { PROPOSAL_AMBER } from './proposalStyle';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore } from './stores/viewportStore';
+import { useSelectionStore } from './stores/selectionStore';
 import { enumerateCameraNodeIds } from './activeCamera';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { sceneEndSeconds } from './sceneRange';
 import { shotsOf } from './shots';
+import { shotCameraColors } from './shotColors';
 import { buildCutOps, buildRemoveCutOps, buildSetShotCameraOps } from './shotOps';
 import { buildShotSpeedOps, speedOver } from './shotSpeed';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
@@ -41,6 +49,8 @@ export function ShotsPanel(): ReactNode {
   const end = sceneEndSeconds(state);
   const view = useMemo(() => shotsOf(state, end), [state, end]);
   const cameras = useMemo(() => enumerateCameraNodeIds(state), [state]);
+  // #1708 — each shot wears its camera's colour, the one its frame draws in the viewport.
+  const colors = useMemo(() => shotCameraColors(view.shots), [view]);
   const nameOf = (id: string | null) => (id ? nodeDisplayName(state.nodes, id) : 'No camera');
   const current = view.shots.find((s) => playhead >= s.start && playhead < s.end) ?? null;
   // The camera a new cut goes to: the first one that is not on screen at the playhead.
@@ -51,13 +61,40 @@ export function ShotsPanel(): ReactNode {
       ? cutTo
       : (cameras.find((c) => c !== current?.cameraId) ?? null);
 
-  const goTo = (start: number) => {
+  // #1708 — a click picks the shot: its camera becomes the selection and the playhead goes to its
+  // first frame. The view is left alone; looking through is the double-click (or Numpad 0).
+  const goTo = (shot: { start: number; cameraId: string | null }) => {
+    if (shot.cameraId) useSelectionStore.getState().select(shot.cameraId);
+    useTimeStore.getState().setTime(shot.start);
+  };
+  const lookThrough = (shot: { start: number; cameraId: string | null }) => {
+    goTo(shot);
     useViewportStore.getState().setLookThroughCamera(true);
-    useTimeStore.getState().setTime(start);
   };
 
+  // #1706 — a pending proposal that changes the cuts (the CameraSelect or its channel) frames the
+  // shot list in the proposal amber; the list shown is still the applied one.
+  const proposedIds = useProposedNodeIds('shots');
+  const proposed =
+    (view.selectId !== null && proposedIds.has(view.selectId)) ||
+    (view.channelId !== null && proposedIds.has(view.channelId));
+
   return (
-    <div data-testid="shots-panel" className="flex min-h-0 grow flex-col">
+    <div
+      data-testid="shots-panel"
+      data-proposed={proposed || undefined}
+      className="flex min-h-0 grow flex-col"
+      style={proposed ? { boxShadow: `inset 0 0 0 2px ${PROPOSAL_AMBER}` } : undefined}
+    >
+      {proposed ? (
+        <p
+          data-testid="shots-proposed"
+          className="px-2 pt-1 text-[11px]"
+          style={{ color: PROPOSAL_AMBER }}
+        >
+          A proposed change to the cuts is waiting in chat · not applied
+        </p>
+      ) : null}
       <ol className="flex min-h-0 grow flex-col gap-1 overflow-y-auto px-2 py-2">
         {view.shots.map((shot) => {
           const isCurrent = shot === current;
@@ -73,10 +110,18 @@ export function ShotsPanel(): ReactNode {
               <button
                 type="button"
                 data-testid={`shot-select-${shot.index}`}
-                onClick={() => goTo(shot.start)}
-                title="Look through this shot's camera"
+                onClick={() => goTo(shot)}
+                onDoubleClick={() => lookThrough(shot)}
+                title="Select this shot's camera · Double-click to look through it"
                 className="flex items-baseline gap-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
+                <span
+                  data-testid={`shot-color-${shot.index}`}
+                  data-color={colors.get(shot.cameraId ?? '') ?? undefined}
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 self-center rounded-full"
+                  style={{ background: colors.get(shot.cameraId ?? '') ?? 'transparent' }}
+                />
                 <span className="font-medium text-fg">Shot {shot.index + 1}</span>
                 <span className="font-mono text-[11px] text-fg-dim">
                   {secs(shot.start)} – {secs(shot.end)}

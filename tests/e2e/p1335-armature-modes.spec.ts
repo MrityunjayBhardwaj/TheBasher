@@ -12,6 +12,10 @@
 import type { Page } from '@playwright/test';
 import * as THREE from 'three';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface Node {
   type: string;
@@ -79,7 +83,7 @@ async function importBar(page: Page): Promise<string> {
   });
   // Selected from the outliner, so the setup does not depend on the click under test.
   await page.getByTestId(`scene-tree-row-${id}`).click();
-  await expect(page.getByTestId('armature-mode')).toBeVisible();
+  await expect(await toolbarControl(page, 'armature-mode')).toBeVisible();
   return id;
 }
 
@@ -134,13 +138,14 @@ test('Object → Pose → Edit → Object: what a click picks in each, and the g
 }) => {
   const armature = await importBar(page);
   const before = await graph(page);
-  const menu = page.getByTestId('armature-mode');
+  // #1935 — the mode menu may sit behind ⋯ (it closes on a press outside), so re-find it each time.
+  const menu = () => toolbarControl(page, 'armature-mode');
   await page.evaluate(() => (window as unknown as W).__basher_time.getState().setTime(0));
   const REST_DIR = (await drawnBone(page, 'Bone1')).dir;
   await page.evaluate(() => (window as unknown as W).__basher_time.getState().setTime(0.9));
 
   // OBJECT: a click on a bone selects the armature, never the bone.
-  await expect(menu).toHaveValue('object');
+  await expect(await menu()).toHaveValue('object');
   let b1 = await drawnBone(page, 'Bone1');
   await page.mouse.click(b1.x, b1.y);
   await page.waitForTimeout(200);
@@ -151,7 +156,7 @@ test('Object → Pose → Edit → Object: what a click picks in each, and the g
   );
 
   // POSE: the same click picks the bone, lights it and names it; the bones are drawn posed.
-  await menu.selectOption('pose');
+  await (await menu()).selectOption('pose');
   expect(await mode(page)).toBe('pose');
   expect(b1.dir.dot(REST_DIR), 'at 0.9 s the clip has turned Bone1 off its rest').toBeLessThan(0.5);
   await page.mouse.click(b1.x, b1.y);
@@ -164,7 +169,7 @@ test('Object → Pose → Edit → Object: what a click picks in each, and the g
   // EDIT (Tab): the rest bones are drawn, and a bone is still what a click picks.
   await page.mouse.move(10, 450);
   await page.keyboard.press('Tab');
-  await expect(menu).toHaveValue('edit');
+  await expect(await menu()).toHaveValue('edit');
   b1 = await drawnBone(page, 'Bone1');
   expect(b1.dir.dot(REST_DIR), 'edit mode draws Bone1 at its rest direction').toBeGreaterThan(
     0.999,
@@ -176,7 +181,7 @@ test('Object → Pose → Edit → Object: what a click picks in each, and the g
 
   // OBJECT (Tab again): no bone is live, nothing is lit, the bones are posed again.
   await page.keyboard.press('Tab');
-  await expect(menu).toHaveValue('object');
+  await expect(await menu()).toHaveValue('object');
   await expect(page.getByTestId('inspector-selected-bone')).toHaveCount(0);
   await expect.poll(() => highlighted(page)).toBeNull();
   expect((await drawnBone(page, 'Bone1')).dir.dot(REST_DIR)).toBeLessThan(0.5);
@@ -203,7 +208,7 @@ test('with a non-armature selected, Tab keeps its other meaning and there is no 
   page,
 }) => {
   const armature = await importBar(page);
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   // Selecting a cube leaves the armature's mode: the mode belongs to the thing being worked on.
   const box = await page.evaluate(() => {
     const nodes = (window as unknown as W).__basher_dag.getState().state.nodes;
@@ -218,8 +223,8 @@ test('with a non-armature selected, Tab keeps its other meaning and there is no 
   expect(await mode(page)).toBe('object');
 
   await page.mouse.move(10, 450);
-  await expect(page.getByTestId('toolbar-space-uv')).not.toHaveClass(/text-accent/);
+  await expect(await toolbarControl(page, 'toolbar-space-uv')).not.toHaveClass(/text-accent/);
   await page.keyboard.press('Tab');
-  await expect(page.getByTestId('toolbar-space-uv')).toHaveClass(/text-accent/);
+  await expect(await toolbarControl(page, 'toolbar-space-uv')).toHaveClass(/text-accent/);
   void armature;
 });

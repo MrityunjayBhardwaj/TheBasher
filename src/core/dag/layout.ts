@@ -16,9 +16,11 @@
 
 import type { DagState } from './state';
 import { relationsOf } from './idRefSweep';
-import { registryEpoch } from './registry';
+import { getNodeType, registryEpoch } from './registry';
+import { brokenInputsOf, inputsOfNode, outputsOfNode } from './instanceSockets';
 import { parentSocketOf } from './worldChildren';
 import { subnetworkOf, subnetworkOwnersOf } from './subnetworks';
+import { nodeValuesHeight } from './nodeValues';
 import type { NodeId } from './types';
 
 export type Position = readonly [number, number];
@@ -35,6 +37,22 @@ export const ROW_GAP = 16;
  *  output sits in the head, so only the rest take a row. */
 export function nodeHeight(inputs: number, outputs: number): number {
   return NODE_HEAD + Math.max(inputs, outputs - 1, 0) * NODE_ROW + NODE_PAD;
+}
+
+/**
+ * #1715 — the height of a node whose sockets come from its settings (a workflow node's file):
+ * the Nodes view draws every input it has, each broken wire, and then every output, one row
+ * each. Null for every other node, which draws only the rows its wires land on.
+ */
+export function ownSocketsHeight(state: DagState, id: NodeId): number | null {
+  const node = state.nodes[id];
+  const def = node ? getNodeType(node.type) : undefined;
+  if (!node || !def?.instanceSockets) return null;
+  const rows =
+    Object.keys(inputsOfNode(def, node.params)).length +
+    brokenInputsOf(def, node).length +
+    Object.keys(outputsOfNode(def, node.params)).length;
+  return nodeHeight(rows, 0);
 }
 
 /** The owner of the level each node is shown at: its nearest sub-network owner, or `null` at
@@ -166,8 +184,11 @@ export function layoutOf(state: DagState): ReadonlyMap<NodeId, Position> {
   }
   const edges = viewEdgesOf(state);
   const rows = viewRowsOf(edges);
+  // #1953 — a node's key values sit on it, below its socket rows (`nodeValues.ts`).
   const height = (id: NodeId) =>
-    nodeHeight(rows.inputs.get(id)?.length ?? 0, rows.outputs.get(id)?.length ?? 0);
+    (ownSocketsHeight(state, id) ??
+      nodeHeight(rows.inputs.get(id)?.length ?? 0, rows.outputs.get(id)?.length ?? 0)) +
+    nodeValuesHeight(state, id);
   const positions = new Map<NodeId, Position>();
   for (const members of byLevel.values()) layoutLevel(state, members, edges, height, positions);
   layouts.set(state.nodes, { epoch: registryEpoch(), positions });

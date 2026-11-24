@@ -4,6 +4,7 @@
 // same name that wins when something is wired into it (Mix's `factor`). The stored setting is then
 // not the value the node uses, so a surface that shows it as the value is showing the wrong number.
 
+import { inputsOfNode } from '../core/dag/instanceSockets';
 import type { DagState } from '../core/dag/state';
 import { getNodeType } from '../core/dag/registry';
 import { inputAvailable } from '../core/dag/socketAvailability';
@@ -14,7 +15,8 @@ export function paramWiredFrom(state: DagState, nodeId: string, paramPath: strin
   const node = state.nodes[nodeId];
   if (!node) return null;
   const def = getNodeType(node.type);
-  if (!def?.inputs[paramPath] || !inputAvailable(def, node.params, paramPath)) return null;
+  if (!def || !inputsOfNode(def, node.params)[paramPath]) return null;
+  if (!inputAvailable(def, node.params, paramPath)) return null;
   const ref = node.inputs[paramPath] as NodeRef | undefined;
   return ref?.node && state.nodes[ref.node] ? ref.node : null;
 }

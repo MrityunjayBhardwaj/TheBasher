@@ -12,6 +12,10 @@
 //      src/app/nodeConstraints.ts (the fold); docs/RELATIONAL-OPERATORS-DESIGN.md §8.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface UiWindow {
   __basher_selection: { getState: () => { select: (id: string) => void } };
@@ -73,7 +77,7 @@ test('the Constraints panel drives the stack: add / reorder / mute / remove', as
   await page.evaluate(() =>
     (window as unknown as UiWindow).__basher_selection.getState().select('n_box'),
   );
-  await page.getByTestId('inspector-section-toggle-constraint').click();
+  await openInspectorSection(page, 'constraint');
   const stack = page.getByTestId('constraint-stack');
   await expect(stack).toBeVisible();
   console.log('[panel] Constraints section is present on the BOX (not just on a TrackTo)');

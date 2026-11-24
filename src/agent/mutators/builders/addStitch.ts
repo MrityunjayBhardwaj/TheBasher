@@ -22,7 +22,7 @@ import { z } from 'zod';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
-import type { ComfyUIWorkflowParams } from '../../../nodes/ComfyUIWorkflow';
+import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../../../nodes/ComfyUIWorkflow';
 import type { MutatorDefinition } from '../types';
 
 const AddStitchSpec = z.object({
@@ -94,6 +94,13 @@ export const addStitchMutator: MutatorDefinition<AddStitchSpec> = {
         reason: `workflowId "${spec.workflowId}" is ${workflow.type}; expected a ComfyUIWorkflow.`,
       };
     }
+    // #1715 — the stitch reads the workflow file's first output; a file with none has nothing.
+    if (!workflowSocketsOf(workflow.params).outputs[0]) {
+      return {
+        ok: false,
+        reason: `workflow "${spec.workflowId}" holds no workflow file with a Basher output to stitch.`,
+      };
+    }
     let foundTime = false;
     for (const node of Object.values(state.nodes)) {
       if (node.type === 'TimeSource') {
@@ -120,7 +127,8 @@ export const addStitchMutator: MutatorDefinition<AddStitchSpec> = {
 
     const workflow = state.nodes[spec.workflowId];
     const workflowParams = (workflow?.params as Partial<ComfyUIWorkflowParams> | undefined) ?? {};
-    void workflowParams;
+    // #1715 — the workflow file's first output (the frames the runner writes at outputPath).
+    const output = workflowSocketsOf(workflowParams).outputs[0]?.socket ?? 'out';
 
     const fps = spec.fps ?? jobParams.fps ?? 30;
     const codec = spec.codec ?? 'h264';
@@ -149,7 +157,7 @@ export const addStitchMutator: MutatorDefinition<AddStitchSpec> = {
     });
     ops.push({
       type: 'connect',
-      from: { node: spec.workflowId, socket: 'out' },
+      from: { node: spec.workflowId, socket: output },
       to: { node: stitchId, socket: 'pass-input' },
     });
     ops.push({

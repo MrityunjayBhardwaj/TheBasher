@@ -21,60 +21,58 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // `vi.hoisted` because `vi.mock`'s factory is lifted above every import, so a
 // spy declared as a plain top-level const is still in its temporal dead zone
 // when the factory runs.
-const { generateMotionAsNode, generateModelIntoScene, generateRiggedCharacter } = vi.hoisted(
-  () => ({
-    generateMotionAsNode: vi.fn(async (_prompt: string) => ({
-      ok: true as const,
-      clipId: 'n_clip',
-      skeletonId: 'n_skel',
-    })),
-    generateModelIntoScene: vi.fn(async (_request: unknown, _options?: unknown) => ({
-      ok: true as const,
-      opfsPath: 'user-imports/x/model.glb',
-      taskId: 't1',
-    })),
-    generateRiggedCharacter: vi.fn(async (_request: unknown, _options?: unknown) => ({
-      // #835 — three outcomes, and `ok` is not one of them. The union names the
-      // middle case (a mesh landed, unrigged) so no caller can collapse it into
-      // either neighbour by accident.
-      outcome: 'rigged' as const,
-      opfsPath: 'user-imports/x/character.glb',
-      taskId: 't2',
-      arrivedSpec: 'mixamo' as const,
-    })),
-  }),
-);
+const { generateMotionAsNode, startModelGeneration, storeReferenceImage } = vi.hoisted(() => ({
+  generateMotionAsNode: vi.fn(async (_prompt: string) => ({
+    ok: true as const,
+    clipId: 'n_clip',
+    skeletonId: 'n_skel',
+  })),
+  // #1720 — both mesh kinds take the Model generate road; they differ in `rig`.
+  startModelGeneration: vi.fn(async (_ask: unknown) => ({
+    ok: true as const,
+    nodeId: 'n_modelgen',
+    added: 4,
+  })),
+  storeReferenceImage: vi.fn(async (_image: unknown) => 'abc123.png'),
+}));
 
 // #935 — the panel's motion road is the NODE road now: it mints a producer and
 // cooks it, so the clip it leaves behind can be re-cooked when the curve moves.
 vi.mock('./asset/generateMotionAsNode', () => ({ generateMotionAsNode }));
-vi.mock('./asset/generateModel', () => ({ generateModelIntoScene }));
-vi.mock('./asset/generateRiggedCharacter', () => ({ generateRiggedCharacter }));
+vi.mock('./asset/generateModel', () => ({ startModelGeneration, storeReferenceImage }));
 
 // Imported AFTER the mocks so the module under test picks them up.
 import {
   GENERATION_KINDS,
   acceptsImage,
   canSubmit,
+  modelCostLine,
+  modelRunProgress,
   runGeneration,
   type GenerationKind,
-  type GenerationProgressView,
   motionSaveOffer,
 } from './GeneratePanel';
 import { savedMotionName } from './asset/saveGeneratedMotion';
 
-/** The app-layer surfaces, named here rather than derived from the module under
- *  test — an expectation derived from its producer cannot fail. */
-const SURFACES = {
-  motion: generateMotionAsNode,
-  model: generateModelIntoScene,
-  character: generateRiggedCharacter,
-};
+/**
+ * Which road a kind took, named here rather than derived from the module under test — an
+ * expectation derived from its producer cannot fail. The two mesh kinds share one surface and
+ * are told apart by the one argument that separates them.
+ */
+function roadTaken(): string[] {
+  const hit: string[] = [];
+  if (generateMotionAsNode.mock.calls.length > 0) hit.push('motion');
+  for (const [ask] of startModelGeneration.mock.calls as unknown as [{ rig: boolean }][])
+    hit.push(ask.rig ? 'model+rig' : 'model');
+  return hit;
+}
 
 const IMAGE = { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' };
 
 beforeEach(() => {
-  for (const fn of Object.values(SURFACES)) fn.mockClear();
+  generateMotionAsNode.mockClear();
+  startModelGeneration.mockClear();
+  storeReferenceImage.mockClear();
 });
 
 describe('canSubmit', () => {
@@ -130,67 +128,49 @@ describe('runGeneration', () => {
   it('every kind the panel offers has a road of its own', async () => {
     const routed = new Map<GenerationKind, string[]>();
     for (const { kind } of GENERATION_KINDS) {
-      for (const fn of Object.values(SURFACES)) fn.mockClear();
+      generateMotionAsNode.mockClear();
+      startModelGeneration.mockClear();
       await runGeneration(kind, 'a prompt');
-      routed.set(
-        kind,
-        Object.entries(SURFACES)
-          .filter(([, fn]) => fn.mock.calls.length > 0)
-          .map(([name]) => name),
-      );
+      routed.set(kind, roadTaken());
     }
-    // Total: no kind reaches zero surfaces. Single: no kind reaches two.
+    // Total: no kind reaches zero roads. Single: no kind reaches two.
     for (const [kind, hit] of routed) expect([kind, hit]).toEqual([kind, [expect.any(String)]]);
-    // Injective: no two menu items land on the same surface.
+    // Injective: no two menu items land on the same road.
     const hits = [...routed.values()].flat();
     expect(new Set(hits).size).toBe(hits.length);
-    // And between them they use every surface there is.
-    expect(new Set(hits)).toEqual(new Set(Object.keys(SURFACES)));
+    expect(new Set(hits)).toEqual(new Set(['motion', 'model', 'model+rig']));
   });
 
-  it('a prompt becomes a TEXT request', async () => {
+  it('a prompt mints a Model generate with that prompt and no references', async () => {
+    await runGeneration('model', 'a chair', undefined, { count: 3 });
+    expect(startModelGeneration).toHaveBeenCalledWith({
+      prompt: 'a chair',
+      references: [],
+      rig: false,
+      count: 3,
+    });
+  });
+
+  it('defaults to four variants (design board 13b)', async () => {
     await runGeneration('model', 'a chair');
-    expect(generateModelIntoScene).toHaveBeenCalledWith(
-      { source: 'text', prompt: 'a chair' },
-      expect.anything(),
-    );
+    expect(startModelGeneration).toHaveBeenCalledWith(expect.objectContaining({ count: 4 }));
   });
 
-  it('an image becomes an IMAGE request, and the prompt is not smuggled in beside it', async () => {
+  it('an image becomes the reference, and the prompt is not smuggled in beside it', async () => {
     await runGeneration('model', 'ignored text', IMAGE);
-    const [request] = generateModelIntoScene.mock.calls[0] as [Record<string, unknown>];
-    expect(request).toEqual({ source: 'image', image: IMAGE });
-    // The load-bearing half: `ImageModelRequest` has no prompt, so sending one
-    // would be a field the service never sees while the UI implies it matters.
-    expect(request).not.toHaveProperty('prompt');
+    expect(storeReferenceImage).toHaveBeenCalledWith(IMAGE);
+    const [ask] = startModelGeneration.mock.calls[0] as [Record<string, unknown>];
+    expect(ask).toMatchObject({ prompt: '', references: ['abc123.png'] });
   });
 
   it('the character road takes an image too — a reference picture can come back rigged', async () => {
     await runGeneration('character', '', IMAGE);
-    const [request] = generateRiggedCharacter.mock.calls[0] as [Record<string, unknown>];
-    expect(request).toEqual({ source: 'image', image: IMAGE });
-  });
-
-  it('reports progress with a LABEL, not a bare number', async () => {
-    const seen: GenerationProgressView[] = [];
-    generateRiggedCharacter.mockImplementationOnce(async (_req, options) => {
-      const opts = options as { onProgress?: (p: unknown) => void };
-      opts.onProgress?.({ phase: 'generating', percent: 40 });
-      opts.onProgress?.({ phase: 'rigging', percent: 10 });
-      return { ok: true as const, opfsPath: 'p', taskId: 't', arrivedSpec: 'mixamo' as const };
-    });
-    await runGeneration('character', 'a dwarf', undefined, (p) => seen.push(p));
-
-    // 🔑 Two tasks run in sequence and each reports its own 0–100. Without the
-    // label the bar fills, snaps back to 10%, and reads as a restart.
-    expect(seen).toEqual([
-      { label: 'Generating mesh', percent: 40 },
-      { label: 'Building skeleton', percent: 10 },
-    ]);
+    const [ask] = startModelGeneration.mock.calls[0] as [Record<string, unknown>];
+    expect(ask).toMatchObject({ prompt: '', references: ['abc123.png'], rig: true });
   });
 
   it('carries a refusal back with its reason rather than swallowing it', async () => {
-    generateModelIntoScene.mockResolvedValueOnce({
+    startModelGeneration.mockResolvedValueOnce({
       ok: false,
       reason: 'no recorded licence verdict',
     } as never);
@@ -200,39 +180,10 @@ describe('runGeneration', () => {
     });
   });
 
-  it('a FAILED character generation comes back as a failure', async () => {
-    generateRiggedCharacter.mockResolvedValueOnce({
-      outcome: 'failed',
-      reason: 'the service is unreachable',
-    } as never);
-    await expect(runGeneration('character', 'a chair')).resolves.toEqual({
-      ok: false,
-      reason: 'the service is unreachable',
-    });
-  });
-
-  // 🔴 THIS ROW REVERSES THE ONE ABOVE IT, ON PURPOSE (#835).
-  //
-  // It used to read "a refused RIG comes back the same way, not as a success
-  // with no skeleton" — correct while the mesh was being DISCARDED, because then
-  // a refusal really did leave the director with nothing. Now the mesh is
-  // generated, billed, and imported, so reporting a failure would tell someone
-  // nothing happened while they are looking at the thing that did.
-  //
-  // What that row guarded — a director being told they have a character when
-  // they have a bare mesh — did not go away; it moved. It is held by the outcome
-  // being `unrigged` rather than `rigged`, and by the banner
-  // `generateRiggedCharacter` writes. This surface has ONE register for "you
-  // should know something", so repeating it here would make a degraded success
-  // and a hard failure look identical.
-  it('a refused RIG is NOT a failure — the mesh it generated is in the scene', async () => {
-    generateRiggedCharacter.mockResolvedValueOnce({
-      outcome: 'unrigged',
-      opfsPath: 'user-imports/x/model.glb',
-      taskId: 't2',
-      reason: 'the service will not rig this mesh',
-    } as never);
-    await expect(runGeneration('character', 'a chair')).resolves.toEqual({ ok: true });
+  it('an image that cannot be stored is a failure with its reason, never a throw', async () => {
+    storeReferenceImage.mockRejectedValueOnce(new Error('there is no open project'));
+    await expect(runGeneration('model', '', IMAGE)).resolves.toMatchObject({ ok: false });
+    expect(startModelGeneration).not.toHaveBeenCalled();
   });
 
   it('reports success without inventing a payload the panel does not use', async () => {
@@ -270,5 +221,46 @@ describe('the offer to save a generated clip (#819)', () => {
         'user-imports/walk/walk.bvh',
       ),
     ).toEqual({ kind: 'offer', name: 'run' });
+  });
+});
+
+describe('the cost, shown before a model run (#1720)', () => {
+  const base = { modelVersion: 'v3.1-20260211', withImage: false, count: 4, rig: false };
+
+  it('with no key, says FREE first — the stub answers — then what Tripo would charge', () => {
+    const line = modelCostLine({ ...base, hasKey: false });
+    expect(line.startsWith('Free')).toBe(true);
+    expect(line).toContain('≈ 80 Tripo credits (estimate: 4 × 20)');
+  });
+
+  it('with a key, is the estimate, labelled one', () => {
+    expect(modelCostLine({ ...base, hasKey: true })).toBe('≈ 80 Tripo credits (estimate: 4 × 20)');
+  });
+
+  it('an image costs more per run, by the table', () => {
+    expect(modelCostLine({ ...base, hasKey: true, withImage: true, count: 1 })).toContain('1 × 30');
+  });
+
+  it('a rigged run says the rig is not priced rather than inventing a number', () => {
+    expect(modelCostLine({ ...base, hasKey: true, rig: true })).toContain('+ rigging (not priced)');
+  });
+});
+
+describe('the progress line for a model run', () => {
+  it('says which variant of how many, and what the provider is doing', () => {
+    expect(modelRunProgress({ total: 4, done: 1, label: 'running', percent: 40 })).toEqual({
+      label: 'Variant 2 of 4 · running',
+      percent: 40,
+    });
+  });
+
+  it('never claims a variant past the last', () => {
+    expect(modelRunProgress({ total: 4, done: 4, label: 'x', percent: 0 })?.label).toContain(
+      'Variant 4 of 4',
+    );
+  });
+
+  it('nothing to show without a run', () => {
+    expect(modelRunProgress(null)).toBeNull();
   });
 });

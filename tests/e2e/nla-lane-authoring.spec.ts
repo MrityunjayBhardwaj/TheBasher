@@ -22,6 +22,7 @@
 // through the UI surfaces instead.
 
 import { test, expect, type Page } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface DispatchResult {
   ok: boolean;
@@ -114,7 +115,7 @@ async function seedWalkAction(page: Page) {
 }
 
 async function openNlaTab(page: Page) {
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.getByTestId('timeline-tab-nla').click();
   await expect(page.getByTestId('nla-pane')).toHaveAttribute('data-active', 'true');
 }

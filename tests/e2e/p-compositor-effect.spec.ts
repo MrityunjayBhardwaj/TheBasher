@@ -2,8 +2,11 @@
 // Image socket. Falsifiable against the REAL app: adding a ColorCorrect onto a
 // layer (the SAME operatorStack engine geometry modifiers use) splices it on the
 // source edge and grades the live composite; the brightness field + mute toggle
-// drive / bypass the grade; remove splices the chain closed. Unwire the effect
-// apply (compositeDecode.applyEffects) and the brightness assertion drops.
+// drive / bypass the grade; remove splices the chain closed. Unwire the grade (the GPU
+// pass's GRADE_FRAG in gpuComposite.ts) and the brightness assertion drops.
+//
+// #1883 — brightness is a gain on LINEAR light, so 0.1 encodes to ~35% of the sRGB value
+// (0.3 would sit at 58%, too close to the 60% line to tell a grade from noise).
 
 import { expect, test } from './_fixtures';
 
@@ -50,10 +53,10 @@ test('adding a Color Correct effect grades the composite; mute bypasses; remove 
   // Open the effect twirl → its param sub-rows (Brightness/Contrast/Saturation).
   await page.locator('[data-testid^="layer-effect-twirl-"]').first().click();
 
-  // Darken (brightness 0.3) grades the live composite.
+  // Darken (brightness 0.1) grades the live composite.
   const bright = page.locator('[data-testid^="layer-effect-prop-input-"]').first();
   await bright.click();
-  await bright.fill('0.3');
+  await bright.fill('0.1');
   await bright.press('Enter');
   await expect.poll(() => meanBrightness(page)).toBeLessThan(base * 0.6);
 

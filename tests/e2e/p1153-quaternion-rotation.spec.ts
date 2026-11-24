@@ -11,6 +11,10 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 type Q = [number, number, number, number];
 type V = [number, number, number];
@@ -300,7 +304,7 @@ test('#1153 — the diff ghost of a quaternion-mode proposal draws the quaternio
     },
     { decoy: DECOY, q: Q170 },
   );
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
   // The ghost's own signature (DiffOverlay's styling: wireframe at opacity 0.35) plus the
   // cube's width — p352's discriminator, never `editorChrome` (H171).
   const ghostQuats = () =>
@@ -397,7 +401,7 @@ test('#1153 — Auto-Key records a gizmo rotate on a quaternion node into a QUAT
     page,
     setParams('n_box', { rotation: DECOY, rotationMode: 'quaternion', quaternion: [0, 0, 0, 1] }),
   );
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await selectBox(page);
   await page.getByTestId('autokey-toggle').click();
   await expect(page.getByTestId('timebar')).toHaveAttribute('data-autokey', 'on');
@@ -429,7 +433,7 @@ test('#1153 — I keys a quaternion node on its quaternion channel, with the ori
     page,
     setParams('n_box', { rotation: DECOY, rotationMode: 'quaternion', quaternion: Q170 }),
   );
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await selectBox(page);
   // As p149 does: blur whatever holds focus, or the key handler's typing guard swallows the press.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());

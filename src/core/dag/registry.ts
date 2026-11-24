@@ -14,7 +14,7 @@ import type {
 } from './types';
 import { z } from 'zod';
 import { operatorLaneOf } from './operatorLane';
-import { acceptedTypes } from './socketMembership';
+import { acceptedTypes, inputAccepts } from './socketMembership';
 
 const registry = new Map<NodeTypeId, NodeDefinition>();
 
@@ -37,6 +37,13 @@ const registry = new Map<NodeTypeId, NodeDefinition>();
  */
 function assertInputDescriptors(def: NodeDefinition): void {
   for (const [socket, desc] of Object.entries(def.inputs)) {
+    // #1716 — still-or-frames is a fact about images; on any other input nothing would read it.
+    if (desc.takes !== undefined && !inputAccepts(desc, 'Image')) {
+      throw new Error(
+        `registerNodeType(${def.type}): input '${socket}' declares \`takes\` (still or frames) ` +
+          `but does not accept Image. Only an Image input has a still or a run of frames to take.`,
+      );
+    }
     if (!Array.isArray(desc.type)) continue;
     const set = desc.type as readonly string[];
     if (set.length < 2) {
@@ -88,6 +95,7 @@ const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> =
   modifier: 'ObjectData',
   material: 'ObjectData',
   effect: 'Image',
+  layer: 'Image',
 };
 
 function assertChainDeclaration(def: NodeDefinition): void {

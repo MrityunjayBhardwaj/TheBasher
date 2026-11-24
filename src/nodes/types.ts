@@ -11,6 +11,7 @@
 // types (`Camera` / `Light` / `Mesh`) carry richer variants without the DAG
 // type system needing to grow.
 
+import type { ImageExtent } from '../core/dag/types';
 import type { OverriddenSet } from '../core/override/overrideSet';
 import type { ScopeDomain } from './attributes';
 import type { ClipLoop } from './clipLoop';
@@ -2870,32 +2871,6 @@ export interface Layer2DTransform {
   readonly rotation: number;
 }
 
-export interface LayerValue {
-  readonly kind: 'Layer';
-  readonly name: string;
-  readonly enabled: boolean;
-  /** Solo (AE): when any layer in a comp is solo, only solo layers composite. */
-  readonly solo: boolean;
-  /** Lock: protects the layer from timeline edits (trim/slide/reorder). */
-  readonly locked: boolean;
-  /** Position of the layer's in-point on the comp timeline, in comp frames. */
-  readonly startFrame: number;
-  /** Trim of the SOURCE, in source-local frames. */
-  readonly inPoint: number;
-  readonly outPoint: number;
-  readonly blendMode: LayerBlendMode;
-  /** 0..1, keyframeable (V57 channel paramPath 'opacity'). */
-  readonly opacity: number;
-  readonly transform: Layer2DTransform;
-  /**
-   * The source Image as evaluated at the incoming ctx. The compositor RE-EVALUATES
-   * the source node at a time-shifted ctx (comp playhead → source-local time via
-   * startFrame/inPoint) to fetch the actual frame — this field is the structural
-   * handle, not the final composited pixels (the remap is a 1d/runtime concern).
-   */
-  readonly source: ImageValue | null;
-}
-
 export interface CompositionValue {
   readonly kind: 'Composition';
   readonly name: string;
@@ -2905,9 +2880,9 @@ export interface CompositionValue {
   readonly durationFrames: number;
   /** Solid background colour (hex) painted under all layers. */
   readonly background: string;
-  /** Composite z-order: index 0 = BACK, last = FRONT (renderer composites
-   *  bottom→top). The outline UI displays front-on-top by reversing for view. */
-  readonly layers: readonly LayerValue[];
+  /** #1879 — the top of the layer stack: a handle on the image every layer, back to front, makes
+   *  (null when the comp has no layers). Pixels are composited at runtime by walking the chain. */
+  readonly image: ImageValue | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2958,6 +2933,20 @@ export interface ImageValue {
    * can describe a pass result by this handle (frame N, kind K, hash H).
    */
   readonly sourceHash: string;
+  /**
+   * #1716 — one picture, or a run of frames (and which run). The socket is the same for both,
+   * so the value has to say. Required: a producer that does not know which it makes does not
+   * compile. See {@link ImageExtent}.
+   */
+  readonly extent: ImageExtent;
+  /**
+   * #1947 — where this picture's bytes already sit in storage, as one file, when its producer
+   * knows: an image clip's `src`, a ComfyUI workflow's still once it is made. A reader that needs
+   * the bytes (the frame compiler) reads them from here. Absent for a picture rendered from the
+   * scene, which the reader finds by its pass kind and frame, and for a run of frames. Not in the
+   * hash: where the bytes are is not what they are.
+   */
+  readonly storedAt?: string;
 }
 
 /** Default Image descriptor for fresh pass nodes. 1280x720 rgba8 (P4 §43). */

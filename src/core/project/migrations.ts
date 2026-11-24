@@ -32,6 +32,10 @@ import { posesFromKeyframes } from '../import/keyframePoses';
 import type { AnimationKeyframe } from '../../nodes/types';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../comfy/builtinWorkflows';
+import { writeBasherControllerValues } from '../comfy/basherControllers';
+import type { ComfyApiJson } from '../comfy/comfyGraph';
+import { socketsOfWorkflow } from '../comfy/workflowSockets';
 import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 import {
   FILTER_NAME_OF_GLTF,
@@ -61,6 +65,14 @@ export const CONSTRAINT_CHAINS_FORMAT = PARENT_INPUTS_FORMAT + 1;
 
 /** #1856 — the format version that finishes the v26 lens strip on files saved past v26 without it. */
 export const CAMERA_LENS_STRIP_FORMAT = CONSTRAINT_CHAINS_FORMAT + 1;
+
+/** #1715 — the format version where a ComfyUI workflow node holds its workflow file and the
+ *  preset enum is gone. */
+export const WORKFLOW_FILES_FORMAT = CAMERA_LENS_STRIP_FORMAT + 1;
+
+/** #1879 — the format version the layer-list-to-chain conversion produces. It landed after
+ *  #1715's workflow files, so it numbers from there. */
+export const LAYER_CHAINS_FORMAT = WORKFLOW_FILES_FORMAT + 1;
 
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
@@ -189,6 +201,14 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v29 → v30 (#1856): a lens saved past v26 still holding `lookAt`, `roll` or `zoom` loses them, as
   // the v26 step does now; a file saved before the step learned to strip them never ran it again.
   [CAMERA_LENS_STRIP_FORMAT - 1]: migrateStaleLensFields,
+  // v30 → v31 (#1715): the ComfyUI preset enum is gone. A preset node becomes the generic workflow
+  // node holding the preset's workflow file, its pass wires on the sockets of the same names and
+  // its output wires on the file's output.
+  [WORKFLOW_FILES_FORMAT - 1]: migratePresetsToWorkflowFiles,
+  // v31 → v32 (#1879): a composition's layer list becomes a chain on the Image lane. Each layer
+  // reads the one behind it on `below`, the comp reads the front layer on `in`, and a layer's
+  // `enabled` becomes `muted` (inverted), the stack mute that bypasses it.
+  [LAYER_CHAINS_FORMAT - 1]: migrateLayerListsToChains,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -3216,4 +3236,216 @@ export function migrateStaleLensFields(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CAMERA_LENS_STRIP_FORMAT };
+}
+
+// ── v30 → v31: a ComfyUI workflow node holds its workflow file (#1715) ─────────────────────────
+// The node had a closed `presetId` enum (only `stylizedRealism`) and fixed sockets: `prompt`, a
+// `pass-input` list of render passes, `time`, and one output `out`. It now runs the workflow FILE
+// it holds (`graph`), and its sockets are that file's Basher markers. So:
+//   - `presetId` goes from every workflow node.
+//   - A node with no file (the preset path) gets the preset's workflow file
+//     (`STYLIZED_REALISM_WORKFLOW`, the preset's template rewritten with markers). Its wires move
+//     onto the file's sockets: each render pass on `pass-input` onto the input named after its
+//     kind (beauty, depth, normal); `prompt` and `time` keep their names. The negative text the
+//     preset read off the Prompt node is written into the file's `negative` input, as the file
+//     reads it from there. A wire with no such socket (an ID pass, a second beauty) stays on
+//     `pass-input`, kept and shown as broken, never dropped.
+//   - Every wire read off a workflow node's `out` (a stitch, a render output) moves to the file's
+//     first output: `stylized` for the preset, the first Basher output of an imported file. An
+//     imported file with no Basher output keeps `out`: such a file is collected whole, and `out`
+//     is that whole-workflow output (`workflowSocketsOf`).
+// An imported file's own wires on `prompt` / `pass-input` are left where they are: nothing read
+// them before (the compositor binds images by `imageBindings`), and they now show as broken.
+const PASS_SOCKET_BY_TYPE: Record<string, string> = {
+  BeautyPass: 'beauty',
+  DepthPass: 'depth',
+  NormalPass: 'normal',
+};
+
+export function migratePresetsToWorkflowFiles(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode>; outputs?: Record<string, RawRef | null> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: WORKFLOW_FILES_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const firstOutput = new Map<string, string | null>();
+  const kept: string[] = [];
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'ComfyUIWorkflow') continue;
+    const { presetId: _presetId, ...params } = node.params ?? {};
+    void _presetId;
+    const graph = params.graph as { apiJson?: ComfyApiJson } | null | undefined;
+    if (graph?.apiJson) {
+      out[id] = { ...node, params };
+      firstOutput.set(id, socketsOfWorkflow(graph.apiJson).outputs[0]?.socket ?? null);
+      continue;
+    }
+    // The preset path: the preset's file, the negative it read, the pass wires by kind.
+    let apiJson = structuredClone(STYLIZED_REALISM_WORKFLOW);
+    const promptRef = asRefs(node.inputs?.prompt)[0];
+    const negative = promptRef?.node ? nodes[promptRef.node]?.params?.negative : undefined;
+    if (typeof negative === 'string' && negative) {
+      const neg = socketsOfWorkflow(apiJson).inputs.find((i) => i.socket === 'negative');
+      if (neg) apiJson = writeBasherControllerValues(apiJson, { [neg.nodeId]: [negative] });
+    }
+    const inputs: Record<string, RawRef | RawRef[]> = { ...(node.inputs ?? {}) };
+    delete inputs['pass-input'];
+    const left: RawRef[] = [];
+    for (const ref of asRefs(node.inputs?.['pass-input'])) {
+      const socket = ref.node ? PASS_SOCKET_BY_TYPE[nodes[ref.node]?.type ?? ''] : undefined;
+      if (socket && inputs[socket] === undefined) inputs[socket] = ref;
+      else left.push(ref);
+    }
+    if (left.length > 0) {
+      inputs['pass-input'] = left;
+      kept.push(id);
+    }
+    out[id] = {
+      ...node,
+      params: { ...params, graph: { apiJson, meta: { ...STYLIZED_REALISM_META } } },
+      inputs,
+    };
+    firstOutput.set(id, 'stylized');
+  }
+  if (firstOutput.size === 0) return { ...proj, formatVersion: WORKFLOW_FILES_FORMAT };
+
+  const moved = (ref: RawRef): RawRef => {
+    if (!ref?.node || ref.socket !== 'out' || !firstOutput.has(ref.node)) return ref;
+    const to = firstOutput.get(ref.node);
+    return to ? { ...ref, socket: to } : ref;
+  };
+  for (const [id, node] of Object.entries(out)) {
+    if (!node?.inputs) continue;
+    let changed = false;
+    const inputs: Record<string, RawRef | RawRef[]> = {};
+    for (const [socket, binding] of Object.entries(node.inputs)) {
+      const next = Array.isArray(binding) ? binding.map(moved) : moved(binding);
+      if (next !== binding && JSON.stringify(next) !== JSON.stringify(binding)) changed = true;
+      inputs[socket] = next;
+    }
+    if (changed) out[id] = { ...node, inputs };
+  }
+  const outputs = proj.state?.outputs
+    ? Object.fromEntries(
+        Object.entries(proj.state.outputs).map(([k, ref]) => [k, ref ? moved(ref) : ref]),
+      )
+    : proj.state?.outputs;
+  if (kept.length > 0) {
+    console.warn(
+      `[migratePresetsToWorkflowFiles] ${kept.length} workflow node(s) (${kept.join(', ')}) had a ` +
+        'pass wire with no socket of its kind in the workflow file; kept on pass-input and shown ' +
+        'as broken (#1715).',
+    );
+  }
+  return {
+    ...proj,
+    state: { ...proj.state, nodes: out, ...(outputs ? { outputs } : {}) },
+    formatVersion: WORKFLOW_FILES_FORMAT,
+  };
+}
+
+// ── v31 → v32: a composition's layers become a chain (#1879) ─────────────────
+// Before, `Composition.layers` was a list (0 = back) the comp composited itself. Now each Layer
+// is an Image-lane operator: it reads everything behind it on `below`, and the comp reads the
+// front layer on `in`. The order is kept exactly. A ref to a missing node, or to a node that is
+// not a Layer, was skipped by every reader, so it is dropped. A layer listed twice, or in two
+// comps, can only stand in one place on a chain: its first appearance (comps in node-table
+// order) is kept and the rest are dropped. Both are reported, never silent (V38).
+//
+// `enabled` (true = shown) becomes `muted` (true = hidden). A key or driver on a layer's
+// `enabled` is moved to `muted`, its boolean or 0/1 key values inverted.
+
+const LAYER_MUTE_PATH = 'muted';
+
+function invertShown(v: unknown): unknown {
+  if (typeof v === 'boolean') return !v;
+  if (typeof v === 'number') return 1 - v;
+  return v;
+}
+
+export function migrateLayerListsToChains(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: LAYER_CHAINS_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const placed = new Set<string>();
+  const dropped: string[] = [];
+  const reused: string[] = [];
+
+  for (const [compId, comp] of Object.entries(nodes)) {
+    if (comp?.type !== 'Composition' || !comp.inputs || !('layers' in comp.inputs)) continue;
+    const order: RawRef[] = [];
+    for (const r of asRefs(comp.inputs.layers)) {
+      const id = r.node;
+      if (!id || out[id]?.type !== 'Layer') {
+        dropped.push(`${compId}→${id ?? '?'}`);
+        continue;
+      }
+      if (placed.has(id)) {
+        reused.push(`${compId}→${id}`);
+        continue;
+      }
+      placed.add(id);
+      order.push({ node: id, socket: r.socket ?? 'out' });
+    }
+    const { layers: _layers, ...compInputs } = comp.inputs;
+    void _layers;
+    const top = order[order.length - 1];
+    out[compId] = { ...comp, inputs: top ? { ...compInputs, in: top } : compInputs };
+    for (let i = 0; i < order.length; i++) {
+      const id = order[i].node!;
+      const layer = out[id]!;
+      const { below: _below, ...layerInputs } = layer.inputs ?? {};
+      void _below;
+      out[id] = {
+        ...layer,
+        inputs: i > 0 ? { ...layerInputs, below: order[i - 1] } : layerInputs,
+      };
+    }
+  }
+
+  // Every Layer, placed or not: `enabled` → `muted`.
+  let renamed = 0;
+  for (const [id, n] of Object.entries(out)) {
+    if (n?.type !== 'Layer' || !n.params || !('enabled' in n.params)) continue;
+    const { enabled, ...rest } = n.params;
+    out[id] = { ...n, params: { ...rest, muted: enabled === false } };
+    renamed++;
+  }
+  let movedKeys = 0;
+  for (const [id, n] of Object.entries(out)) {
+    const q = n?.params;
+    if (q?.paramPath !== 'enabled' || typeof q.target !== 'string') continue;
+    if (out[q.target]?.type !== 'Layer') continue;
+    const isChannel = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+    if (!isChannel && n.type !== 'ParamDriver') continue;
+    const keyframes = Array.isArray(q.keyframes)
+      ? (q.keyframes as Record<string, unknown>[]).map((k) => ({
+          ...k,
+          value: invertShown(k.value),
+        }))
+      : q.keyframes;
+    out[id] = {
+      ...n,
+      params: { ...q, paramPath: LAYER_MUTE_PATH, ...(isChannel ? { keyframes } : {}) },
+    };
+    movedKeys++;
+  }
+
+  if (dropped.length > 0 || reused.length > 0) {
+    console.warn(
+      `[migrateLayerListsToChains] dropped ${dropped.length} layer ref(s) to a missing or non-Layer ` +
+        `node (${dropped.join(', ')}) and ${reused.length} repeat appearance(s) of a layer already ` +
+        `placed (${reused.join(', ')}) (#1879).`,
+    );
+  }
+  if (movedKeys > 0) {
+    console.warn(
+      `[migrateLayerListsToChains] ${movedKeys} key/driver node(s) on a layer's enabled moved to ` +
+        `muted, values inverted; ${renamed} layer(s) converted (#1879).`,
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: LAYER_CHAINS_FORMAT };
 }

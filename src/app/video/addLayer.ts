@@ -12,7 +12,9 @@
 // REF: docs/COMPOSITOR-DESIGN.md §4.2/§4.3; vyapti V1 (one op path) + V34;
 //      sibling: addPrimitives (addNode→connect into a list socket); issue #237.
 
+import { workflowSocketsOf } from '../../nodes/ComfyUIWorkflow';
 import type { NodeId, Op } from '../../core/dag/types';
+import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import { buildMediaClipOps, freshMediaClipId, ingestMediaClipFile } from '../asset/importMediaClip';
 import { pickMediaFiles, pickWorkflowJsonFile } from '../asset/importPicker';
@@ -20,32 +22,32 @@ import type { IngestFile } from '../asset/importGltf';
 import { SD15_TEXT2IMG, SD15_TEXT2IMG_META } from '../../core/comfy/starterGraphs';
 import { parseComfyWorkflowJson, type ParsedComfyGraph } from '../../core/comfy/importWorkflowJson';
 import { useNotificationStore } from '../stores/notificationStore';
+import { stackLayerOnTopOps } from './videoLayers';
 
 /**
  * Build the ops wrapping `sourceNodeId` (an Image producer) as a new Layer in the
- * Composition `compId`: addNode(Layer) → connect(source.out → Layer.source) →
- * connect(Layer.out → Composition.layers). Pure; the caller mints `layerId`.
- * Appends to the `layers` list (no `index`) → the new layer lands on top (front).
+ * Composition `compId`: addNode(Layer) → connect(source.out → Layer.source) → stack it on top
+ * of the comp (#1879: the old top moves onto its `below`). Pure over `state`, which must be the
+ * state the ops are dispatched against; the caller mints `layerId`.
  */
 export function buildAddLayerOps(
+  state: DagState,
   layerId: NodeId,
   compId: NodeId,
   sourceNodeId: NodeId,
   name: string,
   extraParams: Record<string, unknown> = {},
+  /** #1715 — the source's output the layer reads; a workflow node's is its file's first. */
+  sourceSocket = 'out',
 ): Op[] {
   return [
     { type: 'addNode', nodeId: layerId, nodeType: 'Layer', params: { name, ...extraParams } },
     {
       type: 'connect',
-      from: { node: sourceNodeId, socket: 'out' },
+      from: { node: sourceNodeId, socket: sourceSocket },
       to: { node: layerId, socket: 'source' },
     },
-    {
-      type: 'connect',
-      from: { node: layerId, socket: 'out' },
-      to: { node: compId, socket: 'layers' },
-    },
+    ...stackLayerOnTopOps(state, compId, layerId),
   ];
 }
 
@@ -87,7 +89,7 @@ export async function importMediaClipAsLayer(
 
   const ops: Op[] = [
     ...buildMediaClipOps(mediaId, ingested.name, ingested.opfsPath, ingested.probe),
-    ...buildAddLayerOps(layerId, compId, mediaId, ingested.name, extraParams),
+    ...buildAddLayerOps(dag.state, layerId, compId, mediaId, ingested.name, extraParams),
   ];
   dag.dispatchAtomic(ops, 'user', `add media layer: ${ingested.name}`);
   return layerId;
@@ -136,7 +138,16 @@ export function addComfyWorkflowLayerFromGraph(
 
   const ops: Op[] = [
     { type: 'addNode', nodeId: comfyId, nodeType: 'ComfyUIWorkflow', params: { graph } },
-    ...buildAddLayerOps(layerId, compId, comfyId, name, { outPoint: compDurationFrames }),
+    ...buildAddLayerOps(
+      dag.state,
+      layerId,
+      compId,
+      comfyId,
+      name,
+      { outPoint: compDurationFrames },
+      // #1715 — the layer reads the workflow file's first output.
+      workflowSocketsOf({ graph }).outputs[0]?.socket ?? 'out',
+    ),
   ];
   dag.dispatchAtomic(ops, 'user', `add ComfyUI workflow layer: ${name}`);
   return layerId;

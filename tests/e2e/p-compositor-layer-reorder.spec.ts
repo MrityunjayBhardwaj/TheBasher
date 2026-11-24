@@ -1,6 +1,6 @@
 // Compositor spine 1c.3b-ii — dragging an outline row reorders the comp's layers.
 // Falsifiable against the REAL app: dragging the front (top) row down past the
-// back row flips the order of Composition.inputs.layers (the DAG edge list), and a
+// back row flips the order of the comp's layer stack (its chain of wires, #1879), and a
 // LOCKED row can't be dragged so the order is unchanged. Unwire the reorder
 // dispatch or the lock gate and an assertion drops.
 
@@ -19,15 +19,21 @@ interface DagWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, DagNode> } } };
 }
 
-/** The comp's layer node ids in DAG edge order (0=back…last=front). */
+/** The comp's layer node ids in stack order (0=back…last=front), read off the graph: #1879 —
+ *  the comp reads the front layer on `in`, and each layer the one behind it on `below`. */
 function layerOrder(page: import('@playwright/test').Page): Promise<string[]> {
   return page.evaluate(() => {
     const w = window as unknown as DagWindow;
     const nodes = w.__basher_dag?.getState().state.nodes ?? {};
     const comp = Object.values(nodes).find((n) => n.type === 'Composition');
-    const layers = comp?.inputs?.layers;
-    const arr = Array.isArray(layers) ? layers : layers ? [layers] : [];
-    return arr.map((r) => r.node);
+    const first = (b: DagRef | DagRef[] | undefined) => (Array.isArray(b) ? b[0] : b);
+    const order: string[] = [];
+    let ref = first(comp?.inputs?.in);
+    while (ref && !order.includes(ref.node)) {
+      order.push(ref.node);
+      ref = first(nodes[ref.node]?.inputs?.below);
+    }
+    return order.reverse();
   });
 }
 

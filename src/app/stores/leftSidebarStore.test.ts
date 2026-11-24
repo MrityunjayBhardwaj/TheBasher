@@ -1,10 +1,10 @@
-// Unit tests for leftSidebarStore (Outliner / Assets tabs — UX backlog #6).
+// Unit tests for leftSidebarStore (the outliner only since #1707; Assets moved to the drawer).
 //
 // Covers K11 step compliance:
 //   - first-visit default = 'outliner'
-//   - persistence round-trip ('outliner' ↔ 'assets')
+//   - persistence of 'outliner'
 //   - K11 step 4 legacy-coercion: unknown values (incl. the old
-//     'scene'/'agent' tab scheme) fall back to default
+//     'scene'/'agent'/'shots'/'assets' tabs) fall back to default
 //   - corrupt JSON fall back without module-load crash
 //   - safeSet PERSISTABLE filter blocks malformed writes
 //
@@ -59,17 +59,6 @@ describe('leftSidebarStore', () => {
   });
 
   it('setActiveTab persists the new value', () => {
-    useLeftSidebarStore.getState().setActiveTab('assets');
-    expect(useLeftSidebarStore.getState().activeTab).toBe('assets');
-    const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
-      string,
-      string
-    >;
-    expect(persisted.activeTab).toBe('assets');
-  });
-
-  it('setActiveTab round-trip: outliner → assets → outliner', () => {
-    useLeftSidebarStore.getState().setActiveTab('assets');
     useLeftSidebarStore.getState().setActiveTab('outliner');
     expect(useLeftSidebarStore.getState().activeTab).toBe('outliner');
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
@@ -86,15 +75,22 @@ describe('leftSidebarStore', () => {
     expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
-  it('persistence: stored assets value rehydrates as assets', async () => {
+  it('#1707 — a persisted "assets" tab (moved to the drawer\'s Library tab) coerces to default', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'assets' }));
     vi.resetModules();
     const mod = await import('./leftSidebarStore');
-    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('assets');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
   });
 
   it('K11 step 4 — legacy value (e.g. the old "agent"/"library" tabs) coerces to default', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'agent' }));
+    vi.resetModules();
+    const mod = await import('./leftSidebarStore');
+    expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
+  });
+
+  it('#1703 — a persisted "shots" tab (moved to the bottom drawer) coerces to default', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeTab: 'shots' }));
     vi.resetModules();
     const mod = await import('./leftSidebarStore');
     expect(mod.useLeftSidebarStore.getState().activeTab).toBe('outliner');
@@ -118,16 +114,16 @@ describe('leftSidebarStore', () => {
   });
 
   it('setActiveTab with a non-persistable value is silently rejected', () => {
-    useLeftSidebarStore.getState().setActiveTab('assets');
+    useLeftSidebarStore.getState().setActiveTab('outliner');
     // TypeScript would normally prevent this — cast simulates a runtime
     // path that bypassed the type system (e.g. a malformed dev-tools call).
-    (useLeftSidebarStore.getState().setActiveTab as (t: string) => void)('library');
-    // No change: still 'assets'.
-    expect(useLeftSidebarStore.getState().activeTab).toBe('assets');
+    (useLeftSidebarStore.getState().setActiveTab as (t: string) => void)('assets');
+    // No change: still 'outliner', and nothing else was written.
+    expect(useLeftSidebarStore.getState().activeTab).toBe('outliner');
     const persisted = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<
       string,
       string
     >;
-    expect(persisted.activeTab).toBe('assets');
+    expect(persisted.activeTab).toBe('outliner');
   });
 });

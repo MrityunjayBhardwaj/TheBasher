@@ -21,6 +21,7 @@
 // REF: .planning/phases/v06.4-director-ux/PLAN.md (W1); CONTEXT A-1.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -66,15 +67,19 @@ test('W1#2 every consolidated control has EXACTLY ONE home, inside the floating 
     'floating-toolbar-play',
     'floating-toolbar-timeline',
   ];
+  // #1935 — the less-used controls live in the pill's ⋯ menu: open it so every control is in
+  // the DOM, then each one must have one home, in the pill or in that menu.
+  await toolbarControl(page, 'top-toolbar-present');
   for (const id of controls) {
     await expect(page.getByTestId(id), `${id} should have exactly one DOM home`).toHaveCount(1);
-    // …and that home is the consolidated pill.
+    // …and that home is the consolidated pill or its ⋯ menu.
     const inPill = await page.evaluate((testId: string) => {
       const el = document.querySelector(`[data-testid="${testId}"]`);
       const pillEl = document.querySelector('[data-testid="floating-viewport-toolbar"]');
-      return Boolean(el && pillEl && pillEl.contains(el));
+      const menuEl = document.querySelector('[data-testid="floating-toolbar-more-menu"]');
+      return Boolean(el && ((pillEl && pillEl.contains(el)) || (menuEl && menuEl.contains(el))));
     }, id);
-    expect(inPill, `${id} should live inside the floating pill`).toBe(true);
+    expect(inPill, `${id} should live inside the floating pill or its ⋯ menu`).toBe(true);
   }
 });
 
@@ -99,7 +104,7 @@ test('W1#4 tool dispatch still flows through the single writer (V19 preserved)',
 }) => {
   // The one tool surface drives editorStore.setActiveTool; clicking a tool on
   // the pill flips the store (the duplicate ToolRail caller is gone).
-  await page.getByTestId('floating-toolbar-rot').click();
+  await (await toolbarControl(page, 'floating-toolbar-rot')).click();
   const tool = await page.evaluate(
     () =>
       (

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../core/comfy/builtinWorkflows';
 import {
   __resetRegistryForTests,
   evaluate,
@@ -135,6 +136,8 @@ const ALL_TYPES = [
   'Mix',
   // #902 — text-to-motion as a node, so a generated clip has a producer the
   // graph can re-cook instead of a call whose arguments were discarded.
+  // #1720 — text/image-to-3D as a node: the request and the variants it produced.
+  'ModelGenerate',
   'MotionGenerate',
   'MultiplyTransforms', // #1784
   'Navmesh',
@@ -1819,19 +1822,18 @@ describe('P5 — Prompt (pure data node)', () => {
 });
 
 describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
+  /** The file's output (#1715). */
+  const OUT = { socket: 'stylized' };
   /**
-   * Build a tiny DAG: TimeSource + Prompt + BeautyPass + DepthlikeStub +
-   * ComfyUIWorkflow connected through 'pass-input'. We use BeautyPass for
-   * both pass-input slots so we don't take a dependency on Wave A4's
-   * DepthPass / NormalPass landing first — the sourceHash only cares
-   * about the upstream Image's passKind + sourceHash, both well-defined
-   * for BeautyPass.
+   * Build a tiny DAG: TimeSource + Prompt + BeautyPass + ComfyUIWorkflow
+   * holding the stylized-realism workflow file (#1715: its sockets are the
+   * file's markers), the beauty pass on its `beauty` input. The sourceHash
+   * only cares about the upstream Image's passKind + sourceHash.
    */
   function buildComfyState(
     opts: {
       promptText?: string;
       promptNegative?: string;
-      presetId?: 'stylizedRealism';
       boxPosition?: [number, number, number];
     } = {},
   ) {
@@ -1884,7 +1886,7 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
       nodeId: 'cw',
       nodeType: 'ComfyUIWorkflow',
       params: {
-        presetId: opts.presetId ?? 'stylizedRealism',
+        graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
         frameStart: 0,
         frameEnd: 30,
         lastGoodFrame: -1,
@@ -1899,7 +1901,7 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
     s = applyOp(s, {
       type: 'connect',
       from: { node: 'beauty', socket: 'out' },
-      to: { node: 'cw', socket: 'pass-input' },
+      to: { node: 'cw', socket: 'beauty' },
     }).next;
     s = applyOp(s, {
       type: 'connect',
@@ -1911,14 +1913,14 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
 
   it('twice-eval bit-exact at frame 0', () => {
     const state = buildComfyState();
-    const a = evaluate(state, 'cw').value as ImageValue;
-    const b = evaluate(state, 'cw').value as ImageValue;
+    const a = evaluate(state, 'cw', OUT).value as ImageValue;
+    const b = evaluate(state, 'cw', OUT).value as ImageValue;
     expect(a).toEqual(b);
   });
 
   it('emits Image with passKind stylized + default 1280x720 rgba8 (D-01)', () => {
     const state = buildComfyState();
-    const v = evaluate(state, 'cw').value as ImageValue;
+    const v = evaluate(state, 'cw', OUT).value as ImageValue;
     expect(v.kind).toBe('Image');
     expect(v.passKind).toBe('stylized');
     expect(v.descriptor).toEqual({ width: 1280, height: 720, format: 'rgba8' });
@@ -1926,14 +1928,14 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
   });
 
   it('sourceHash flips when prompt text changes', () => {
-    const a = evaluate(buildComfyState({ promptText: 'a cube' }), 'cw').value as ImageValue;
-    const b = evaluate(buildComfyState({ promptText: 'a sphere' }), 'cw').value as ImageValue;
+    const a = evaluate(buildComfyState({ promptText: 'a cube' }), 'cw', OUT).value as ImageValue;
+    const b = evaluate(buildComfyState({ promptText: 'a sphere' }), 'cw', OUT).value as ImageValue;
     expect(a.sourceHash).not.toBe(b.sourceHash);
   });
 
   it('sourceHash flips when upstream pass bytes change (box position mutated)', () => {
-    const a = evaluate(buildComfyState({ boxPosition: [0, 0, 0] }), 'cw').value as ImageValue;
-    const b = evaluate(buildComfyState({ boxPosition: [5, 0, 0] }), 'cw').value as ImageValue;
+    const a = evaluate(buildComfyState({ boxPosition: [0, 0, 0] }), 'cw', OUT).value as ImageValue;
+    const b = evaluate(buildComfyState({ boxPosition: [5, 0, 0] }), 'cw', OUT).value as ImageValue;
     expect(a.sourceHash).not.toBe(b.sourceHash);
   });
 
@@ -1947,7 +1949,8 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
     }).next;
     expect(s.nodes.cw.params.outputPath).toBe('');
     expect(s.nodes.cw.params.lastGoodFrame).toBe(-1);
-    expect(s.nodes.cw.params.presetId).toBe('stylizedRealism');
+    // #1715 — no file picked yet: no sockets.
+    expect(s.nodes.cw.params.graph).toBeNull();
   });
 
   it('hydrate-seam load with missing width/height fields produces defaults (V10 / H14)', () => {
@@ -1962,7 +1965,7 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
         cw: {
           ...s.nodes.cw,
           params: {
-            presetId: 'stylizedRealism',
+            graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
             frameStart: 0,
             frameEnd: 30,
             lastGoodFrame: -1,
@@ -1971,7 +1974,7 @@ describe('P5 — ComfyUIWorkflow (impure metadata, D-01/D-03/D-04)', () => {
         },
       },
     };
-    const v = evaluate(next, 'cw').value as ImageValue;
+    const v = evaluate(next, 'cw', OUT).value as ImageValue;
     expect(v.descriptor.width).toBe(1280);
     expect(v.descriptor.height).toBe(720);
   });

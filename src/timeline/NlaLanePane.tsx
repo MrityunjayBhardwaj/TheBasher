@@ -43,6 +43,8 @@
 //      .planning/phases/nla-5-lane-ui/PLAN.md inc 5B/5C; sibling precedent
 //      src/app/video/LayerTimeline.tsx; hetvabhasa H95/H48/H70; issue #283.
 
+import { useProposedNodeIds } from '../agent/diff/useProposal';
+import { PROPOSAL_AMBER } from '../app/proposalStyle';
 import { useTimelineSpan } from './timelineSpan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
@@ -71,6 +73,7 @@ import {
 import { commitNla, commitNlaPushDown, commitNlaSetParam } from './nlaCommit';
 import { NlaAddStripPopover } from './NlaAddStripPopover';
 import { NlaStripInspector } from './NlaStripInspector';
+import { NlaGeneratedRuns } from './NlaGeneratedRuns';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { bareChannelNodesForSubject } from '../app/nodeChannels';
 import { linkedDataNodeId } from '../app/resolveDataParamOwner';
@@ -514,6 +517,9 @@ export function NlaLanePane() {
 
         {/* ── Track rows (top = highest order — the model list is pre-reversed). */}
         <div className="min-h-0 w-full flex-1 overflow-auto">
+          {/* #1721 — generated runs, one strip each, stale in amber with Re-cook on the strip.
+              Kept out of `lanes`: those rows mirror the fold, and a run is not an NLA strip. */}
+          <NlaGeneratedRuns />
           {lanes.rows.length === 0 ? (
             <EmptyState
               hasActions={hasActions}
@@ -656,13 +662,19 @@ function TrackRowView({
   const view = useTimelineViewStore((s) => s.view);
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
   const dimmed = row.muted || row.soloedOut;
+  // #1706 — a track a pending proposal changes is outlined in the proposal amber.
+  const proposed = useProposedNodeIds('nla').has(row.trackId);
   return (
     <div
       data-testid={`nla-track-row-${row.trackId}`}
       data-muted={row.muted}
       data-soloed-out={row.soloedOut}
+      data-proposed={proposed || undefined}
       className="flex w-full border-b border-border"
-      style={{ height: NLA_ROW_HEIGHT_PX }}
+      style={{
+        height: NLA_ROW_HEIGHT_PX,
+        boxShadow: proposed ? `inset 0 0 0 1px ${PROPOSAL_AMBER}` : undefined,
+      }}
     >
       {/* Header cell: click selects the track; M/S/▲▼ commit through the one
           road; keyboard parity M/S/Alt+↑↓ (§2.3/§2.4/§2.8). role="group" NOT
@@ -782,6 +794,7 @@ function StripBlock({
   onClick: (stripId: string) => void;
   onKeyDown: (e: React.KeyboardEvent, strip: NlaStripBlock) => void;
 }) {
+  const proposedStrips = useProposedNodeIds('nla');
   // While a drag is in flight, the block renders the PREVIEW span (component-
   // local); the committed position re-derives from the store after pointerup.
   const dragging = preview !== null;
@@ -828,6 +841,7 @@ function StripBlock({
     for (let k = 1; k < strip.repeat; k += 1) repeatTicks.push(dispStart + k * clipLen);
   }
 
+  const proposed = proposedStrips.has(strip.stripId);
   return (
     <>
       <div
@@ -835,6 +849,7 @@ function StripBlock({
         tabIndex={0}
         data-testid={`nla-strip-${strip.stripId}`}
         data-selected={selected}
+        data-proposed={proposed || undefined}
         data-dragging={dragging}
         data-muted={strip.stripMuted || strip.trackMuted}
         data-degraded={degraded}
@@ -866,6 +881,8 @@ function StripBlock({
           // keeps the warn state unmissable.
           minWidth: NLA_STRIP_MIN_WIDTH_PX,
           height: NLA_ROW_HEIGHT_PX - 10,
+          // #1706 — a strip a pending proposal changes or adds: an amber outline.
+          boxShadow: proposed ? `0 0 0 2px ${PROPOSAL_AMBER}` : undefined,
         }}
       >
         {/* Glyphs, not color-only: ⊘ mute, ! orphan/ghost, C combine badge.

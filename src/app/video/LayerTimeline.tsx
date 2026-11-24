@@ -1,7 +1,7 @@
 // LayerTimeline — the Compositor's layer timeline (spine 1c.3a): an AE-style
 // outline column (one row per layer: twirl, name, visibility/solo/lock) beside a
 // track area (each layer's time bar on a frame ruler, with the playhead). Rows
-// render FRONT-on-top (the `layers` list is back→front; AE shows front first).
+// render FRONT-on-top (the layer stack reads back→front; AE shows front first).
 //
 // Bars are draggable (3b): the left/right handles trim inPoint/outPoint, the body
 // slides startFrame, a locked layer ignores the gesture, and rows reorder by drag.
@@ -37,6 +37,7 @@ import {
 import { dispatchRetimeKeyframe, dispatchMutatorFromUI } from '../animate/dispatchMutator';
 import { buildRemoveEffectOps, buildToggleEffectMuteOp } from '../operatorStack';
 import { useVideoSelectionStore } from './videoSelectionStore';
+import { LayerClipBadge } from './ShotClipControls';
 import {
   BAR_DRAG_THRESHOLD_PX as DRAG_THRESHOLD_PX,
   BAR_TRIM_HANDLE_PX,
@@ -447,7 +448,7 @@ export function LayerTimeline({ compId, comp }: { compId: NodeId; comp: Composit
     };
   }, [onRowWindowMove, onRowWindowUp]);
 
-  // Front-on-top: the layers list is back→front; reverse for display. A twirl-open
+  // Front-on-top: the layer stack reads back→front; reverse for display. A twirl-open
   // layer expands into its property rows (the dopesheet folding in). `visualRows`
   // is the ONE ordered list both columns render, so outline + track stay aligned.
   const display = [...rows].reverse();
@@ -716,12 +717,14 @@ function OutlineRow({
       <span className="flex-1 truncate text-fg" title={row.name}>
         {row.name}
       </span>
+      {/* #1717 — a shot clip's generated / stale / generating state. */}
+      <LayerClipBadge layerId={row.id} />
       <ToggleButton
         testId={`layer-vis-${row.id}`}
         label="Toggle visibility"
         active={row.enabled}
         glyph={row.enabled ? '◉' : '◌'}
-        onToggle={() => setLayerParam(row.id, 'enabled', !row.enabled, 'toggle layer visibility')}
+        onToggle={() => setLayerParam(row.id, 'muted', row.enabled, 'toggle layer visibility')}
       />
       <ToggleButton
         testId={`layer-solo-${row.id}`}

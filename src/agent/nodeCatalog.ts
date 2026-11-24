@@ -90,6 +90,9 @@ export interface NodeSchema {
   inputs: SocketField[];
   outputs: SocketField[];
   params: ParamField[];
+  /** #1715 — the node has more sockets, given by its own params (a ComfyUIWorkflow: its
+   *  workflow file's Basher markers); `dag.inspect` on a node lists them. */
+  ownSockets?: true;
 }
 
 type ZodDef = Record<string, unknown> & { typeName?: string };
@@ -279,7 +282,7 @@ export function nodeSchemaOf(type: NodeTypeId): NodeSchema | undefined {
   if (!def) return undefined;
   const params: ParamField[] = [];
   walk(def.paramSchema, '', params, 0);
-  return { type, ...socketsOf(def), params };
+  return { type, ...socketsOf(def), params, ...(def.instanceSockets ? { ownSockets: true } : {}) };
 }
 
 /** Every registered type, sorted — `listNodeTypes` already sorts. */
@@ -456,6 +459,8 @@ export function renderNodeCatalog(schemas: NodeSchema[] = listNodeSchemas()): st
     '#   x:<name> = the shared block named <name> below, each of its paths prefixed with "x."',
     '#   x:=y = x has exactly the fields printed earlier under y on the same list, each "y." read as "x."',
     '# Param paths are exactly the paths setParam takes. A path not listed here is not a param.',
+    '#   +own after in/out = the node has more sockets, given by its params (a ComfyUIWorkflow: the',
+    '#     Basher markers of its workflow file); dag.inspect a node to see them with their types',
   ].join('\n');
   const shared = sharedSubtrees(schemas);
   const blocks = shared.map((b) => `<${b.name}> = ${foldRepeats(b.fields).join(' ')}`);
@@ -487,7 +492,8 @@ export function renderNodeCatalog(schemas: NodeSchema[] = listNodeSchemas()): st
         }, [])
         .flatMap((run) => (typeof run === 'string' ? [run] : foldRepeats(run)))
         .join(' ') || '-';
-    return `${s.type} | in: ${ins} | out: ${outs} | params: ${ps}`;
+    const own = s.ownSockets ? ' +own' : '';
+    return `${s.type} | in: ${ins}${own} | out: ${outs}${own} | params: ${ps}`;
   });
   return `${legend}\n${blocks.join('\n')}\n${lines.join('\n')}`;
 }

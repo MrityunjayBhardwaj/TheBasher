@@ -37,7 +37,8 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { InspectorProposed, ProposedValueMark } from './InspectorProposed';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   attachMapFromFile,
   shownMapSlots,
@@ -151,11 +152,16 @@ import {
 } from './inspectorSections';
 import {
   SectionBody,
+  activeControlKeys,
   controlOwnedRowKeys,
   makeSectionCtx,
+  type ControlKey,
   type SectionControlRenderers,
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
+import { ComfyWorkflowSection } from './ComfyWorkflowSection';
+import { StackFrame, useStackFrameView } from './StackFrame';
+import { FRAME_SECTIONS, frameStackOf, type StackKind } from './stackFrameModel';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { WrapInRigConnector } from './animate/WrapInRigConnector';
@@ -178,6 +184,9 @@ import {
 } from '../nodes/channelModifiers';
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
+import { useRightPanelStore, type RightPanelTab } from './stores/rightPanelStore';
+import { usePaneFocus } from './stores/agentContextStore';
+import { LightStudioPanel } from '../timeline/LightStudioPanel';
 import { useSelectionStore } from './stores/selectionStore';
 import { transformControllerOf, type TransformController } from './nodeConstraints';
 import { useRenameStore } from './stores/renameStore';
@@ -3376,7 +3385,21 @@ function InfluenceRow({ nodeId }: { nodeId: string }) {
   );
 }
 
-function ParamRow({
+/** #1706 — every param row, plus the pending proposal's `old → new` for it when one changes it.
+ *  The row a StandingParamRow wraps is drawn again inside it (`standingApplied`), so the mark is
+ *  added on the outer call only. */
+export function ParamRow(props: Parameters<typeof ParamRowBody>[0]) {
+  return (
+    <>
+      <ParamRowBody {...props} />
+      {props.standingApplied ? null : (
+        <ProposedValueMark nodeId={props.nodeId} paramPath={props.paramPath} />
+      )}
+    </>
+  );
+}
+
+function ParamRowBody({
   nodeId,
   paramPath,
   value,
@@ -3965,6 +3988,123 @@ function SectionCard({
   );
 }
 
+/** No sections: a stable reference for a selection with no linked data node. */
+const NO_SECTIONS: readonly SectionId[] = [];
+
+/**
+ * The cards the linked-data block draws: the base node's declared list, plus any section a row
+ * actually routes to that the base does not declare. Without the union an operator declaring a
+ * section its base does not — a material operator over a curve, say — would contribute rows to a
+ * card that is never drawn, and they would vanish with no signal. The base's order is preserved and
+ * the extras follow, so the common case (an operator declaring `material`, which every mesh data
+ * node already declares) is byte-identical.
+ *
+ * #394 P7 — a promoted control's home counts toward the card union for exactly the reason an
+ * operator's section does: a card that is never drawn is a row that vanishes, and a control is the
+ * one row whose disappearance also strands its drives.
+ *
+ * #1959 — a function of its own because the inspector asks it too: the stack frame draws the
+ * block's stack sections, and has to know which of them the block would draw.
+ */
+function linkedCardsOf(
+  declared: readonly SectionId[],
+  rows: readonly DerivedParam[],
+  promoted: readonly PromotedParam[],
+): readonly SectionId[] {
+  const { bySection } = groupExposedRows(rows);
+  const promotedSections = promoted
+    .map((r) => r.home.section)
+    .filter((s): s is SectionId => s !== null);
+  const extraSections = [...new Set([...bySection.keys(), ...promotedSections])].filter(
+    (s) => !declared.includes(s),
+  );
+  return extraSections.length ? [...declared, ...extraSections] : declared;
+}
+
+/**
+ * One card body of the linked-data block: the section's controls, its rows, and the promoted
+ * controls homed into it. Drawn inside the block's card, or (#1959) inside the stack frame for a
+ * stack section — the same body either way, so a row looks and edits the same in both places.
+ */
+function LinkedSectionBody({
+  sectionId,
+  dataNodeId,
+  objectNodeId,
+  canApply,
+  rows,
+  promoted,
+  skipControls,
+  belowLeading,
+}: {
+  sectionId: SectionId;
+  dataNodeId: string;
+  objectNodeId: string;
+  canApply: boolean;
+  rows: readonly DerivedParam[];
+  promoted: readonly PromotedParam[];
+  /** Controls the frame already drew from the object's own section (#1959). */
+  skipControls?: ReadonlySet<ControlKey>;
+  /** Drawn under the section's leading controls, above its rows (#1961; `SectionBody`). */
+  belowLeading?: ReactNode;
+}) {
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dataNode = nodes[dataNodeId] ?? null;
+  if (!dataNode) return null;
+  const { bySection } = groupExposedRows(rows);
+  // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
+  // only while every row in this block came from the base — see the note on the `rows`
+  // prop of LinkedDataSections. (#518)
+  const valueOf = (row: DerivedParam) =>
+    (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
+  return (
+    <>
+      {/* #458 — the SAME table the main-node block dispatches through, which
+          is the whole point: a data node's custom section control can no
+          longer exist on one road and silently render nothing on the other.
+          This block used to carry a hand-copied `'curve'` arm, so CurveData
+          worked and every other custom section would have rendered empty.
+          Two ids: the data half owns these params, the Object poses it. */}
+      <SectionBody
+        sectionId={sectionId}
+        ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
+        rows={(bySection.get(sectionId) ?? []).map((row) => ({
+          key: row.paramPath,
+          value: valueOf(row),
+          // Two nodes in one card, and two operators in one lane can both own a
+          // `color` — so identity is the row's chain address, not its param name.
+          rowKey: row.relPath,
+          nodeId: row.nodeId,
+          maskedBy: row.maskedBy,
+          suppliedBy: row.suppliedBy,
+        }))}
+        renderers={SECTION_CONTROL_RENDERERS}
+        skipControls={skipControls}
+        belowLeading={belowLeading}
+        renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
+          <ParamRow
+            key={rowKey}
+            nodeId={nodeId}
+            paramPath={key}
+            value={value}
+            maskedBy={maskedBy}
+            suppliedBy={suppliedBy}
+            // #529 — resolved from the ROW's node, not the selected one. These rows
+            // belong to the base data node AND to every operator above it.
+            overrideInfo={overrideInfoFor(nodes[nodeId], key)}
+          />
+        )}
+      />
+      {/* #394 P7 — the controls homed into this card. Drawn after the params so a
+          knob reads as standing in front of the rows it drives, not among them. */}
+      {promoted
+        .filter((r) => r.home.section === sectionId)
+        .map((r) => (
+          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+        ))}
+    </>
+  );
+}
+
 /**
  * #365 Phase 5a (Slice 1c) — the object↔data split reach for the inspector. A split Object's
  * geometry + material live on the BoxData it points at (its `data` input), NOT on the Object,
@@ -3981,6 +4121,7 @@ function LinkedDataSections({
   canApply,
   promoted,
   rows,
+  skip,
 }: {
   dataNodeId: string;
   objectNodeId: string;
@@ -4005,6 +4146,8 @@ function LinkedDataSections({
    *  as a separate prop from `rows` for the same reason `rows` is narrowed: they are drawn
    *  by a different component and must not be reachable from the derived path. */
   promoted: readonly PromotedParam[];
+  /** #1959 — the sections the stack frame draws inside itself, not drawn here again. */
+  skip?: (sectionId: SectionId) => boolean;
 }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dataNode = nodes[dataNodeId] ?? null;
@@ -4015,7 +4158,7 @@ function LinkedDataSections({
   // #386 — un-sectioned params render in an `unrouted` bucket rather than vanishing (the
   // H189 parity gap). That bucket is now the projection's `section: null` rows: it is a
   // real destination in the model, not an absence, which is why it survived the move.
-  const { bySection, unrouted } = groupExposedRows(rows);
+  const { unrouted } = groupExposedRows(rows);
 
   // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
   // only while every row in this block came from the base — see the note on the `rows`
@@ -4023,24 +4166,10 @@ function LinkedDataSections({
   const valueOf = (row: DerivedParam) =>
     (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
 
-  // Sections to draw: the base node's declared list, plus any section a row actually
-  // routes to that the base does not declare. Without the union an operator declaring a
-  // section its base does not — a material operator over a curve, say — would contribute
-  // rows to a card that is never drawn, and they would vanish with no signal. The base's
-  // order is preserved and the extras follow, so the common case (an operator declaring
-  // `material`, which every mesh data node already declares) is byte-identical.
-  // #394 P7 — a promoted control's home counts toward the card union for exactly the
-  // reason an operator's section does: a card that is never drawn is a row that vanishes,
-  // and a control is the one row whose disappearance also strands its drives.
-  const promotedSections = promoted
-    .map((r) => r.home.section)
-    .filter((s): s is SectionId => s !== null);
-  const extraSections = [...new Set([...bySection.keys(), ...promotedSections])].filter(
-    (s) => !declared.includes(s),
-  );
-  const cards: readonly SectionId[] = extraSections.length
-    ? [...declared, ...extraSections]
-    : declared;
+  const cards = linkedCardsOf(declared, rows, promoted).filter((id) => !skip?.(id));
+  // #1959 — every card of the block may be drawn by the stack frame instead (a glTF data node
+  // declares only 'material'); a block left with nothing to draw draws no "Data ·" label either.
+  if (cards.length === 0 && unrouted.length === 0) return null;
 
   return (
     <div data-testid="inspector-linked-data" className="flex flex-col">
@@ -4054,47 +4183,14 @@ function LinkedDataSections({
           sectionId={sectionId}
           declaredSections={declared}
         >
-          {/* #458 — the SAME table the main-node block dispatches through, which
-              is the whole point: a data node's custom section control can no
-              longer exist on one road and silently render nothing on the other.
-              This block used to carry a hand-copied `'curve'` arm, so CurveData
-              worked and every other custom section would have rendered empty.
-              Two ids: the data half owns these params, the Object poses it. */}
-          <SectionBody
+          <LinkedSectionBody
             sectionId={sectionId}
-            ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
-            rows={(bySection.get(sectionId) ?? []).map((row) => ({
-              key: row.paramPath,
-              value: valueOf(row),
-              // Two nodes in one card, and two operators in one lane can both own a
-              // `color` — so identity is the row's chain address, not its param name.
-              rowKey: row.relPath,
-              nodeId: row.nodeId,
-              maskedBy: row.maskedBy,
-              suppliedBy: row.suppliedBy,
-            }))}
-            renderers={SECTION_CONTROL_RENDERERS}
-            renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
-              <ParamRow
-                key={rowKey}
-                nodeId={nodeId}
-                paramPath={key}
-                value={value}
-                maskedBy={maskedBy}
-                suppliedBy={suppliedBy}
-                // #529 — resolved from the ROW's node, not the selected one. These rows
-                // belong to the base data node AND to every operator above it.
-                overrideInfo={overrideInfoFor(nodes[nodeId], key)}
-              />
-            )}
+            dataNodeId={dataNodeId}
+            objectNodeId={objectNodeId}
+            canApply={canApply}
+            rows={rows}
+            promoted={promoted}
           />
-          {/* #394 P7 — the controls homed into this card. Drawn after the params so a
-              knob reads as standing in front of the rows it drives, not among them. */}
-          {promoted
-            .filter((r) => r.home.section === sectionId)
-            .map((r) => (
-              <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-            ))}
         </SectionCard>
       ))}
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
@@ -4360,18 +4456,44 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
   );
 }
 
+/**
+ * #1962 — the stack lists (their rows, + Add buttons and data-block line) inset to the panel's
+ * padding. Param rows carry their own `px-3`, and the stack frame and the section cards hold both
+ * kinds edge to edge, so the inset goes on the stack controls themselves (here, one wrapper for
+ * all of them) rather than on the frame, which would inset every param row twice. It applies the
+ * same in a card (a Null's constraints) as in the frame.
+ */
+function StackInset({ children }: { children: ReactNode }) {
+  return <div className="px-3">{children}</div>;
+}
+
 const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
   sceneEnvironment: (ctx) => <SceneEnvironmentControls nodeId={ctx.paramsNodeId} />,
   cameraLens: (ctx) => (
     <CameraLensControls nodeId={ctx.paramsNodeId} poseNodeId={ctx.objectNodeId} />
   ),
-  modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
-  materialStack: (ctx) => <MaterialStackControls nodeId={ctx.paramsNodeId} />,
-  materialLink: (ctx) => <MaterialLinkControls nodeId={ctx.paramsNodeId} />,
+  modifierStack: (ctx) => (
+    <StackInset>
+      <ModifierStackControls nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
+  materialStack: (ctx) => (
+    <StackInset>
+      <MaterialStackControls nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
+  materialLink: (ctx) => (
+    <StackInset>
+      <MaterialLinkControls nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
   constraintStack: (ctx) => (
     <>
-      <ConstraintStackControls nodeId={ctx.paramsNodeId} />
+      <StackInset>
+        <ConstraintStackControls nodeId={ctx.paramsNodeId} />
+      </StackInset>
+      {/* Carries its own px-3, like a param row. */}
       <InfluenceRow nodeId={ctx.paramsNodeId} />
     </>
   ),
@@ -4383,7 +4505,12 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
   rotationMode: (ctx) => <RotationModeControl nodeId={ctx.paramsNodeId} />,
   clock: (ctx) => <ClockControl nodeId={ctx.paramsNodeId} />,
-  constraintChain: (ctx) => <ConstraintStackCard nodeId={ctx.paramsNodeId} />,
+  // The shared stack panel (the spine's) inset from here, so its file stays untouched.
+  constraintChain: (ctx) => (
+    <StackInset>
+      <ConstraintStackCard nodeId={ctx.paramsNodeId} />
+    </StackInset>
+  ),
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
   // lets two objects share one mesh and still look different. In the linked-data block
@@ -5127,9 +5254,177 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
   );
 }
 
+/** #1703 — one of the right panel's tabs (Inspector · Lights). */
+function PanelTab({
+  id,
+  label,
+  active,
+  onSelect,
+}: {
+  id: RightPanelTab;
+  label: string;
+  active: RightPanelTab;
+  onSelect: (tab: RightPanelTab) => void;
+}) {
+  const on = active === id;
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={on}
+      data-testid={`inspector-tab-${id}`}
+      data-active={on}
+      onClick={() => onSelect(id)}
+      className={`rounded px-2 py-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+        on ? 'bg-bg-1 text-fg' : 'text-fg-dim hover:text-fg'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
+  // #225 — when >1 node is selected the inspector renders the shared-edit
+  // multi-state instead of the single primary node.
+  const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
+
+  // #173 — Inspector (R7) per-panel collapse. Mirrors LeftSidebar's chevron
+  // pattern (the flag/persistence already lived in chromeStore since P6; this
+  // wires it). Collapsed → a 28px chevron-only strip; the Layout column shrinks
+  // to match. Chevrons point the opposite way from the left sidebar because the
+  // inspector is right-docked: `‹` expands leftward, `›` collapses rightward.
+  const collapsed = useChromeStore((s) => s.inspectorCollapsed);
+  const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
+  const panelTab = useRightPanelStore((s) => s.tab);
+  const setPanelTab = useRightPanelStore((s) => s.setTab);
+  // #1705 — the right panel reports itself as where the director is working (the chat's Where chip).
+  const paneFocus = usePaneFocus(panelTab === 'lights' ? 'lights' : 'inspector');
+
+  const nodes = useDagStore((s) => s.state.nodes);
+
+  // Through the ONE resolver (#1010), like the header two hundred lines below. Spelling
+  // `meta.name ?? id` here was a third answer to a question `nodeDisplayName` owns, and it
+  // read an imported bone's content hash aloud to a screen reader while the outliner row
+  // that reached it said `mixamorig_LeftArm`.
+  const inspectorLabel = `Inspector — ${node ? nodeDisplayName(nodes, node.id) : 'no selection'}`;
+
+  if (collapsed) {
+    // The rail: 28px wide, the inspector's icon as the one control (mirrors LeftSidebar's rail).
+    // Clicking opens the full inspector. #1952: a fresh start boots this rail, and selecting an
+    // object never opens it — only the director does (their choice is saved and wins later).
+    return (
+      <aside
+        data-testid="inspector"
+        data-collapsed="true"
+        role="region"
+        aria-label={`${inspectorLabel} (collapsed)`}
+        className="flex h-full w-full flex-col bg-transparent"
+      >
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          data-testid="inspector-expand-toggle"
+          title="Expand inspector"
+          aria-label="Expand inspector"
+          className="flex h-8 w-7 items-center justify-center self-end rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 18 18"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            {/* Sliders: the selection's properties. */}
+            <path d="M3 5h12M3 9h12M3 13h12" />
+            <circle cx="11" cy="5" r="1.6" fill="currentColor" />
+            <circle cx="6" cy="9" r="1.6" fill="currentColor" />
+            <circle cx="12" cy="13" r="1.6" fill="currentColor" />
+          </svg>
+        </button>
+      </aside>
+    );
+  }
+
+  return (
+    <aside
+      data-testid="inspector"
+      data-collapsed="false"
+      role="region"
+      aria-label={inspectorLabel}
+      {...paneFocus}
+      className="no-scrollbar flex h-full flex-col overflow-y-auto bg-transparent text-xs"
+    >
+      {/* Spline Wave C header styling, reconciled with #174's collapse toggle:
+          the `›` button sits on the Inspector's INSIDE (viewport-facing, left)
+          edge — collapses rightward, mirroring LeftSidebar's toggle. */}
+      <header className="flex h-9 shrink-0 items-center gap-1 border-b border-border pl-1 pr-3 text-[11px] font-medium uppercase tracking-wide text-fg-dim">
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          data-testid="inspector-collapse-toggle"
+          title="Collapse inspector"
+          aria-label="Collapse inspector"
+          className="flex h-5 w-5 items-center justify-center rounded normal-case text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          ›
+        </button>
+        {/* #1703 — the right panel's two faces (design board "Lighting"): the selected node's
+            params, or the Light Studio, which moved here from the bottom drawer. */}
+        <div
+          role="tablist"
+          aria-label="Right panel"
+          className="flex flex-1 items-center gap-1 text-[12px] normal-case tracking-normal"
+        >
+          <PanelTab id="inspector" label="Inspector" active={panelTab} onSelect={setPanelTab} />
+          <PanelTab id="lights" label="Lights" active={panelTab} onSelect={setPanelTab} />
+        </div>
+      </header>
+      {panelTab === 'lights' ? (
+        <div role="tabpanel" aria-label="Lights" data-testid="inspector-lights-panel">
+          <LightStudioPanel />
+        </div>
+      ) : !node ? (
+        // v0.6 #4 W5 (D-09) — first-run empty-state guidance. Plain text only:
+        // the inspector (R7) is the W8 #2-EXCLUDED region precisely because its
+        // empty body has no tabbable controls — keep it that way (no buttons),
+        // so the selection-adaptive contract and the W8 baseline both hold.
+        // Opaque `fg-dim` (not an `fg/N` alpha) so it clears AA on the light
+        // palette (the W3/W4 lesson). Mirrors the viewport empty-state hint.
+        <div data-testid="inspector-empty-hint" className="flex flex-col gap-1 p-4 text-fg-dim">
+          <span>No selection.</span>
+          <span>
+            Click an object in the viewport, or press <span className="text-fg">+ Add</span> to
+            create one.
+          </span>
+        </div>
+      ) : selectedCount > 1 ? (
+        // #225 — N selected → the shared-edit multi-state (wires the
+        // previously-dead MULTI_SELECT_SECTIONS Transform section).
+        <MultiSelectInspector />
+      ) : (
+        // #1953 — the selected node's params: the same block the Nodes tab's own panel (N) draws.
+        <NodeParams nodeId={node.id} />
+      )}
+    </aside>
+  );
+}
+
+/**
+ * The full params of one node — its name, its sections, the data it is linked to, its stacks and
+ * footer controls — as the inspector draws them for the selection. #1953: the Nodes tab's own
+ * right panel (N) draws this same block for the node selected there, so the two can never offer
+ * different controls for one setting. Renders nothing for an id the graph does not hold.
+ */
+export function NodeParams({ nodeId }: { nodeId: string }) {
+  const selectedId = nodeId;
+  const node = useDagStore((s) => s.state.nodes[nodeId] ?? null);
   // #376 follow-up — the OFFER side of Apply, asked through the ONE shared predicate so the
   // control appears exactly when the dispatcher would accept it (never for an Empty Object).
   // Selected down to a boolean so unrelated DAG changes don't re-render the panel.
@@ -5153,18 +5448,6 @@ export function NPanel() {
   });
   const renaming = useRenameStore((s) => s.renaming);
   const beginRename = useRenameStore((s) => s.begin);
-  // #225 — when >1 node is selected the inspector renders the shared-edit
-  // multi-state instead of the single primary node.
-  const selectedCount = useSelectionStore((s) => s.selectedNodeIds.size);
-
-  // #173 — Inspector (R7) per-panel collapse. Mirrors LeftSidebar's chevron
-  // pattern (the flag/persistence already lived in chromeStore since P6; this
-  // wires it). Collapsed → a 28px chevron-only strip; the Layout column shrinks
-  // to match. Chevrons point the opposite way from the left sidebar because the
-  // inspector is right-docked: `‹` expands leftward, `›` collapses rightward.
-  const collapsed = useChromeStore((s) => s.inspectorCollapsed);
-  const toggleCollapsed = useChromeStore((s) => s.toggleInspector);
-
   // Resolve the node's declared inspectorSections through the ONE read seam
   // (which resolves via the registry — the source of truth, V14 alignment).
   // Empty array → raw fallback.
@@ -5261,278 +5544,288 @@ export function NPanel() {
   const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
     overrideInfoFor(node, paramPath);
 
-  // Through the ONE resolver (#1010), like the header two hundred lines below. Spelling
-  // `meta.name ?? id` here was a third answer to a question `nodeDisplayName` owns, and it
-  // read an imported bone's content hash aloud to a screen reader while the outliner row
-  // that reached it said `mixamorig_LeftArm`.
-  const inspectorLabel = `Inspector — ${node ? nodeDisplayName(dagState.nodes, node.id) : 'no selection'}`;
+  // #1959 — the stack frame draws the picked stack INSIDE itself, through the same section bodies
+  // the cards below drew it with, so those cards are not drawn again for this selection. A section
+  // the frame does not take (no frame shows, or its stack is not offered) stays a card as before.
+  const frameView = useStackFrameView(nodeId);
+  const linkedDeclared = useDagStore((s) =>
+    linkedDataId ? sectionsOf(s.state, linkedDataId) : NO_SECTIONS,
+  );
+  const framed = (sectionId: SectionId) => frameStackOf(frameView, sectionId) !== null;
 
-  if (collapsed) {
-    // Collapsed strip: 28px wide, chevron-only (mirrors LeftSidebar's collapsed
-    // aside). Clicking re-expands to the full inspector. The Layout column is
-    // already 28px, so this fits without overflow.
-    return (
-      <aside
-        data-testid="inspector"
-        data-collapsed="true"
-        role="region"
-        aria-label={`${inspectorLabel} (collapsed)`}
-        className="flex h-full w-full flex-col bg-transparent"
-      >
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          data-testid="inspector-expand-toggle"
-          title="Expand inspector"
-          aria-label="Expand inspector"
-          className="flex h-8 w-7 items-center justify-center self-end rounded text-fg-dim hover:bg-bg-1 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          ‹
-        </button>
-      </aside>
-    );
+  if (!node) return null;
+
+  // Group params by section. Params that don't route into any declared section land in a
+  // "raw" bucket rendered after the declared sections (typed under (complex — Pro mode) or
+  // string display — preserves zero param hiding while keeping unrouted params visible).
+  // #458 — this node is not the linked half of anything, so it plays both roles: it owns the
+  // params AND it is the posing object.
+  const sectionCtx = makeSectionCtx(node, node.id, canApply);
+  const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
+  const grouped: Map<SectionId, [string, unknown][]> = new Map();
+  const unrouted: [string, unknown][] = [];
+  for (const [key, value] of Object.entries((node.params ?? {}) as Record<string, unknown>)) {
+    if (isInputBinding(value)) continue; // socket binding, not param
+    if (refKeys?.has(key)) continue; // ref params render in the block above
+    // A param a custom control renders is never ALSO a row. Asked of the shared table rather
+    // than restated here, and asked before grouping because such a key need not route to any
+    // section at all — the per-submesh slot index does not, and would otherwise land in the
+    // unrouted bucket beside the selector that owns it.
+    if (ownedRowKeys.has(key)) continue;
+    const section = paramToSection(key, declared, node.type);
+    if (section === null) {
+      unrouted.push([key, value]);
+    } else {
+      if (!grouped.has(section)) grouped.set(section, []);
+      grouped.get(section)!.push([key, value]);
+    }
   }
+  /** One of this node's section bodies: its controls, its rows, and the controls homed in it.
+   *  `belowLeading` goes under its leading controls (a stack's list), above its rows (#1961). */
+  const mainBody = (sectionId: SectionId, belowLeading?: ReactNode) => (
+    <>
+      <SectionBody
+        sectionId={sectionId}
+        ctx={sectionCtx}
+        belowLeading={belowLeading}
+        rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({ key, value }))}
+        renderers={SECTION_CONTROL_RENDERERS}
+        renderRow={({ key, value }) => (
+          <ParamRow
+            key={key}
+            nodeId={node.id}
+            paramPath={key}
+            value={value}
+            overrideInfo={makeOverrideInfo(key)}
+          />
+        )}
+      />
+      {/* #394 P7 — controls homed into THIS node's sections, drawn after the params they
+          stand in front of. */}
+      {promotedMain
+        .filter((r) => r.home.section === sectionId)
+        .map((r) => (
+          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+        ))}
+    </>
+  );
+  // The stack sections each block would draw, which the frame draws instead.
+  //
+  // The data block also grows a card for a section only its operators' rows route to: with
+  // modifiers on the box, a "Modifier" card under "Data · BoxData" carrying every modifier's own
+  // rows, unlabelled, one after another (collapsed by default). Inside the frame those rows would
+  // stand under the list with nothing saying which modifier each belongs to, and each is already
+  // its row's own settings, one pick away ("Pick a row: its settings open below"), and the
+  // object's own section already draws the list. So where the selected node draws a stack section
+  // itself, the frame drops the data block's operator-only card for it, unless a promoted control
+  // is homed in it (a control that vanishes strands its drives). An operator-only card for a
+  // section nothing else draws stays: a material operator over a curve has its rows nowhere else.
+  const mainFramed = declared.filter(framed);
+  const linkedFramed =
+    linkedDataId && linkedDeclared.length > 0
+      ? linkedCardsOf(linkedDeclared, linkedRows, promotedLinked)
+          .filter(framed)
+          .filter(
+            (id) =>
+              linkedDeclared.includes(id) ||
+              !mainFramed.includes(id) ||
+              promotedLinked.some((r) => r.home.section === id),
+          )
+      : [];
+  const drawable = [
+    ...new Set([...mainFramed, ...linkedFramed].map((id) => frameStackOf(frameView, id)!)),
+  ];
+  // `belowList` (#1961) is the frame's "Pick a row" line. It goes into the FIRST section the frame
+  // draws, under that section's list and above the rows that follow it, which are the picked row's
+  // settings when a row is picked: the line points at the settings, not at the list.
+  const renderStack = (kind: StackKind, belowList: ReactNode) => {
+    const mainIds = FRAME_SECTIONS[kind].filter((id) => mainFramed.includes(id));
+    const linkedIds = linkedDataId
+      ? FRAME_SECTIONS[kind].filter((id) => linkedFramed.includes(id))
+      : [];
+    return (
+      <>
+        {mainIds.map((id, i) => (
+          <div key={`main-${id}`} data-testid={`stack-frame-section-${id}`} data-node={node.id}>
+            {mainBody(id, i === 0 ? belowList : undefined)}
+          </div>
+        ))}
+        {linkedDataId
+          ? linkedIds.map((id, i) => (
+              <div
+                key={`linked-${id}`}
+                data-testid={`stack-frame-section-${id}`}
+                data-node={linkedDataId}
+              >
+                <LinkedSectionBody
+                  sectionId={id}
+                  dataNodeId={linkedDataId}
+                  objectNodeId={node.id}
+                  canApply={canApply}
+                  rows={linkedRows}
+                  promoted={promotedLinked}
+                  // The same section drawn from both nodes (the object's Modifier section, and
+                  // the data block's, which carries the modifiers' own rows): its list once.
+                  skipControls={
+                    mainFramed.includes(id) ? activeControlKeys(id, sectionCtx) : undefined
+                  }
+                  belowLeading={mainIds.length === 0 && i === 0 ? belowList : undefined}
+                />
+              </div>
+            ))
+          : null}
+      </>
+    );
+  };
+
+  // The cards this node draws for itself: every declared section the frame does not take in.
+  const cards = declared.filter((sectionId) => !framed(sectionId));
+  const frameUnderTransform = cards.includes('transform');
+  const stackFrame = (
+    <StackFrame nodeId={node.id} view={frameView} drawable={drawable} renderStack={renderStack} />
+  );
 
   return (
-    <aside
-      data-testid="inspector"
-      data-collapsed="false"
-      role="region"
-      aria-label={inspectorLabel}
-      className="no-scrollbar flex h-full flex-col overflow-y-auto bg-transparent text-xs"
-    >
-      {/* Spline Wave C header styling, reconciled with #174's collapse toggle:
-          the `›` button sits on the Inspector's INSIDE (viewport-facing, left)
-          edge — collapses rightward, mirroring LeftSidebar's toggle. */}
-      <header className="flex h-9 shrink-0 items-center gap-1 border-b border-border pl-1 pr-3 text-[11px] font-medium uppercase tracking-wide text-fg-dim">
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          data-testid="inspector-collapse-toggle"
-          title="Collapse inspector"
-          aria-label="Collapse inspector"
-          className="flex h-5 w-5 items-center justify-center rounded normal-case text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          ›
-        </button>
-        <span className="flex-1">Inspector</span>
-      </header>
-      {!node ? (
-        // v0.6 #4 W5 (D-09) — first-run empty-state guidance. Plain text only:
-        // the inspector (R7) is the W8 #2-EXCLUDED region precisely because its
-        // empty body has no tabbable controls — keep it that way (no buttons),
-        // so the selection-adaptive contract and the W8 baseline both hold.
-        // Opaque `fg-dim` (not an `fg/N` alpha) so it clears AA on the light
-        // palette (the W3/W4 lesson). Mirrors the viewport empty-state hint.
-        <div data-testid="inspector-empty-hint" className="flex flex-col gap-1 p-4 text-fg-dim">
-          <span>No selection.</span>
-          <span>
-            Click an object in the viewport, or press <span className="text-fg">+ Add</span> to
-            create one.
-          </span>
+    <>
+      <div className="border-b border-border px-3 py-2 text-fg/60">
+        {/* #224 — the header name is the editable identity. Double-click
+            (or F2 in the outliner) opens the inline editor; the raw id +
+            type still show beneath for debugging. */}
+        {renaming?.scope === 'inspector' && renaming.nodeId === node.id ? (
+          <RenameInput
+            nodeId={node.id}
+            priorName={node.meta?.name}
+            placeholder={node.id}
+            testId="inspector-rename"
+            className="w-full rounded-sm border border-accent bg-bg-2 px-1 text-fg outline-none"
+          />
+        ) : (
+          <div
+            data-testid="inspector-node-name"
+            className="cursor-text truncate font-medium text-fg"
+            title="Double-click to rename"
+            onDoubleClick={() => beginRename(node.id, 'inspector')}
+          >
+            {nodeDisplayName(dagState.nodes, node.id)}
+          </div>
+        )}
+        <div className="font-mono text-[10px] text-fg/40">
+          {node.type} v{node.version} · {node.id}
         </div>
-      ) : selectedCount > 1 ? (
-        // #225 — N selected → the shared-edit multi-state (wires the
-        // previously-dead MULTI_SELECT_SECTIONS Transform section).
-        <MultiSelectInspector />
+      </div>
+      {/* #1706 — what a pending proposal would change on this node, old → new. */}
+      <InspectorProposed nodeId={node.id} />
+      <SelectedBoneSection />
+      {/* #1957 — the frame around the stacks. Where this node draws a Transform card, the frame
+          stands directly under it (#1961), so Transform stays near the top however long the
+          picked stack runs; a node without one (a selected row, a data node) keeps it here. */}
+      {frameUnderTransform ? null : stackFrame}
+      {refParamMeta && (
+        // The general node-ref picker block — one NodeRefField per declared ref param,
+        // shown regardless of section mode (and even when the ref is unset).
+        <div data-testid="inspector-refparams" className="flex flex-col py-1">
+          {Object.entries(refParamMeta).map(([key, meta]) => (
+            <NodeRefField
+              key={key}
+              nodeId={node.id}
+              paramPath={key}
+              label={meta.label ?? key}
+              kind={meta.kind}
+              shape={meta.shape ?? 'ref'}
+              value={(node.params as Record<string, unknown> | undefined)?.[key]}
+            />
+          ))}
+        </div>
+      )}
+      {declared.length === 0 ? (
+        // D-08 B raw-fallback path: nodes that intentionally omit
+        // inspectorSections render their params in a flat list.
+        <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
+          {Object.entries((node.params ?? {}) as Record<string, unknown>)
+            .filter(([key]) => !refKeys?.has(key)) // ref params render in the block above
+            .map(([key, value]) => (
+              <ParamRow
+                key={key}
+                nodeId={node.id}
+                paramPath={key}
+                value={value}
+                overrideInfo={makeOverrideInfo(key)}
+              />
+            ))}
+        </div>
       ) : (
         <>
-          <div className="border-b border-border px-3 py-2 text-fg/60">
-            {/* #224 — the header name is the editable identity. Double-click
-                (or F2 in the outliner) opens the inline editor; the raw id +
-                type still show beneath for debugging. */}
-            {renaming?.scope === 'inspector' && renaming.nodeId === node.id ? (
-              <RenameInput
-                nodeId={node.id}
-                priorName={node.meta?.name}
-                placeholder={node.id}
-                testId="inspector-rename"
-                className="w-full rounded-sm border border-accent bg-bg-2 px-1 text-fg outline-none"
-              />
-            ) : (
-              <div
-                data-testid="inspector-node-name"
-                className="cursor-text truncate font-medium text-fg"
-                title="Double-click to rename"
-                onDoubleClick={() => beginRename(node.id, 'inspector')}
-              >
-                {nodeDisplayName(dagState.nodes, node.id)}
-              </div>
-            )}
-            <div className="font-mono text-[10px] text-fg/40">
-              {node.type} v{node.version} · {node.id}
-            </div>
-          </div>
-          <SelectedBoneSection />
-          {refParamMeta && (
-            // The general node-ref picker block — one NodeRefField per declared ref param,
-            // shown regardless of section mode (and even when the ref is unset).
-            <div data-testid="inspector-refparams" className="flex flex-col py-1">
-              {Object.entries(refParamMeta).map(([key, meta]) => (
-                <NodeRefField
+          {cards.map((sectionId) => (
+            <Fragment key={sectionId}>
+              <SectionCard nodeType={node.type} sectionId={sectionId} declaredSections={declared}>
+                {mainBody(sectionId)}
+              </SectionCard>
+              {sectionId === 'transform' && frameUnderTransform ? stackFrame : null}
+            </Fragment>
+          ))}
+          {unrouted.length > 0 ? (
+            <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
+              {unrouted.map(([key, value]) => (
+                <ParamRow
                   key={key}
                   nodeId={node.id}
                   paramPath={key}
-                  label={meta.label ?? key}
-                  kind={meta.kind}
-                  shape={meta.shape ?? 'ref'}
-                  value={(node.params as Record<string, unknown> | undefined)?.[key]}
+                  value={value}
+                  overrideInfo={makeOverrideInfo(key)}
                 />
               ))}
             </div>
-          )}
-          {declared.length === 0 ? (
-            // D-08 B raw-fallback path: nodes that intentionally omit
-            // inspectorSections render their params in a flat list.
-            <div data-testid="inspector-raw-fallback" className="flex flex-col py-1">
-              {Object.entries((node.params ?? {}) as Record<string, unknown>)
-                .filter(([key]) => !refKeys?.has(key)) // ref params render in the block above
-                .map(([key, value]) => (
-                  <ParamRow
-                    key={key}
-                    nodeId={node.id}
-                    paramPath={key}
-                    value={value}
-                    overrideInfo={makeOverrideInfo(key)}
-                  />
-                ))}
-            </div>
-          ) : (
-            (() => {
-              // Group params by section. Params that don't route into
-              // any declared section land in a "raw" bucket rendered
-              // after the declared sections (typed under (complex —
-              // Pro mode) or string display — preserves zero param
-              // hiding while keeping unrouted params visible).
-              // #458 — this node is not the linked half of anything, so it plays
-              // both roles: it owns the params AND it is the posing object.
-              const sectionCtx = makeSectionCtx(node, node.id, canApply);
-              const ownedRowKeys = controlOwnedRowKeys(declared, sectionCtx);
-              const grouped: Map<SectionId, [string, unknown][]> = new Map();
-              const unrouted: [string, unknown][] = [];
-              for (const [key, value] of Object.entries(
-                (node.params ?? {}) as Record<string, unknown>,
-              )) {
-                if (isInputBinding(value)) continue; // socket binding, not param
-                if (refKeys?.has(key)) continue; // ref params render in the block above
-                // A param a custom control renders is never ALSO a row. Asked of
-                // the shared table rather than restated here, and asked before
-                // grouping because such a key need not route to any section at
-                // all — the per-submesh slot index does not, and would otherwise
-                // land in the unrouted bucket beside the selector that owns it.
-                if (ownedRowKeys.has(key)) continue;
-                const section = paramToSection(key, declared, node.type);
-                if (section === null) {
-                  unrouted.push([key, value]);
-                } else {
-                  if (!grouped.has(section)) grouped.set(section, []);
-                  grouped.get(section)!.push([key, value]);
-                }
-              }
-              return (
-                <>
-                  {declared.map((sectionId) => (
-                    <SectionCard
-                      key={sectionId}
-                      nodeType={node.type}
-                      sectionId={sectionId}
-                      declaredSections={declared}
-                    >
-                      <SectionBody
-                        sectionId={sectionId}
-                        ctx={sectionCtx}
-                        rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({
-                          key,
-                          value,
-                        }))}
-                        renderers={SECTION_CONTROL_RENDERERS}
-                        renderRow={({ key, value }) => (
-                          <ParamRow
-                            key={key}
-                            nodeId={node.id}
-                            paramPath={key}
-                            value={value}
-                            overrideInfo={makeOverrideInfo(key)}
-                          />
-                        )}
-                      />
-                      {/* #394 P7 — controls homed into THIS node's sections, drawn after
-                          the params they stand in front of. */}
-                      {promotedMain
-                        .filter((r) => r.home.section === sectionId)
-                        .map((r) => (
-                          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-                        ))}
-                    </SectionCard>
-                  ))}
-                  {unrouted.length > 0 ? (
-                    <div data-testid="inspector-unrouted-params" className="flex flex-col py-1">
-                      {unrouted.map(([key, value]) => (
-                        <ParamRow
-                          key={key}
-                          nodeId={node.id}
-                          paramPath={key}
-                          value={value}
-                          overrideInfo={makeOverrideInfo(key)}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                </>
-              );
-            })()
-          )}
-          {/* #365 Phase 5a (Slice 1c) — a split Object owns only the transform; its geometry +
-              material live on the BoxData it points at via `data`. Render that data node's
-              sections here so a selected cube's colour + size are editable (routed to the data
-              node). */}
-          {linkedDataId ? (
-            <LinkedDataSections
-              dataNodeId={linkedDataId}
-              objectNodeId={node.id}
-              canApply={canApply}
-              rows={linkedRows}
-              promoted={promotedLinked}
-            />
           ) : null}
-          {/* #394 P7 — a control neither block could place: its home names no section this
-              chain draws, or names none at all. Shown rather than dropped ([[V145]]), and
-              shown HERE rather than inside a block so the rule has one site. */}
-          {promotedUnplaced.length > 0 ? (
-            <div data-testid="inspector-promoted-unrouted" className="flex flex-col py-1">
-              {promotedUnplaced.map((r) => (
-                <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
-              ))}
-            </div>
-          ) : null}
-          {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
-              edit / remove controller knobs + promote them to the Controllers dock.
-              A footer control (not a per-node-type section) since spare params are
-              universal. */}
-          <SpareParamControls nodeId={node.id} />
-          {/* #297 (Epic 2) — a Lag node's input: which controller channel it trails +
-              the range. A footer control (like SpareParamControls); renders only for a
-              Lag. `factor`/`seedFrame` show as ordinary rows above. */}
-          <LagSourceControls nodeId={node.id} />
-          {/* Epic 2 — a Solver meta-op: pick the sub-network output it cooks each frame
-              (`body`) + the live controller channel it reads. Renders only for a Solver;
-              `seedFrame` shows as an ordinary row above. */}
-          <SolverControls nodeId={node.id} />
-          {node.type === 'ComfyUIWorkflow' ? (
-            <CostPreviewConnector workflowNodeId={node.id} />
-          ) : null}
-          {/* #935 — the cook affordance for the other expensive generative node.
-              Same gate, same place, for the same reason: the control that pins an
-              expensive result belongs on the node that produced it. */}
-          {node.type === 'MotionGenerate' ? (
-            <MotionGenerateCookConnector producerId={node.id} />
-          ) : null}
-          {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
-          <BakePoseConnector nodeId={node.id} />
-          {/* #1357 — an armature Object with IK layers on its wire moves them inside a Rig. */}
-          <WrapInRigConnector nodeId={node.id} />
         </>
       )}
-    </aside>
+      {/* #365 Phase 5a (Slice 1c) — a split Object owns only the transform; its geometry +
+          material live on the BoxData it points at via `data`. Render that data node's
+          sections here so a selected cube's colour + size are editable (routed to the data
+          node). */}
+      {linkedDataId ? (
+        <LinkedDataSections
+          dataNodeId={linkedDataId}
+          objectNodeId={node.id}
+          canApply={canApply}
+          rows={linkedRows}
+          promoted={promotedLinked}
+          skip={framed}
+        />
+      ) : null}
+      {/* #394 P7 — a control neither block could place: its home names no section this
+          chain draws, or names none at all. Shown rather than dropped ([[V145]]), and
+          shown HERE rather than inside a block so the rule has one site. */}
+      {promotedUnplaced.length > 0 ? (
+        <div data-testid="inspector-promoted-unrouted" className="flex flex-col py-1">
+          {promotedUnplaced.map((r) => (
+            <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+          ))}
+        </div>
+      ) : null}
+      {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
+          edit / remove controller knobs + promote them to the Controllers dock.
+          A footer control (not a per-node-type section) since spare params are
+          universal. */}
+      <SpareParamControls nodeId={node.id} />
+      {/* #297 (Epic 2) — a Lag node's input: which controller channel it trails +
+          the range. A footer control (like SpareParamControls); renders only for a
+          Lag. `factor`/`seedFrame` show as ordinary rows above. */}
+      <LagSourceControls nodeId={node.id} />
+      {/* Epic 2 — a Solver meta-op: pick the sub-network output it cooks each frame
+          (`body`) + the live controller channel it reads. Renders only for a Solver;
+          `seedFrame` shows as an ordinary row above. */}
+      <SolverControls nodeId={node.id} />
+      {/* #1715 — the workflow file this node runs, and the sockets it declares. */}
+      {node.type === 'ComfyUIWorkflow' ? <ComfyWorkflowSection nodeId={node.id} /> : null}
+      {node.type === 'ComfyUIWorkflow' ? <CostPreviewConnector workflowNodeId={node.id} /> : null}
+      {/* #935 — the cook affordance for the other expensive generative node.
+          Same gate, same place, for the same reason: the control that pins an
+          expensive result belongs on the node that produced it. */}
+      {node.type === 'MotionGenerate' ? <MotionGenerateCookConnector producerId={node.id} /> : null}
+      {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
+      <BakePoseConnector nodeId={node.id} />
+      {/* #1357 — an armature Object with IK layers on its wire moves them inside a Rig. */}
+      <WrapInRigConnector nodeId={node.id} />
+    </>
   );
 }

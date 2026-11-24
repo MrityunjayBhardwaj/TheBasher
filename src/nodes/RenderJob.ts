@@ -45,7 +45,7 @@ export const RenderJobNode: NodeDefinition<RenderJobParams, JobResultValue> = {
      *  EdgeKind literal so per-kind closure BFS isolates pass siblings
      *  (H22). 'pass-input' is the only socket on any node carrying this
      *  edge kind in v0.5. */
-    'pass-input': { type: 'Image', cardinality: 'list' },
+    'pass-input': { type: 'Image', cardinality: 'list', takes: 'frames' },
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'JobResult', cardinality: 'single' } },

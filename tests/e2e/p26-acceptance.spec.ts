@@ -7,6 +7,7 @@
 import { expect, test } from './_fixtures';
 import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { objectPosing, seedCubeObjectId } from './_seedNodes';
+import { toolbarControl } from './_toolbar';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -64,12 +65,18 @@ test.beforeEach(async ({ page }) => {
 
 test('P2.6#1 toolbar Move/Rotate/Scale buttons drive the gizmo mode', async ({ page }) => {
   await expect(page.getByTestId('floating-viewport-toolbar')).toBeVisible();
-  await page.getByTestId('floating-toolbar-rot').click();
+  await (await toolbarControl(page, 'floating-toolbar-rot')).click();
   // R8 buttons set data-active="true" when their tool matches activeTool;
   // assert that to confirm the click landed.
-  await expect(page.getByTestId('floating-toolbar-rot')).toHaveAttribute('data-active', 'true');
-  await page.getByTestId('floating-toolbar-move').click();
-  await expect(page.getByTestId('floating-toolbar-move')).toHaveAttribute('data-active', 'true');
+  await expect(await toolbarControl(page, 'floating-toolbar-rot')).toHaveAttribute(
+    'data-active',
+    'true',
+  );
+  await (await toolbarControl(page, 'floating-toolbar-move')).click();
+  await expect(await toolbarControl(page, 'floating-toolbar-move')).toHaveAttribute(
+    'data-active',
+    'true',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -82,13 +89,17 @@ test('P2.6#2 shading toggle flips viewportStore.shading; DAG is unmutated', asyn
   // P6 W7: shading group moved from R3 TransformToolbar to R8
   // FloatingViewportToolbar (D-W7-3).
   // Default is studio.
-  await expect(page.getByTestId('floating-toolbar-shading-studio')).toHaveClass(/text-accent/);
+  await expect(await toolbarControl(page, 'floating-toolbar-shading-studio')).toHaveClass(
+    /text-accent/,
+  );
   const before = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).length;
   });
-  await page.getByTestId('floating-toolbar-shading-rendered').click();
-  await expect(page.getByTestId('floating-toolbar-shading-rendered')).toHaveClass(/text-accent/);
+  await (await toolbarControl(page, 'floating-toolbar-shading-rendered')).click();
+  await expect(await toolbarControl(page, 'floating-toolbar-shading-rendered')).toHaveClass(
+    /text-accent/,
+  );
   const shading = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return w.__basher_viewport!.getState().shading;
@@ -121,7 +132,10 @@ test('P2.6#3 space toggle swaps view3d ↔ uv; Canvas DOM node persists', async 
   });
   expect(beforeId).not.toBeNull();
 
-  await page.getByTestId('toolbar-space-uv').click();
+  await (await toolbarControl(page, 'toolbar-space-uv')).click();
+  // #1709 — the UV mode opens split, the 3D view beside it; turned off, the 2D View is alone.
+  await expect(page.getByTestId('view3d-slot')).toHaveCSS('display', 'block');
+  await page.getByTestId('twodview-split-toggle').click();
   await expect(page.getByTestId('view3d-slot')).toHaveCSS('display', 'none');
   await expect(page.getByTestId('uv-slot')).toHaveCSS('display', 'block');
   await expect(page.getByTestId('uv-editor')).toBeVisible();
@@ -148,7 +162,7 @@ test('P2.6#3 space toggle swaps view3d ↔ uv; Canvas DOM node persists', async 
 // ---------------------------------------------------------------------------
 
 test('P2.6#4 UV editor status updates with selection', async ({ page }) => {
-  await page.getByTestId('toolbar-space-uv').click();
+  await (await toolbarControl(page, 'toolbar-space-uv')).click();
   await expect(page.getByTestId('uv-editor-status')).toContainText('Select a mesh');
 
   // Find the seed cube's Object and select it via the projection store. Addressed by
@@ -322,8 +336,10 @@ test('P2.6#10 toolbar wireframe button flips viewportStore.shading to wireframe'
 }) => {
   // P6 W7: shading group moved from R3 TransformToolbar to R8
   // FloatingViewportToolbar (D-W7-3).
-  await page.getByTestId('floating-toolbar-shading-wireframe').click();
-  await expect(page.getByTestId('floating-toolbar-shading-wireframe')).toHaveClass(/text-accent/);
+  await (await toolbarControl(page, 'floating-toolbar-shading-wireframe')).click();
+  await expect(await toolbarControl(page, 'floating-toolbar-shading-wireframe')).toHaveClass(
+    /text-accent/,
+  );
   const shading = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return w.__basher_viewport!.getState().shading;
@@ -362,7 +378,7 @@ test('P2.6#11 UV editor status reflects the added sphere (1 island, read-only)',
   }, sphereId);
 
   // Switch to UV space.
-  await page.getByTestId('toolbar-space-uv').click();
+  await (await toolbarControl(page, 'toolbar-space-uv')).click();
   const status = page.getByTestId('uv-editor-status');
   await expect(status).toContainText(sphereId);
   await expect(status).toContainText('Object');

@@ -117,6 +117,38 @@ function projects(): Array<[string, () => DagState | Promise<DagState>]> {
           { type: 'setOutput', name: 'render', ref: { node: 'n_render_2', socket: 'out' } },
         ]).next,
     ],
+    [
+      // #1720 — a generated model's producer: array params of objects (four variants, one kept),
+      // a reference image key and the service's optional settings.
+      'a Model generate with four variants, one kept, a reference and options',
+      () =>
+        applyOps(buildDefaultDagState(), [
+          {
+            type: 'addNode',
+            nodeId: 'mg',
+            nodeType: 'ModelGenerate',
+            params: {
+              prompt: '',
+              references: [`${'a'.repeat(64)}.png`],
+              seed: 100,
+              provider: 'stub-modelgen',
+              rig: true,
+              count: 4,
+              negativePrompt: 'no text',
+              faceLimit: 20000,
+              quad: true,
+              texture: true,
+              pbr: false,
+              variants: [100, 101, 102, 103].map((seed) => ({
+                seed,
+                path: `model-variants/mg/seed-${seed}.glb`,
+                taskId: `task-${seed}`,
+                kept: seed === 102,
+              })),
+            },
+          },
+        ]).next,
+    ],
   ];
 }
 

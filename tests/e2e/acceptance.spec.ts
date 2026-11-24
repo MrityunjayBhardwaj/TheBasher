@@ -10,6 +10,10 @@ import { openInspectorSection } from './_inspectorSections';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
@@ -114,14 +118,14 @@ test('#3 chrome affordances: timeline reveal + present-mode chrome-hide (mode-fr
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'false');
 
   // Reveal the timeline body via the pill control; rest of chrome stays.
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   await expect(page.getByTestId('inspector')).toBeVisible();
 
   // Present mode (the re-home for the deleted `director`): chrome hides;
   // viewport takes the full window. tree-slot is the canonical chrome-
   // visibility check (it hides via display:none when presentMode is on).
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   await expect(page.getByTestId('inspector')).toBeHidden();
   await expect(page.getByTestId('tree-slot')).toBeHidden();
@@ -250,15 +254,29 @@ test('#6b beacon endpoint absent in prod build (dist/ has no middleware code)', 
 });
 
 test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page }) => {
+  // #1708 — the live preview is editor chrome over the viewport. Collapsed to its caption (and
+  // masked below, as the other chrome is), so the beauty diff sees the DAG render, not the preview.
+  await page.addInitScript(() =>
+    localStorage.setItem('basher.livePreview.v1', JSON.stringify({ collapsed: true })),
+  );
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible();
+  // #1704 — the chat column takes its width from the window, beside the viewport. The baseline is
+  // the 1280×653 viewport, so widen the window by exactly the column's measured width: the
+  // viewport (and every island over it) is then the same size and place it was captured at.
+  const chat = await page.getByTestId('agentdock-slot').boundingBox();
+  if (!chat) throw new Error('no chat column box');
+  await page.setViewportSize({ width: 1280 + Math.round(chat.width), height: 720 });
+  await expect
+    .poll(async () => (await page.getByTestId('viewport-slot').boundingBox())?.width)
+    .toBe(1280);
   // Switch the editor to 'rendered' shading so the screenshot reflects
   // ONLY DAG-authored lights (P2.6 default is 'studio' for editing UX,
   // which adds editor-only fill rigs — those must NOT be the production
   // render baseline).
   // P6 W7 (2026-05-14): shading group moved from R3 TransformToolbar to
   // R8 FloatingViewportToolbar per D-W7-3. testid migrated.
-  await page.getByTestId('floating-toolbar-shading-rendered').click();
+  await (await toolbarControl(page, 'floating-toolbar-shading-rendered')).click();
   // Wait for the canvas to have rendered at least one frame. We check by
   // polling for a non-empty pixel sample.
   await page.waitForFunction(() => {
@@ -282,10 +300,20 @@ test('#7 PostFx beauty matches reference within 2% pixel diff', async ({ page })
     // The floating viewport toolbar is editor chrome over the viewport (now
     // top-anchored) — mask it for the same reason, so its position/contents
     // never tip the pure-DAG beauty diff.
+    // #1967 — the editor shell moved the outliner, inspector, toolbar band and timeline around
+    // on purpose (#1704 #1707 #1935 #1952), and each move tipped this beauty diff although the
+    // render was unchanged. Every island the shell floats over the viewport is masked, so the
+    // diff compares only the DAG render (the orbit gizmo is drawn in the canvas and stays in).
     mask: [
       page.getByTestId('fps-meter'),
       page.getByTestId('viewport-empty-hint'),
       page.getByTestId('floating-viewport-toolbar'),
+      page.getByTestId('floating-toolbar-band'),
+      page.getByTestId('live-preview'),
+      page.getByTestId('tree-slot'),
+      page.getByTestId('inspector-slot'),
+      page.getByTestId('timeline-slot'),
+      page.getByTestId('projection-toggle'),
     ],
   });
 });
@@ -303,8 +331,8 @@ test('#9 mode toggle preserves the same Canvas DOM node (V8/K1 step 6)', async (
   // present (chrome hides). Present hides the chrome so we exit via Esc
   // (UI-SPEC §6.2 / acceptance #4 — Esc dismisses the topmost transient). If
   // any transition remounts the Canvas, the tag is gone.
-  await page.getByTestId('floating-toolbar-timeline').click();
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('layout')).not.toHaveAttribute('data-present', 'true');
   const tag = await page.evaluate(() => {

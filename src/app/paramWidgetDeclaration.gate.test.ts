@@ -357,6 +357,8 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelVec3.sourceClipId': MINTED,
       'KeyframeChannelVec3.sourceHash': MINTED,
       'RenderJob.jobId': MINTED,
+      // #1718 — the hash a ComfyUI run landed from, written by the run road.
+      'ComfyUIWorkflow.madeFrom': MINTED,
       // #1451 — a collection's id, set by clicking that collection in the outliner, as Blender sets
       // its active collection; a field to type an id into would be the wrong control.
       'Scene.activeCollection': 'set from the outliner by clicking a collection, as in Blender',
@@ -381,6 +383,10 @@ describe('a param declares its control on its schema (#872)', () => {
       // `LightProfileSelect.selectedProfile` left this list in #1064 — the first CHOICE to get
       // its picker. The stale-entry direction below is what makes that removal mandatory.
       'MotionGenerate.model': CHOICE,
+      // #1720 — the provider that answered, recorded by the run (from the configured key), not
+      // chosen per node; and a text knob only the agent sets so far.
+      'ModelGenerate.provider': 'recorded by the run from the configured service, not chosen here',
+      'ModelGenerate.negativePrompt': 'set by the agent; the Generate form offers no field yet',
     };
 
     let examined = 0;
@@ -422,8 +428,9 @@ describe('a param declares its control on its schema (#872)', () => {
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
     // 15 since #1243 retired `PoseOverride` and its `bone` with it; + `Group.parentBone` (#1447)
-    // + `Scene.activeCollection` (#1451) = 17.
-    expect(readOnly.length).toBe(17);
+    // + `Scene.activeCollection` (#1451) = 17; + `ModelGenerate.provider` and
+    // `ModelGenerate.negativePrompt` (#1720) = 19; + `ComfyUIWorkflow.madeFrom` (#1718) = 20.
+    expect(readOnly.length).toBe(20);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -801,7 +808,8 @@ describe('a param declares its control on its schema (#872)', () => {
         width: 64,
         height: 64,
       }),
-      ...buildAddLayerOps('layer', 'comp', 'clip', 'Layer 1'),
+      // The comp is created in this same batch, so the state before it is the one to stack on.
+      ...buildAddLayerOps(s, 'layer', 'comp', 'clip', 'Layer 1'),
     ]);
 
     const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };

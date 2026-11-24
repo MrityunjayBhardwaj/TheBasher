@@ -19,6 +19,10 @@
 //      deep-light-studio-animation (the inspector-authored sibling), V57, H40.
 
 import { test, expect } from './_fixtures';
+import { openLightStudio } from './_rightPanel';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface BasherWindow {
   __basher_dag?: {
@@ -153,7 +157,7 @@ test.describe('#212 — keyframing a light from the Light Studio panel', () => {
     if ((await drawer.getAttribute('data-open')) !== 'true') {
       await page.getByTestId('timeline-drawer-toggle').click();
     }
-    await page.getByTestId('timeline-tab-lightStudio').click();
+    await openLightStudio(page);
     await expect(page.getByTestId('light-studio-panel')).toBeVisible();
 
     const before = await areaLightIds(page);

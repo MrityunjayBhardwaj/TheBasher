@@ -73,7 +73,7 @@ function newId(): string {
 const INITIAL_SESSION: SessionState = {
   id: `session_${Date.now().toString(36)}`,
   messages: [],
-  // Default to copilot: the single-text-bar chat ("just say the word…") means
+  // Default to copilot: the single-text-bar chat ("Ask or tell Basher…") means
   // the agent ACTS on a request, not just inspects. copilot routes every
   // mutation through the Diff/DiffBar approval (orchestrator), so "say the word
   // → it proposes the change → you approve" — the agent never silently mutates.

@@ -17,7 +17,10 @@
 //      src/app/ModifierStackControls.tsx (the offer);
 //      src/app/operatorStack.ts (`buildAddModifierOps` — the accept). Issues #498, #415.
 import { expect, test } from './_fixtures';
-import { openInspectorSection } from './_inspectorSections';
+import { openStackInFrame } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface W {
   __basher_selection: { getState: () => { select: (id: string) => void } };
@@ -30,14 +33,20 @@ async function selectAndOpenModifiers(page: import('@playwright/test').Page, nod
   await page.evaluate((id) => {
     (window as unknown as W).__basher_selection.getState().select(id);
   }, nodeId);
-  // Open FIRST — `modifier-stack` does not exist in the DOM until the section is
-  // expanded, so asserting it visible beforehand fails on every subject including the
-  // positive control (measured while writing this).
-  await openInspectorSection(page, 'modifier');
+  // #1960 — every Object's modifiers live in the inspector's stack frame: the box's as a stack it
+  // takes, a camera's or a light's as a tab it cannot take, whose note says why. No Modifier card
+  // renders beside the frame for any of them.
+  await expect(page.getByTestId('inspector-node-name')).toHaveText(nodeId);
+  // Open FIRST — `modifier-stack` does not exist in the DOM until the stack is shown, so
+  // asserting it visible beforehand fails on every subject including the positive control
+  // (measured while writing this).
+  await openStackInFrame(page, 'modifiers');
   // The select and the button read must not share a tick — React has not re-rendered
   // yet, and a same-tick query returns the PREVIOUS selection's buttons. Awaiting the
   // stack is what separates them.
-  await expect(page.getByTestId('modifier-stack')).toBeVisible();
+  await expect(page.getByTestId('stack-frame').getByTestId('modifier-stack')).toBeVisible();
+  await expect(page.getByTestId('modifier-stack')).toHaveCount(1);
+  await expect(page.getByTestId('inspector-section-modifier')).toHaveCount(0);
 }
 
 async function addButtonCount(page: import('@playwright/test').Page) {
@@ -67,8 +76,16 @@ test('#498 a camera and a light offer NO modifier buttons, and say why', async (
   for (const objectId of ['n_camera', 'n_light']) {
     await selectAndOpenModifiers(page, objectId);
     expect(await addButtonCount(page), `${objectId} must offer no add buttons`).toBe(0);
-    // …and it must EXPLAIN itself. A section that is merely empty reads as broken.
+    // …and it must EXPLAIN itself. A section that is merely empty reads as broken. The note is
+    // in the frame, behind a tab marked as one the object cannot take (#1960).
     await expect(page.getByTestId('modifier-not-applicable')).toHaveCount(1);
+    await expect(
+      page.getByTestId('stack-frame').getByTestId('modifier-not-applicable'),
+    ).toBeVisible();
+    await expect(page.getByTestId('stack-frame-tab-modifiers')).toHaveAttribute(
+      'data-available',
+      'false',
+    );
   }
 });
 

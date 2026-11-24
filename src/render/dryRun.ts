@@ -19,39 +19,37 @@
 // REF: project_p5_context D-06; THESIS §28, §44, §51; vyapti V6 + V8.
 
 import type { ComfyInputs, ComfyUICapability, ComfyWorkflowJson } from '../core/comfy';
-import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
+import type { ComfyApiJson } from '../core/comfy/comfyGraph';
+import type { WorkflowSockets } from '../core/comfy/workflowSockets';
+import { createEvaluatorCache, evaluateInputRef, type EvaluatorCache } from '../core/dag/evaluator';
+import { getNodeType } from '../core/dag/registry';
+import { inputAvailable } from '../core/dag/socketAvailability';
 import type { DagState } from '../core/dag/state';
-import type { EvalCtx, NodeId } from '../core/dag/types';
+import type { EvalCtx, NodeId, NodeRef } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
-import type { ComfyUIWorkflowParams } from '../nodes/ComfyUIWorkflow';
-import type { ImageValue, PromptValue } from '../nodes/types';
+import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../nodes/ComfyUIWorkflow';
+
+import { framePath, outputPathOf } from '../core/comfy/workflowPaths';
+
+// #1718 — where a workflow's pictures land lives in core, so the node can say where its still is.
+export { framePath, outputPathOf };
 
 /**
- * Compiles a (presetId, prompt, frame-N inputs) tuple into a ComfyUI-
- * submittable (workflowJson, inputs). Wave C wires the real
- * implementation from src/agent/strategy/presets/<id>; Wave A's tests
- * inject a stub. Async to leave room for storage reads (loading raw
- * pass bytes from disk before submission).
- *
- * `prevFrameStylizedPath` is the OPFS path of the previous frame's
- * stylized output for temporal coherence (ControlNet img2img on N-1).
- * `null` means there is no previous frame in this run — the compiler
- * substitutes a zero/black image. dryRun always passes null
- * (frameStart probe has no antecedent).
+ * #1715 — what one frame of a workflow node is compiled from. The compiler (by default the
+ * generic `compileWorkflowFrame`) fills the file's Basher markers from these and returns a
+ * submittable (workflowJson, inputs). Injectable so tests substitute a deterministic stub.
  */
 export interface CompileWorkflowArgs {
-  readonly presetId: string;
-  readonly prompt: PromptValue;
-  readonly passes: readonly ImageValue[];
+  /** The workflow file the node holds. */
+  readonly apiJson: ComfyApiJson;
   readonly frame: number;
-  readonly prevFrameStylizedPath?: string | null;
-  /**
-   * The workflow node's `outputPath` param value (e.g.
-   * `'renders/job1/stylized_stylizedRealism'`). Presets use this to
-   * derive the sibling raw-pass directory — raw passes from the same
-   * job live at `${parentDir}/${passKind}_${pad4(frame)}.png`. The
-   * Mutator authors both paths so they share the `${jobId}` prefix.
-   */
+  /** Each input socket's value at this frame: what arrives on its wire, or for an unwired
+   *  number / text input its keyed value. Absent = nothing wired, nothing keyed. */
+  readonly inputs: Readonly<Record<string, unknown>>;
+  /** Each fed input (its marker's node id) → the path of the picture its output made on the
+   *  frame before, or null on the first frame of the range. */
+  readonly fed: Readonly<Record<string, string | null>>;
+  /** The node's `outputPath`; the job directory it sits in holds the render passes (D-04). */
   readonly workflowOutputPath: string;
 }
 
@@ -62,10 +60,89 @@ export interface CompileWorkflowFn {
   }>;
 }
 
+/** An unwired number / text input's keyed value at a frame (the caller reads the channel on
+ *  `controller:<markerNodeId>`); undefined when nothing is keyed. Lives with the caller because
+ *  keys live off the graph and src/render reads no app state. */
+export type ControllerValueAt = (
+  markerNodeId: string,
+  frame: number,
+) => number | string | undefined;
+
+/** The workflow node at `workflowNodeId`, its params and its file's sockets, or the refusal. */
+export function workflowNodeOf(
+  state: DagState,
+  workflowNodeId: NodeId,
+  who: string,
+): { params: Partial<ComfyUIWorkflowParams>; sockets: WorkflowSockets; apiJson: ComfyApiJson } {
+  const node = state.nodes[workflowNodeId];
+  if (!node) throw new Error(`${who}: unknown workflowNodeId "${workflowNodeId}"`);
+  if (node.type !== 'ComfyUIWorkflow') {
+    throw new Error(`${who}: node "${workflowNodeId}" is not a ComfyUIWorkflow (got ${node.type})`);
+  }
+  const params = node.params as Partial<ComfyUIWorkflowParams>;
+  const apiJson = params.graph?.apiJson as ComfyApiJson | undefined;
+  if (!apiJson) {
+    throw new Error(`${who}: workflow "${workflowNodeId}" has no workflow file. Pick one first.`);
+  }
+  return { params, sockets: workflowSocketsOf(params), apiJson };
+}
+
+/**
+ * #1715 — every input socket's value at `ctx`: each wired one through the evaluator's own arrival
+ * (`evaluateInputRef`, so frames into a still input are the picked frame, #1716), each unwired
+ * number / text one from its keys. A broken wire (on a socket the file no longer has) is read as
+ * unconnected, as the evaluator reads it.
+ */
+export function workflowInputsAt(
+  state: DagState,
+  workflowNodeId: NodeId,
+  sockets: WorkflowSockets,
+  ctx: EvalCtx,
+  cache: EvaluatorCache,
+  controllerValue?: ControllerValueAt,
+): Record<string, unknown> {
+  const node = state.nodes[workflowNodeId]!;
+  const def = getNodeType(node.type)!;
+  const out: Record<string, unknown> = {};
+  for (const input of sockets.inputs) {
+    const binding = node.inputs[input.socket];
+    const ref = (Array.isArray(binding) ? binding[0] : binding) as NodeRef | undefined;
+    if (ref && inputAvailable(def, node.params, input.socket)) {
+      out[input.socket] = evaluateInputRef(state, workflowNodeId, input.socket, ref, {
+        ctx,
+        cache,
+      }).value;
+      continue;
+    }
+    if (input.type === 'number' || input.type === 'text') {
+      const keyed = controllerValue?.(input.nodeId, ctx.time.frame);
+      if (keyed !== undefined) out[input.socket] = keyed;
+    }
+  }
+  return out;
+}
+
+/**
+ * #1946 — the last frame a run of the workflow covers. A workflow whose outputs are all stills
+ * makes one picture (its evaluator leaves the time out of a still's hash, #1716), so it runs over
+ * its first frame alone; any frames output runs the whole range.
+ */
+export function runFrameEnd(
+  params: Partial<ComfyUIWorkflowParams>,
+  sockets: WorkflowSockets,
+): number {
+  const frameStart = params.frameStart ?? 0;
+  const frameEnd = params.frameEnd ?? 60;
+  const stillsOnly = sockets.outputs.length > 0 && sockets.outputs.every((o) => o.type === 'still');
+  return stillsOnly ? Math.min(frameStart, frameEnd) : frameEnd;
+}
+
 export interface DryRunDeps {
   readonly capability: ComfyUICapability;
   readonly storage: StorageCapability;
   readonly compileWorkflow: CompileWorkflowFn;
+  /** #1715 — keyed values of unwired number / text inputs (see {@link ControllerValueAt}). */
+  readonly controllerValue?: ControllerValueAt;
   /** Test injection — defaults to Date.now. Returns elapsed ms via diff. */
   readonly now?: () => number;
 }
@@ -89,7 +166,7 @@ export interface DryRunReport {
  * returns the extrapolation. Throws on:
  *   - unknown / wrong-typed workflowNodeId
  *   - empty outputPath (Mutator must set it before dryRun)
- *   - missing prompt input
+ *   - a node holding no workflow file, or a file with no Basher output
  *   - capability rejection (rethrown)
  */
 export async function dryRun(
@@ -97,79 +174,51 @@ export async function dryRun(
   state: DagState,
   deps: DryRunDeps,
 ): Promise<DryRunReport> {
-  const node = state.nodes[workflowNodeId];
-  if (!node) throw new Error(`dryRun: unknown workflowNodeId "${workflowNodeId}"`);
-  if (node.type !== 'ComfyUIWorkflow') {
-    throw new Error(`dryRun: node "${workflowNodeId}" is not a ComfyUIWorkflow (got ${node.type})`);
-  }
-
-  // V10 guard — defensive defaults. params may have been hydrated from a
-  // legacy project that lacks frameStart / frameEnd / outputPath.
-  const params = node.params as Partial<ComfyUIWorkflowParams>;
-  const presetId = params.presetId ?? 'stylizedRealism';
+  const { params, sockets, apiJson } = workflowNodeOf(state, workflowNodeId, 'dryRun');
+  // V10 guard — defensive defaults for a project that lacks frameStart / frameEnd / outputPath.
   const frameStart = params.frameStart ?? 0;
-  const frameEnd = params.frameEnd ?? 60;
+  const frameEnd = runFrameEnd(params, sockets);
   const outputPath = params.outputPath ?? '';
   if (!outputPath) {
     throw new Error(
       `dryRun: workflow "${workflowNodeId}" has empty outputPath. The Mutator must set it before dryRun.`,
     );
   }
+  if (sockets.outputs.length === 0) {
+    throw new Error(`dryRun: workflow "${workflowNodeId}"'s file has no Basher output to read.`);
+  }
 
-  // Probe frame = frameStart. Time advances through the Time socket so
-  // the upstream pass evaluators produce frame-0 metadata.
+  // Probe frame = frameStart, the first of the range: its fed inputs get their first-frame
+  // picture. One evaluator cache for every input (#1318).
   const probeFrame = frameStart;
   const ctx: EvalCtx = {
     time: { frame: probeFrame, seconds: probeFrame / 30, normalized: 0 },
   };
-
-  // Resolve the Prompt + pass inputs at the probe frame, through ONE evaluator cache (#1318):
-  // each pass reads the same scene and camera, so without it every pass re-walked them, and on
-  // a scene holding a character re-ran its whole-clip retarget once per pass.
   const cache = createEvaluatorCache();
-  const promptBinding = node.inputs.prompt;
-  if (!promptBinding || Array.isArray(promptBinding)) {
-    throw new Error(
-      `dryRun: workflow "${workflowNodeId}" missing single Prompt input — wire one with a connect op.`,
-    );
-  }
-  const prompt = evaluate(state, promptBinding.node, {
-    ctx,
-    socket: promptBinding.socket,
-    cache,
-  }).value as PromptValue;
-
-  const passBinding = node.inputs['pass-input'];
-  const passRefs =
-    passBinding === undefined ? [] : Array.isArray(passBinding) ? passBinding : [passBinding];
-  const passes = passRefs.map(
-    (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket, cache }).value as ImageValue,
-  );
-
-  // Compile + submit. The compiler is injectable so Wave C wires the real
-  // preset compiler and tests substitute a deterministic stub.
-  const { workflowJson, inputs } = await deps.compileWorkflow({
-    presetId,
-    prompt,
-    passes,
+  const inputs = workflowInputsAt(state, workflowNodeId, sockets, ctx, cache, deps.controllerValue);
+  const fed = Object.fromEntries(sockets.fed.map((f) => [f.nodeId, null]));
+  const compiled = await deps.compileWorkflow({
+    apiJson,
     frame: probeFrame,
-    // dryRun is always frame 0 of a new run — no antecedent stylized
-    // output to feed ControlNet. Compiler substitutes a zero image.
-    prevFrameStylizedPath: null,
+    inputs,
+    fed,
     workflowOutputPath: outputPath,
   });
 
   const now = deps.now ?? (() => Date.now());
   const t0 = now();
-  const result = await deps.capability.submit(workflowJson, inputs);
+  const result = await deps.capability.submitBatch(compiled.workflowJson, compiled.inputs);
   const elapsedMs = Math.max(0, now() - t0);
 
   // Persist probe bytes at the D-04 path for the workflow's frameStart so
   // the cache parity claim (probe → execute frame 0) holds: identical
   // (workflowJson, inputs) deterministically reproduces the same
   // sourceHash → execute reads the existing bytes.
+  const first = sockets.outputs[0];
+  const bytes = result.framesByNode?.[first.nodeId]?.[0] ?? result.frames[0];
+  if (!bytes) throw new Error(`dryRun: ComfyUI returned no picture for "${first.socket}".`);
   const samplePath = framePath(outputPath, probeFrame);
-  await deps.storage.write(samplePath, result.frame);
+  await deps.storage.write(samplePath, bytes);
 
   const frameCount = Math.max(0, frameEnd - frameStart + 1);
   return {
@@ -179,19 +228,4 @@ export async function dryRun(
     samplePath,
     probeJobId: result.jobId,
   };
-}
-
-/**
- * D-04 frame path formula: `${outputPath}_${pad4(frame)}.png`.
- *
- * The Mutator sets outputPath to `renders/${jobId}/stylized_${presetId}`;
- * dryRun + runComfyUIWorkflow append `_${pad4(frame)}.png`. Stylized
- * frames live at the same OPFS prefix as raw passes per D-04 (parallel
- * tree decision) — `stylized_${presetId}` prefix prevents collision
- * with `${passKind}_NNNN.png` (raw passes from runRenderJob).
- */
-export function framePath(outputPath: string, frame: number): string {
-  const trimmed = outputPath.replace(/\/+$/, '');
-  const padded = frame.toString().padStart(4, '0');
-  return `${trimmed}_${padded}.png`;
 }

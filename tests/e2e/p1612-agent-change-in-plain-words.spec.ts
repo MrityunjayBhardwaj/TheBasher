@@ -8,7 +8,7 @@
 // and the review bar and undo step read `mesh.add, mesh.add, mesh.add`.
 //
 // REF: src/agent/describeChange.ts; src/agent/orchestrator.ts; src/app/AgentChat.tsx;
-//      src/app/DiffBar.tsx.
+//      src/app/ProposalCard.tsx (the review bar's successor, #1706).
 
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './_fixtures';
@@ -94,11 +94,11 @@ test('#1612 — three cubes from the agent read as "Added 3 cubes" in the chat, 
   await expect(page.getByTestId('agent-step').first()).toContainText('newNodeId');
 
   // The review bar says the same thing, with no tool names in view.
-  await expect(page.getByTestId('diffbar-description')).toHaveText('Added 3 cubes');
-  expect(await page.getByTestId('diffbar').innerText()).not.toContain('mesh.add');
+  await expect(page.getByTestId('proposal-description')).toHaveText('Added 3 cubes');
+  expect(await page.getByTestId('proposal-card').innerText()).not.toContain('mesh.add');
 
   // Applied, the undo step carries the same name.
-  await page.getByTestId('diffbar-apply').click();
+  await page.getByTestId('proposal-accept').click();
   const top = await page.evaluate(() => {
     const dag = (
       window as unknown as {
@@ -124,7 +124,7 @@ test('#1612 — when the turn stops before proposing, the bubble does not claim 
   await expect(page.getByTestId('agent-messages')).toContainText('ran out of output');
 
   // Nothing was proposed, so nothing may read as done.
-  await expect(page.getByTestId('diffbar')).toHaveCount(0);
+  await expect(page.getByTestId('proposal-card')).toHaveCount(0);
   await expect(page.getByTestId('agent-summary')).toHaveText(
     'Not applied, the turn stopped first: added 3 cubes',
   );

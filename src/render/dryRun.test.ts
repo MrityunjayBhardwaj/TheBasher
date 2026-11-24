@@ -6,6 +6,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { dryRun, framePath, type CompileWorkflowFn } from './dryRun';
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../core/comfy/builtinWorkflows';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -73,7 +74,7 @@ function buildDryRunState(
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: opts.frameStart ?? 0,
       frameEnd: opts.frameEnd ?? 30,
       lastGoodFrame: -1,
@@ -88,7 +89,7 @@ function buildDryRunState(
   s = applyOp(s, {
     type: 'connect',
     from: { node: 'beauty', socket: 'out' },
-    to: { node: 'cw', socket: 'pass-input' },
+    to: { node: 'cw', socket: 'beauty' },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -100,24 +101,16 @@ function buildDryRunState(
 
 /** A trivial compileWorkflow stub that echoes the inputs verbatim. */
 function makeStubCompiler(): CompileWorkflowFn {
-  return async ({ presetId, prompt, passes, frame }) => {
-    const workflowJson: ComfyWorkflowJson = {
-      preset: presetId,
-      promptText: prompt.text,
-      passKinds: passes.map((p) => p.passKind),
-      frame,
-    };
+  return async ({ apiJson, inputs, frame }) => {
+    const prompt = inputs.prompt as { text?: string } | undefined;
+    const beauty = inputs.beauty as { passKind: string; sourceHash: string } | undefined;
+    const workflowJson: ComfyWorkflowJson = { ...apiJson, _probe: { frame, prompt: prompt?.text } };
     const images: Record<string, Uint8Array> = {};
-    for (const pass of passes) {
-      // Each pass contributes its sourceHash as a tiny byte payload so
-      // the stub capability's content-hash mixing differentiates them.
-      images[pass.passKind] = new TextEncoder().encode(pass.sourceHash);
-    }
-    const inputs: ComfyInputs = {
-      images,
-      scalars: { prompt: prompt.text, frame },
-    };
-    return { workflowJson, inputs };
+    // The pass contributes its sourceHash as a tiny byte payload so the stub capability's
+    // content-hash mixing differentiates it.
+    if (beauty) images.beauty = new TextEncoder().encode(beauty.sourceHash);
+    const compiled: ComfyInputs = { images, scalars: { frame } };
+    return { workflowJson, inputs: compiled };
   };
 }
 
@@ -141,7 +134,7 @@ describe('dryRun (D-06 — one-frame probe + extrapolate)', () => {
     expect(report.estimatedSeconds).toBeCloseTo(3.0, 5);
   });
 
-  it('writes probe bytes to D-04 path renders/${jobId}/stylized_${presetId}_NNNN.png', async () => {
+  it('writes probe bytes to D-04 path renders/${jobId}/stylized_<workflow>_NNNN.png', async () => {
     const storage = new MemoryStorage();
     const state = buildDryRunState({ outputPath: 'renders/jobX/stylized_stylizedRealism' });
     const report = await dryRun('cw', state, {

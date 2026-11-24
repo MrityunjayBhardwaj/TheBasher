@@ -13,6 +13,7 @@
 // REF: docs/UI-SPEC.md §5.3, §5.7, §5.10, §6.2, §11.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -80,7 +81,7 @@ test('P6.W2#3 keyboard Q/W/E/R sets editorStore.activeTool', async ({ page }) =>
 // p6-w1-consolidation.spec.ts single-DOM-location gate.
 
 test('P6.W2#7 "Present" button enters present mode; Esc exits', async ({ page }) => {
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   // Esc dismisses the topmost transient — here, present (regression on the
   // Esc ladder that replaced the old setMode('edit')).

@@ -29,6 +29,8 @@ import {
   type ComfyGraphMeta,
   type ComfyInputValue,
 } from '../../core/comfy/comfyGraph';
+import { framePath, outputPathOf } from '../../core/comfy/workflowPaths';
+import { workflowSocketsOf, type ComfyUIWorkflowParams } from '../../nodes/ComfyUIWorkflow';
 import { getComfyCapability } from '../boot';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useNotificationStore } from '../stores/notificationStore';
@@ -40,15 +42,19 @@ import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
+import { compositionStack } from './videoLayers';
+import { getNodeType } from '../../core/dag/registry';
+import { isBypassed } from '../../core/dag/chainBypass';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
   drawComposite,
+  isLayerDraw,
   planComposite,
+  type CompositeDraw,
   type CompositeSource,
   type EffectOp,
-  type LayerComposite,
-  type ResolvedLayerInput,
+  type ResolvedStackInput,
 } from './composite';
 
 function num(v: unknown, fallback: number): number {
@@ -59,6 +65,12 @@ function vec2(v: unknown, fallback: readonly [number, number]): readonly [number
   return Array.isArray(v) && v.length >= 2
     ? [num(v[0], fallback[0]), num(v[1], fallback[1])]
     : fallback;
+}
+
+/** The output socket a layer's source binding reads. */
+function firstSourceSocket(binding: unknown): string | undefined {
+  const ref = (Array.isArray(binding) ? binding[0] : binding) as { socket?: unknown } | undefined;
+  return typeof ref?.socket === 'string' ? ref.socket : undefined;
 }
 
 function firstSourceId(binding: unknown): NodeId | undefined {
@@ -106,27 +118,50 @@ function resolveComfySource(graphParam: unknown, imageBindingsParam: unknown): R
   return { graphJson: gp.apiJson, name: meta.name, compiledJson, imageUploads };
 }
 
-/** Resolve the comp's layers (back→front) to composite inputs: authored params with
- *  opacity + rotation overlaid by their evaluated channel value, and the source
- *  MediaClip resolved to its OPFS path + metadata (null when not yet decodable). */
+/** Effect node `nodeId` as an evaluated EffectOp (channel overlay → H40), or null when its
+ *  type has no composite draw yet. */
+function evaluatedEffectOp(
+  state: DagState,
+  nodeId: NodeId,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): EffectOp | null {
+  const node = state.nodes[nodeId];
+  if (node?.type !== 'ColorCorrect') return null;
+  const ep = node.params as Record<string, unknown>;
+  const at = (path: string) =>
+    num(resolveEvaluatedParam(state, nodeId, path, ctx, cache)?.value, num(ep[path], 1));
+  return {
+    type: 'ColorCorrect',
+    brightness: at('brightness'),
+    contrast: at('contrast'),
+    saturation: at('saturation'),
+  };
+}
+
+/** Resolve the comp's stack (back→front) to composite inputs: each layer's authored params
+ *  with opacity + rotation overlaid by their evaluated channel value and its source MediaClip
+ *  resolved to its OPFS path + metadata (null when not yet decodable), and each unmuted step
+ *  between layers as the adjustment it applies (#1879 step 4). */
 export function collectCompositeInputs(
   state: DagState,
   compId: NodeId,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
-): ResolvedLayerInput[] {
-  const comp = state.nodes[compId];
-  if (!comp) return [];
-  const binding = comp.inputs?.layers;
-  const layerIds = Array.isArray(binding)
-    ? binding.map((r) => (r as { node: NodeId }).node)
-    : binding
-      ? [(binding as { node: NodeId }).node]
-      : [];
-  const inputs: ResolvedLayerInput[] = [];
-  for (const layerId of layerIds) {
-    const layer = state.nodes[layerId];
-    if (!layer || layer.type !== 'Layer') continue;
+): ResolvedStackInput[] {
+  const inputs: ResolvedStackInput[] = [];
+  for (const entry of compositionStack(state, compId)) {
+    if (entry.kind === 'step') {
+      // The stack mute bypasses a step as it does a layer (V58), read through its declaration.
+      const step = state.nodes[entry.id];
+      const def = step ? getNodeType(step.type) : undefined;
+      if (!step || !def || isBypassed(def, step.params)) continue;
+      const op = evaluatedEffectOp(state, entry.id, ctx, cache);
+      if (op) inputs.push({ kind: 'adjust', nodeId: entry.id, effects: [op] });
+      continue;
+    }
+    const layerId = entry.id;
+    const layer = state.nodes[layerId]!;
     const p = layer.params as Record<string, unknown>;
     const t = (p.transform ?? {}) as Record<string, unknown>;
 
@@ -175,54 +210,61 @@ export function collectCompositeInputs(
           };
         }
       } else if (base && base.type === 'ComfyUIWorkflow') {
-        // A ComfyUIWorkflow generator layer. Decoded as a deterministic STUB frame
-        // (CI-safe, no server), or a SINGLE live render when comfyLiveGenerate is on.
-        // STATIC: the comfy layer no longer recompiles per frame — keyframed scalar
-        // params are observed via 🎬 Render coherent clip (the auto-injected-controller
-        // batch), not a per-frame scrub (the inference preview compiler is retired). The
-        // cache key folds the graph json + bound media → an edited workflow or a changed
-        // binding re-renders, but a scrub does not. The stub draws the workflow name.
-        const cp = base.params as Record<string, unknown>;
+        // A ComfyUIWorkflow generator layer.
+        //
+        // #1717 — it shows what the runner made: the picture the runner stored for each frame
+        // of the workflow's range (`framePath(outputPathOf(…), frame)`), one per frame for a
+        // frames output and the one still, held, for a still output (#1716). A frame not stored
+        // yet draws the placeholder. The cache key folds what the pictures were made from and
+        // how far the run got, so a run that lands new pictures is decoded afresh.
+        //
+        // A workflow with no output path (nothing ever stores for it) keeps the older static
+        // preview: a deterministic STUB frame (CI-safe, no server), or a SINGLE live render
+        // when comfyLiveGenerate is on. Its cache key folds the graph json + bound media, so
+        // an edited workflow or a changed binding re-renders but a scrub does not.
+        const cp = base.params as Partial<ComfyUIWorkflowParams> & Record<string, unknown>;
         const resolved = resolveComfySource(cp.graph, cp.imageBindings);
+        const sockets = workflowSocketsOf(cp);
+        const socket = srcId === baseId ? firstSourceSocket(layer.inputs?.source) : undefined;
+        const output = sockets.outputs.find((o) => o.socket === socket) ?? sockets.outputs[0];
+        const outputPath = typeof cp.outputPath === 'string' ? cp.outputPath : '';
+        const frameStart = num(cp.frameStart, 0);
+        const frames = output?.type === 'frames';
+        const stored =
+          output && outputPath
+            ? { prefix: outputPathOf(outputPath, sockets, output.socket), firstFrame: frameStart }
+            : undefined;
         source = {
           kind: 'comfy',
-          path: `comfy:${baseId}#${hashValue({ json: resolved.graphJson, imgs: resolved.imageUploads })}`,
+          path: `comfy:${baseId}#${hashValue({
+            json: resolved.graphJson,
+            imgs: resolved.imageUploads,
+            stored: stored ?? null,
+            madeFrom: stored ? (cp.madeFrom ?? null) : null,
+            landed: stored ? (cp.lastGoodFrame ?? -1) : null,
+          })}`,
           label: resolved.name ?? 'ComfyUI',
           comfyWorkflow: resolved.compiledJson,
           comfyImageUploads: resolved.imageUploads,
-          mediaKind: 'image',
+          mediaKind: frames && stored ? 'video' : 'image',
           width: num(cp.width, 512),
           height: num(cp.height, 512),
           srcFps: 30,
-          srcFrames: 1,
+          srcFrames: frames && stored ? Math.max(1, num(cp.frameEnd, 60) - frameStart + 1) : 1,
+          ...(stored ? { stored } : {}),
         };
       }
       for (const entry of enumerateEffectStack(state, baseId)) {
         if (entry.muted) continue; // V58 mute-bypass — passes the frame through
-        if (entry.type === 'ColorCorrect') {
-          const ep = state.nodes[entry.nodeId].params as Record<string, unknown>;
-          effects.push({
-            type: 'ColorCorrect',
-            brightness: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'brightness', ctx, cache)?.value,
-              num(ep.brightness, 1),
-            ),
-            contrast: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'contrast', ctx, cache)?.value,
-              num(ep.contrast, 1),
-            ),
-            saturation: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'saturation', ctx, cache)?.value,
-              num(ep.saturation, 1),
-            ),
-          });
-        }
+        const op = evaluatedEffectOp(state, entry.nodeId, ctx, cache);
+        if (op) effects.push(op);
       }
     }
 
     inputs.push({
       layerId,
-      enabled: p.enabled !== false,
+      // #1879 — shown unless muted (the stack mute that bypasses the layer).
+      enabled: p.muted !== true,
       solo: p.solo === true,
       startFrame: num(p.startFrame, 0),
       inPoint: num(p.inPoint, 0),
@@ -312,7 +354,40 @@ async function decodeComfyStub(source: CompositeSource): Promise<ImageBitmap | n
   const raw = source.label ?? 'ComfyUI';
   const label = raw.length > 26 ? `${raw.slice(0, 25)}…` : raw;
   ctx.fillText(label, Math.round(canvas.width / 12), Math.round(canvas.height / 2));
-  return await createImageBitmap(canvas);
+  return await createImageBitmap(canvas, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
+}
+
+/** Decode one stored PNG (a runner's picture) through the same decoder a media still uses. */
+async function decodeStoredPicture(
+  source: CompositeSource,
+  path: string,
+  bytes: Uint8Array,
+): Promise<ImageBitmap | null> {
+  try {
+    const frame = await decoder.decodeFrame(
+      bytes,
+      {
+        mediaKind: 'image',
+        width: source.width,
+        height: source.height,
+        srcFps: 30,
+        srcFrames: 1,
+        durationSeconds: 0,
+      },
+      0,
+    );
+    if (frame.bitmap) return frame.bitmap;
+    if (!frame.rgba) return null;
+    const data = new ImageData(new Uint8ClampedArray(frame.rgba), frame.width, frame.height);
+    return await createImageBitmap(data, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
+  } catch (err) {
+    console.warn(`composite: failed to decode ${path}`, err);
+    useNotificationStore.getState().notify({
+      severity: 'error',
+      message: `Video layer failed to decode: ${source.label ?? path}`,
+    });
+    return null;
+  }
 }
 
 /** Submit a comfy layer's per-frame compiled workflow to a REAL ComfyUI server and
@@ -340,7 +415,7 @@ async function decodeComfy(source: CompositeSource): Promise<ImageBitmap | null>
         }
         const { frame } = await cap.submit(source.comfyWorkflow, { images, scalars: {} });
         const blob = new Blob([frame.slice()], { type: 'image/png' });
-        return await createImageBitmap(blob);
+        return await createImageBitmap(blob, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'ComfyUI submit failed';
@@ -378,15 +453,43 @@ async function ensureBitmap(
   return work;
 }
 
+/**
+ * #1717 — what a comfy generator layer shows at source frame `frameIndex`: the picture its runner
+ * stored for that frame (`stored`: its path), or nothing stored yet (`stored: null`, the
+ * placeholder). A still is one picture, held. The ONE place the composite decides this.
+ */
+export async function comfyLayerFrame(
+  source: CompositeSource,
+  frameIndex: number,
+  storage: Pick<StorageCapability, 'exists'>,
+): Promise<{ readonly stored: string | null }> {
+  if (source.kind !== 'comfy' || !source.stored) return { stored: null };
+  const i = Math.min(Math.max(0, Math.round(frameIndex)), Math.max(1, source.srcFrames) - 1);
+  const path = framePath(source.stored.prefix, source.stored.firstFrame + i);
+  return { stored: (await storage.exists(path)) ? path : null };
+}
+
 async function decodeBitmap(
   source: CompositeSource,
   frameIndex: number,
   key: string,
 ): Promise<ImageBitmap | null> {
-  // A ComfyUIWorkflow generator. Real submit (opt-in `comfyLiveGenerate` + a
-  // reachable server) → the per-frame compiled workflow is sent to ComfyUI and a
-  // REAL frame composited; otherwise the deterministic GPU-free stub (CI/offline).
   if (source.kind === 'comfy') {
+    // #1717 — a workflow whose runner stores its pictures shows them; a frame not stored yet is
+    // the placeholder (never a submit from the viewer: generating is the Generate action's).
+    if (source.stored) {
+      storagePromise ??= pickStorage();
+      const storage = await storagePromise;
+      const { stored } = await comfyLayerFrame(source, frameIndex, storage);
+      const bmp = stored
+        ? await decodeStoredPicture(source, stored, await storage.read(stored))
+        : await decodeComfyStub(source);
+      if (bmp) bitmapCache.set(key, bmp);
+      return bmp;
+    }
+    // No output path: real submit (opt-in `comfyLiveGenerate` + a reachable server) → the
+    // compiled workflow is sent to ComfyUI and a REAL frame composited; otherwise the
+    // deterministic GPU-free stub (CI/offline).
     const bmp = await decodeComfy(source);
     if (bmp) bitmapCache.set(key, bmp);
     return bmp;
@@ -408,7 +511,7 @@ async function decodeBitmap(
       // The stub/headless path yields raw rgba — copy into a fresh (ArrayBuffer-
       // backed) buffer so ImageData accepts it, then rasterize to a bitmap.
       const data = new ImageData(new Uint8ClampedArray(frame.rgba), frame.width, frame.height);
-      bmp = await createImageBitmap(data);
+      bmp = await createImageBitmap(data, { premultiplyAlpha: 'none' }); // straight alpha (#1883)
     }
     if (bmp) bitmapCache.set(key, bmp);
     return bmp;
@@ -428,59 +531,19 @@ async function decodeBitmap(
   }
 }
 
-// Graded frames are cached separately from the base decodes, keyed by the FULL
-// compositeBitmapKey (path#frame#effectChain) — so a re-scrub / re-export with the
-// same grade reuses the graded bitmap, and a param change (new effectsKey) misses.
-// Bounded LRU for the same OOM reason as bitmapCache (#253).
-const gradedCache = new BitmapLRU(MAX_CACHED_BITMAPS);
-
-/** Apply a layer's effect chain (base → top) to a decoded frame, returning a new
- *  graded bitmap. Local effects are pure GPU canvas filters (the [[V58]] "local
- *  effects = shaders" path); the apply order is the chain order. ColorCorrect maps
- *  to canvas `brightness()/contrast()/saturate()`. PURE of the DAG. */
-async function applyEffects(bmp: ImageBitmap, effects: readonly EffectOp[]): Promise<ImageBitmap> {
-  const filters: string[] = [];
-  for (const e of effects) {
-    if (e.type === 'ColorCorrect') {
-      filters.push(`brightness(${e.brightness}) contrast(${e.contrast}) saturate(${e.saturation})`);
-    }
-  }
-  if (!filters.length) return bmp;
-  const canvas = document.createElement('canvas');
-  canvas.width = bmp.width;
-  canvas.height = bmp.height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return bmp;
-  ctx.filter = filters.join(' ');
-  ctx.drawImage(bmp, 0, 0);
-  return await createImageBitmap(canvas);
-}
-
-/** Decode every planned draw's source frame (and apply its effect chain), returning
- *  a map keyed by compositeBitmapKey (the same key drawComposite looks up — now
- *  effect-aware). A draw that fails to decode is simply absent → drawComposite skips
- *  it (no throw, no blank crash). */
+/** Decode every planned layer draw's source frame, returning a map keyed by
+ *  compositeBitmapKey (path#frame — the key drawComposite looks up). Effects are not applied
+ *  here: drawComposite applies them while drawing (#1883: on the GPU, in linear light), so one
+ *  decoded frame serves every grade. A draw that fails to decode is simply absent →
+ *  drawComposite skips it (no throw, no blank crash). */
 export async function decodeDraws(
-  draws: readonly LayerComposite[],
+  draws: readonly CompositeDraw[],
 ): Promise<Map<string, ImageBitmap>> {
   const map = new Map<string, ImageBitmap>();
   await Promise.all(
-    draws.map(async (d) => {
-      const key = compositeBitmapKey(d);
-      const cachedGraded = gradedCache.get(key);
-      if (cachedGraded) {
-        map.set(key, cachedGraded);
-        return;
-      }
-      const base = await ensureBitmap(d.source, d.sourceFrameIndex);
-      if (!base) return;
-      if (!d.effects.length) {
-        map.set(key, base); // no grade → the base IS the frame (key ends in '#')
-        return;
-      }
-      const graded = await applyEffects(base, d.effects);
-      gradedCache.set(key, graded);
-      map.set(key, graded);
+    draws.filter(isLayerDraw).map(async (d) => {
+      const bmp = await ensureBitmap(d.source, d.sourceFrameIndex);
+      if (bmp) map.set(compositeBitmapKey(d), bmp);
     }),
   );
   return map;
@@ -499,7 +562,7 @@ export async function captureCompositeFrame(
   compFrame: number,
   ctx: CanvasRenderingContext2D,
   cache?: EvaluatorCache,
-): Promise<LayerComposite[]> {
+): Promise<CompositeDraw[]> {
   const fps = comp.fps ?? 30;
   const durationFrames = Math.max(1, comp.durationFrames ?? 150);
   const seconds = fps > 0 ? compFrame / fps : 0;

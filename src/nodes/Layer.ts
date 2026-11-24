@@ -1,24 +1,34 @@
-// Layer — one element of a Composition (the Compositor's AE-style layer).
+// Layer — one step of a Composition's layer stack (the Compositor's AE-style layer).
 //
-// Wraps a time-varying Image `source` (a MediaClip / scene-render / ComfyWorkflow /
-// nested Composition) with composite params: trim (inPoint/outPoint), position on
-// the comp timeline (startFrame), 2D transform, opacity, blend mode. `opacity` and
-// the transform fields are keyframeable via free-floating V57 channels targeting
-// this node (the twirl-down dopesheet rows).
+// #1879 — a layer is an operator on the IMAGE lane, as every stack in Basher is a chain of
+// T → T steps (#1805): its `below` input is everything under it in the stack, its `source` is
+// its own picture (a MediaClip / scene render / ComfyWorkflow), and its output is the stack with
+// this layer composited on top. The Composition reads the top of that chain. Before, the
+// Composition held a LIST of layers and composited them itself, so nothing could sit between
+// two layers and adjust everything below.
 //
-// The effect stack is NOT stored here — effects are Image→Image operator nodes
-// (V58) spliced onto the `source` edge (docs/COMPOSITOR-DESIGN.md §5), so the
-// `source` we receive is already the top of any effect chain.
+// Composite params: trim (inPoint/outPoint), position on the comp timeline (startFrame), 2D
+// transform, opacity, blend mode. `opacity` and the transform fields are keyframeable via
+// free-floating V57 channels targeting this node (the twirl-down dopesheet rows).
 //
-// evaluate is pure metadata: it forwards the (already-evaluated) source ImageValue
-// plus the composite params as a LayerValue. The compositor re-evaluates the source
-// at a time-shifted ctx for the actual frame (§4.4) — this node does not remap time.
+// Hiding a layer is the stack mute every operator has (`muted`, `chain.bypass`): the evaluator
+// hands `below` through unchanged, as BlendShop mutes a layer node. It replaced `enabled`
+// (true = shown), converted in the file format.
 //
-// REF: docs/COMPOSITOR-DESIGN.md §4.2; vyapti V2 + V34 + V57; sibling: Composition.
+// A layer's OWN effects are Image→Image operators spliced onto its `source` edge (V58), so the
+// `source` it receives is already the top of that effect chain.
+//
+// evaluate is pure metadata (V2): an ImageValue handle whose hash covers the layer's params and
+// both inputs. Pixels are made at runtime by walking the chain (compositeDecode → composite),
+// which re-evaluates the source at a time-shifted ctx (§4.4) — this node does not remap time.
+//
+// REF: docs/COMPOSITOR-DESIGN.md §4.2; vyapti V2 + V34 + V57 + V58; src/core/dag/operatorLane.ts
+//      (the lane is the type that flows through); sibling: Composition, ColorCorrect.
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { ImageValue, LayerBlendMode, LayerValue } from './types';
+import { hashValue } from '../core/dag/hash';
+import type { ImageValue } from './types';
 import { nameParam } from './paramWidget';
 
 export const LAYER_BLEND_MODES = ['normal', 'add', 'multiply', 'screen'] as const;
@@ -27,8 +37,8 @@ const Vec2 = z.tuple([z.number(), z.number()]);
 
 export const LayerParams = z.object({
   name: nameParam('Layer'),
-  /** Visibility (AE's eyeball). A disabled layer is skipped by the compositor. */
-  enabled: z.boolean().default(true),
+  /** Hidden (AE's eyeball off). A muted layer is bypassed: the stack below passes through. */
+  muted: z.boolean().default(false),
   /** Solo (AE): when any layer in a comp is solo, only solo layers composite. */
   solo: z.boolean().default(false),
   /** Lock: protects the layer from timeline edits (trim/slide/reorder). */
@@ -52,42 +62,59 @@ export const LayerParams = z.object({
 });
 export type LayerParams = z.infer<typeof LayerParams>;
 
-export const LayerNode: NodeDefinition<LayerParams, LayerValue> = {
+export const LayerNode: NodeDefinition<LayerParams, ImageValue> = {
   type: 'Layer',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: LayerParams,
-  mainInput: 'source',
   inputs: {
-    source: { type: 'Image', cardinality: 'single' },
+    below: { type: 'Image', cardinality: 'single' },
+    /** #1716 — a layer plays its source over time; a still source holds for the layer's span. */
+    source: { type: 'Image', cardinality: 'single', takes: 'frames' },
   },
-  outputs: { out: { type: 'Layer', cardinality: 'single' } },
+  // The spine is `below`: the stack continues underneath a layer, and its own picture is a side
+  // input. Section 'layer': the composition's layer stack offers it, through Add Layer.
+  chain: {
+    input: 'below',
+    // An Image has no components, so no selection is resolvable against it.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'layer',
+  },
+  outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['layout', 'animate'],
   home: {
     name: 'layout',
     startFrame: 'animate',
   },
-  evaluate(params, inputs: ResolvedInputs): LayerValue {
-    const t = params.transform ?? {};
+  evaluate(params, inputs: ResolvedInputs): ImageValue {
+    const below = inputs.below as ImageValue | undefined;
+    const source = inputs.source as ImageValue | undefined;
+    const base = below ?? source;
+    // Nothing below and no picture of its own (transient authoring state): nothing to show.
+    if (!base) return base as unknown as ImageValue;
+    // A composite has no render pass of its own; it keeps the kind of what it sits on, and its
+    // own hash, so a change to any layer below or to this one is a different image. Its extent
+    // (#1716) is what it sits on too, as an effect on the Image lane passes its input's on.
     return {
-      kind: 'Layer',
-      name: params.name,
-      enabled: params.enabled ?? true,
-      solo: params.solo ?? false,
-      locked: params.locked ?? false,
-      startFrame: params.startFrame ?? 0,
-      inPoint: params.inPoint ?? 0,
-      outPoint: params.outPoint ?? -1,
-      blendMode: (params.blendMode ?? 'normal') as LayerBlendMode,
-      opacity: params.opacity ?? 1,
-      transform: {
-        anchor: t.anchor ?? [0, 0],
-        position: t.position ?? [0, 0],
-        scale: t.scale ?? [1, 1],
-        rotation: t.rotation ?? 0,
-      },
-      source: (inputs.source as ImageValue | undefined) ?? null,
+      kind: 'Image',
+      passKind: base.passKind,
+      descriptor: base.descriptor,
+      extent: base.extent,
+      sourceHash: hashValue({
+        layer: {
+          solo: params.solo ?? false,
+          startFrame: params.startFrame ?? 0,
+          inPoint: params.inPoint ?? 0,
+          outPoint: params.outPoint ?? -1,
+          blendMode: params.blendMode ?? 'normal',
+          opacity: params.opacity ?? 1,
+          transform: params.transform ?? {},
+        },
+        below: below?.sourceHash ?? null,
+        source: source?.sourceHash ?? null,
+      }),
     };
   },
 };

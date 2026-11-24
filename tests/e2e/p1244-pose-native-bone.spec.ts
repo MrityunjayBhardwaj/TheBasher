@@ -9,6 +9,9 @@
 // same in every order. Through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's.
 import { test, expect } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Node {
   type: string;
   inputs: Record<string, unknown>;

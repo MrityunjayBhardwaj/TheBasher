@@ -78,6 +78,7 @@ import { RenderJobNode } from './RenderJob';
 import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
 import { MotionGenerateNode } from './MotionGenerate';
+import { ModelGenerateNode } from './ModelGenerate';
 import { SceneNode } from './Scene';
 import { GltfSkeletonNode } from './GltfSkeleton';
 import { SkeletonNode } from './Skeleton';
@@ -96,6 +97,7 @@ import { registerStatefulReplay } from '../app/statefulOps';
 import { registerWorldFold } from '../app/objectWorld';
 import { registerWorldStepFold } from '../app/constraintChain';
 import { registerKeyedCook } from '../app/keyedCook';
+import { registerFilmedCamera } from '../app/filmedCamera';
 import { OwnWorldNode } from './OwnWorld';
 import { registerSceneDraw } from '../app/sceneMembership';
 
@@ -159,6 +161,8 @@ const ALL: NodeDefinition[] = [
   MaterialOverrideNode as unknown as NodeDefinition,
   ScatterNode as unknown as NodeDefinition,
   MotionGenerateNode as unknown as NodeDefinition,
+  // #1720 — text/image-to-3D as a node: the request and the variants it produced.
+  ModelGenerateNode as unknown as NodeDefinition,
   // P2 — Character + Move
   SkeletonNode as unknown as NodeDefinition,
   // P7.11 — pure read-only projection of a glTF asset's captured skin bind data
@@ -345,5 +349,7 @@ export function registerAllNodes(): void {
   registerWorldFold();
   registerWorldStepFold();
   registerKeyedCook();
+  // #1950 — a render pass hashes the camera on screen at the time, through the render's resolver.
+  registerFilmedCamera();
   registerSceneDraw();
 }

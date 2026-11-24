@@ -8,7 +8,7 @@ import type { EvalCtx } from '../core/dag/types';
 import { CompositionNode, CompositionParams } from './Composition';
 import { LayerNode, LayerParams } from './Layer';
 import { MediaClipNode, MediaClipParams, mediaClipFrameAt } from './MediaClip';
-import type { ImageValue, LayerValue } from './types';
+import type { ImageValue } from './types';
 
 const ctxAt = (seconds: number): EvalCtx => ({
   time: { frame: Math.round(seconds * 30), seconds, normalized: 0 },
@@ -54,49 +54,59 @@ describe('MediaClip', () => {
 });
 
 describe('Layer', () => {
-  it('forwards the source image + composite params, applying defaults', () => {
+  // #1879 — a layer is an Image-lane operator: `below` is the stack under it, `source` its own
+  // picture, and its output is a handle on the stack with it on top.
+  it('composites its picture over the stack below: a new image, of the same size', () => {
     const params = LayerParams.parse({ name: 'Plate', opacity: 0.5, startFrame: 12 });
-    const src = fakeImage('img-1');
-    const v = LayerNode.evaluate(params, { source: src }, ctxAt(0)) as LayerValue;
-    expect(v.kind).toBe('Layer');
-    expect(v.name).toBe('Plate');
-    expect(v.opacity).toBe(0.5);
-    expect(v.startFrame).toBe(12);
-    expect(v.enabled).toBe(true);
-    expect(v.blendMode).toBe('normal');
-    expect(v.transform.scale).toEqual([1, 1]);
-    expect(v.source).toBe(src);
+    const below = fakeImage('below');
+    const v = LayerNode.evaluate(params, { below, source: fakeImage('img-1') }, ctxAt(0));
+    expect(v.kind).toBe('Image');
+    expect(v.descriptor).toEqual(below.descriptor);
+    expect(v.sourceHash).not.toBe(below.sourceHash);
   });
 
-  it('a layer with no source is null (degenerate, no crash)', () => {
-    const v = LayerNode.evaluate(LayerParams.parse({}), {}, ctxAt(0)) as LayerValue;
-    expect(v.source).toBeNull();
+  it('its hash moves with its params, its picture, and the stack below', () => {
+    const at = (p: Record<string, unknown>, below: string, source: string) =>
+      LayerNode.evaluate(
+        LayerParams.parse(p),
+        { below: fakeImage(below), source: fakeImage(source) },
+        ctxAt(0),
+      ).sourceHash;
+    const base = at({ opacity: 0.5 }, 'b', 's');
+    expect(at({ opacity: 0.5 }, 'b', 's')).toBe(base); // twice-eval stable (V2)
+    expect(at({ opacity: 0.6 }, 'b', 's')).not.toBe(base);
+    expect(at({ opacity: 0.5 }, 'b2', 's')).not.toBe(base);
+    expect(at({ opacity: 0.5 }, 'b', 's2')).not.toBe(base);
+  });
+
+  it('the back layer (nothing below) is a handle on its own picture', () => {
+    const v = LayerNode.evaluate(LayerParams.parse({}), { source: fakeImage('a') }, ctxAt(0));
+    expect(v.kind).toBe('Image');
+  });
+
+  it('a layer with nothing below and no picture is nothing (degenerate, no crash)', () => {
+    expect(LayerNode.evaluate(LayerParams.parse({}), {}, ctxAt(0))).toBeUndefined();
+  });
+
+  it('hidden is `muted`, off by default', () => {
+    expect(LayerParams.parse({}).muted).toBe(false);
   });
 });
 
 describe('Composition', () => {
-  it('forwards layers in back→front order with canvas settings', () => {
-    const back = LayerNode.evaluate(
-      LayerParams.parse({ name: 'bg' }),
-      { source: fakeImage('a') },
-      ctxAt(0),
-    ) as LayerValue;
-    const front = LayerNode.evaluate(
-      LayerParams.parse({ name: 'fg' }),
-      { source: fakeImage('b') },
-      ctxAt(0),
-    ) as LayerValue;
+  it('carries the top of its stack with canvas settings', () => {
+    const top = fakeImage('top');
     const params = CompositionParams.parse({ name: 'Comp 1', width: 1920, height: 1080, fps: 24 });
-    const comp = CompositionNode.evaluate(params, { layers: [back, front] }, ctxAt(0));
+    const comp = CompositionNode.evaluate(params, { in: top }, ctxAt(0));
     expect(comp.kind).toBe('Composition');
     expect(comp.width).toBe(1920);
     expect(comp.fps).toBe(24);
-    expect(comp.layers.map((l) => l.name)).toEqual(['bg', 'fg']); // [0]=back … last=front
+    expect(comp.image).toBe(top);
   });
 
-  it('an empty comp has no layers (no crash)', () => {
+  it('an empty comp has no image (no crash)', () => {
     const comp = CompositionNode.evaluate(CompositionParams.parse({}), {}, ctxAt(0));
-    expect(comp.layers).toEqual([]);
+    expect(comp.image).toBeNull();
     expect(comp.background).toBe('#000000');
   });
 });

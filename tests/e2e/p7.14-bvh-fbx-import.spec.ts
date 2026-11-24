@@ -23,9 +23,10 @@
 // REF: PLAN 7.14 Wave A (A4); CONTEXT D-02/D-05; issue #111;
 //      src/app/boot.ts (the __basher_ingestBvh/FbxFile seams);
 //      src/app/asset/importBvhFbx.ts (importBvh/FbxFromOpfs + dispatcher);
-//      src/app/AssetLibrary.tsx (the library-popover-my-imports list).
+//      src/app/library/LibraryPane.tsx (the library-popover-my-imports list).
 
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface DagNode {
   type: string;
@@ -126,7 +127,7 @@ test('P7.14 (a) — BVH ingest yields Skeleton + base PoseLayer (motion, not mes
   expect(opfs).toEqual(['walk.bvh']);
 
   // My Imports: the entry shows in the popover.
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('library-popover')).toBeVisible({ timeout: 5_000 });
   await expect(
     page.getByTestId('library-popover-my-import-user-imports/walk/walk.bvh'),

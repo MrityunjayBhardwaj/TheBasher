@@ -13,6 +13,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GLB = 'public/fixtures/rig/standin-character.glb';
@@ -76,7 +80,7 @@ test('#1340 — orienting the left arm from the panel aims each joint at its chi
     return Object.values(nodes).find((n) => n.type === 'ArmatureModifier')!.inputs!.armature!.node!;
   });
   await page.getByTestId(`scene-tree-row-${armature}`).click();
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   await page.evaluate(
     async ({ id, bone }) => {
       const b = await import('/src/app/stores/boneSelectionStore.ts');

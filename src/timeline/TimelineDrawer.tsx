@@ -1,10 +1,16 @@
 // TimelineDrawer — Timebar (always visible) + collapsible drawer body
 // hosting the dopesheet view (TimelineCanvas, the canvas-2D surface
-// the SVG Dopesheet was replaced by in P6 W9), CurveEditor, and the
-// LightStudioPanel (the 2D light-rig surface, #206) as tabs
+// the SVG Dopesheet was replaced by in P6 W9), CurveEditor and the other
+// bottom editors as tabs
 // (P6 W5 — UI-SPEC §5.9; D-UX-2). The "Dopesheet" tab id/label is
 // unchanged — only the rendering technology advanced (D-W9-2). Bottom
 // toolbar with track-ops buttons added P6 W6.
+//
+// #1703 — the decided tab set is Shots · Dopesheet · NLA · Curves · Nodes ·
+// Library (see TABS); #1956 adds Anim Layers between NLA and Curves. Nodes hosts the node view (GraphView, formerly a whole
+// editor space) and mounts only while its tab is up; Library hosts the asset
+// library (#1707 — moved from the left panel's Assets tab). Each tab keeps its
+// own height, set by the handle on the drawer's top edge.
 //
 // Drawer open/closed lives in viewportStore (timelineDrawerOpen).
 // Default closed — preserves P0/P2 acceptance pixel-diff baselines.
@@ -25,11 +31,19 @@
 // what was formerly clearChannel; Simplify opens the SimplifyPopover). Track
 // filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
+import { useProposalTabCounts } from '../agent/diff/useProposal';
+import type { DrawerMarkTab } from '../agent/diff/proposalLines';
+import { PROPOSAL_AMBER } from '../app/proposalStyle';
 import { useTimelineSpan } from './timelineSpan';
-import { useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
-import { useTimelineDockStore, type TimelineTab } from '../app/stores/timelineDockStore';
+import {
+  drawerHeightFor,
+  MIN_DRAWER_HEIGHT_PX,
+  useTimelineDockStore,
+  type TimelineTab,
+} from '../app/stores/timelineDockStore';
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
 import { buildKeyframeInsertOp, buildKeyframeDeleteOp } from '../app/KeyboardShortcuts';
@@ -43,15 +57,57 @@ import { useNotificationStore } from '../app/stores/notificationStore';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
-import { LightStudioPanel } from './LightStudioPanel';
 import { NlaLanePane } from './NlaLanePane';
+import { AnimLayersPane } from './AnimLayersPane';
 import { ControllersDockPane } from './ControllersDockPane';
+import { ShotsPanel } from '../app/ShotsPanel';
+import { GraphView } from '../app/GraphView';
+import { LibraryPane } from '../app/library/LibraryPane';
 import { SimplifyPopover } from './SimplifyPopover';
 import { rowFlag, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { parseLayerRowId } from './layerChannelRows';
+import { useAgentContextStore, usePaneFocus, type PaneKind } from '../app/stores/agentContextStore';
 
-const DRAWER_HEIGHT_PX = 240;
+/** #1705 — the drawer tab each pane kind is shown under (the curve editor's tab keeps the id 'curve'). */
+const PANE_OF_TAB: Record<TimelineTab, PaneKind> = {
+  shots: 'shots',
+  dopesheet: 'dopesheet',
+  nla: 'nla',
+  animLayers: 'animLayers',
+  curve: 'curves',
+  nodes: 'nodes',
+  library: 'library',
+  controllers: 'controllers',
+};
+
+// #1703 — the drawer's height is per tab (timelineDockStore), set by the handle on its top edge.
+// The window bound: the project tabs, menu bar and playback bar (~120 px together) plus a viewport
+// of at least VIEWPORT_MIN_PX stay above/below the drawer body, so the picture never shrinks to
+// nothing. Applied at render because it depends on the window, not stored.
+const WINDOW_CHROME_RESERVE_PX = 120;
+const VIEWPORT_MIN_PX = 240;
+const RESIZE_KEY_STEP_PX = 16;
 const HEADER_HEIGHT_PX = 28;
+
+// #1703 — the drawer's tabs, in the decided order: Shots · Dopesheet · NLA · Anim Layers (#1956) ·
+// Curves · Nodes · Library. Controllers follows until its fate is decided. (The Light Studio moved to the right
+// panel's Lights tab.)
+const TABS: readonly { id: TimelineTab; label: string }[] = [
+  { id: 'shots', label: 'Shots' },
+  { id: 'dopesheet', label: 'Dopesheet' },
+  { id: 'nla', label: 'NLA' },
+  // #1956 — the selected character's pose layers as lanes over time (design board 14d).
+  { id: 'animLayers', label: 'Anim Layers' },
+  // "Curves", never "Curve Editor": the word must not clash with node graphs. The id stays.
+  { id: 'curve', label: 'Curves' },
+  { id: 'nodes', label: 'Nodes' },
+  { id: 'library', label: 'Library' },
+  { id: 'controllers', label: 'Controllers' },
+];
+/** #1703 — the time editors: a key pressed over one of them belongs to the timeline (#1483). */
+const TIME_TABS: readonly TimelineTab[] = ['dopesheet', 'curve', 'nla'];
+/** The tabs that edit keys on the active channel, so the Key/Delete/… toolbar applies. */
+const KEY_TABS: readonly TimelineTab[] = ['dopesheet', 'curve'];
 const TOOLBAR_HEIGHT_PX = 28;
 
 export function TimelineDrawer() {
@@ -62,6 +118,37 @@ export function TimelineDrawer() {
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
+  const storedHeight = useTimelineDockStore((s) => drawerHeightFor(s.heights, s.activeTab));
+  const setTabHeight = useTimelineDockStore((s) => s.setTabHeight);
+  // #1705 — each pane reports itself as where the director is working (the chat's Where chip), and
+  // so does picking its tab: a tab chosen and then a request typed means that pane.
+  const focus = {
+    shots: usePaneFocus('shots'),
+    dopesheet: usePaneFocus('dopesheet'),
+    nla: usePaneFocus('nla'),
+    animLayers: usePaneFocus('animLayers'),
+    curves: usePaneFocus('curves'),
+    nodes: usePaneFocus('nodes'),
+    library: usePaneFocus('library'),
+    controllers: usePaneFocus('controllers'),
+  };
+  const selectTab = (tab: TimelineTab) => {
+    setActiveTab(tab);
+    useAgentContextStore.getState().markPane(PANE_OF_TAB[tab]);
+  };
+  // #1707 — the Library pane mounts on its first visit and then stays (see its pane below).
+  const [libraryVisited, setLibraryVisited] = useState(false);
+  if (open && activeTab === 'library' && !libraryVisited) setLibraryVisited(true);
+  const windowHeight = useWindowHeight();
+  // While a drag is live the height is local; it is written to the store once, on release.
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
+  const maxHeight = Math.max(
+    MIN_DRAWER_HEIGHT_PX,
+    windowHeight - WINDOW_CHROME_RESERVE_PX - VIEWPORT_MIN_PX,
+  );
+  const clampToWindow = (px: number) =>
+    Math.round(Math.min(maxHeight, Math.max(MIN_DRAWER_HEIGHT_PX, px)));
+  const height = clampToWindow(dragHeight ?? storedHeight);
 
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
 
@@ -69,26 +156,50 @@ export function TimelineDrawer() {
     <div
       data-testid="timeline-drawer"
       data-open={open}
-      // #1483 — keys pressed over this region belong to the timeline (KeyboardShortcuts).
-      data-key-region="timeline"
       role="region"
       aria-label={`Timeline — frame ${frame}`}
       className="flex w-full flex-col"
     >
       {open && (
         <div
-          className="flex w-full flex-col border-t border-border"
-          style={{ height: DRAWER_HEIGHT_PX }}
+          data-testid="timeline-drawer-body"
+          // #1483 — keys pressed over a time editor belong to the timeline (KeyboardShortcuts).
+          // #1703 — only the time editors: Shots, Nodes, Library and Controllers are not, so a
+          // key pressed over them keeps the meaning it had in their old homes (Delete after
+          // clicking a shot deletes the selected object, as it did in the left panel).
+          data-key-region={TIME_TABS.includes(activeTab) ? 'timeline' : undefined}
+          className="relative flex w-full flex-col border-t border-border"
+          style={{ height }}
         >
+          <ResizeHandle
+            height={height}
+            min={MIN_DRAWER_HEIGHT_PX}
+            max={maxHeight}
+            onDrag={(px) => setDragHeight(clampToWindow(px))}
+            onCommit={(px) => {
+              setDragHeight(null);
+              setTabHeight(activeTab, clampToWindow(px));
+            }}
+          />
           <DockHeader
             activeTab={activeTab}
-            onSelectTab={setActiveTab}
+            onSelectTab={selectTab}
             frame={frame}
             totalFrames={totalFrames}
           />
           <div className="relative flex-1" style={{ minHeight: 0 }}>
             <div
+              data-testid="shots-pane"
+              {...focus.shots}
+              data-active={activeTab === 'shots'}
+              className="absolute inset-0 overflow-hidden"
+              style={{ display: activeTab === 'shots' ? 'flex' : 'none' }}
+            >
+              <ShotsPanel />
+            </div>
+            <div
               data-testid="timeline-canvas-pane"
+              {...focus.dopesheet}
               data-active={activeTab === 'dopesheet'}
               className="absolute inset-0"
               style={{ display: activeTab === 'dopesheet' ? 'flex' : 'none' }}
@@ -97,6 +208,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="curve-editor-pane"
+              {...focus.curves}
               data-active={activeTab === 'curve'}
               className="absolute inset-0"
               style={{ display: activeTab === 'curve' ? 'flex' : 'none' }}
@@ -105,6 +217,7 @@ export function TimelineDrawer() {
             </div>
             <div
               data-testid="nla-pane"
+              {...focus.nla}
               data-active={activeTab === 'nla'}
               className="absolute inset-0"
               style={{ display: activeTab === 'nla' ? 'flex' : 'none' }}
@@ -112,15 +225,42 @@ export function TimelineDrawer() {
               <NlaLanePane />
             </div>
             <div
-              data-testid="light-studio-pane"
-              data-active={activeTab === 'lightStudio'}
+              data-testid="anim-layers-pane"
+              {...focus.animLayers}
+              data-active={activeTab === 'animLayers'}
               className="absolute inset-0"
-              style={{ display: activeTab === 'lightStudio' ? 'flex' : 'none' }}
+              style={{ display: activeTab === 'animLayers' ? 'flex' : 'none' }}
             >
-              <LightStudioPanel />
+              {/* #1956 — mounted only while its tab is up: it keeps no state worth a mount, and it
+                  reads the whole graph, so a hidden one would re-derive its rows on every change. */}
+              {activeTab === 'animLayers' ? <AnimLayersPane /> : null}
+            </div>
+            <div
+              data-testid="nodes-pane"
+              {...focus.nodes}
+              data-active={activeTab === 'nodes'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'nodes' ? 'flex' : 'none' }}
+            >
+              {/* Mounted only while its tab is up (and the drawer open — the body is not rendered
+                  closed): unlike the time panes it keeps no state worth a mount, and a hidden graph
+                  would otherwise rebuild itself on every scene change (#1675). */}
+              {activeTab === 'nodes' ? <GraphView /> : null}
+            </div>
+            <div
+              data-testid="library-pane"
+              {...focus.library}
+              data-active={activeTab === 'library'}
+              className="absolute inset-0"
+              style={{ display: activeTab === 'library' ? 'flex' : 'none' }}
+            >
+              {/* #1707 — the asset library. Mounted from the first visit on, so a generation started
+                  from its form keeps its progress across a tab switch. */}
+              {libraryVisited ? <LibraryPane /> : null}
             </div>
             <div
               data-testid="controllers-pane"
+              {...focus.controllers}
               data-active={activeTab === 'controllers'}
               className="absolute inset-0"
               style={{ display: activeTab === 'controllers' ? 'flex' : 'none' }}
@@ -128,14 +268,14 @@ export function TimelineDrawer() {
               <ControllersDockPane />
             </div>
           </div>
-          {/* The track-ops toolbar is keyframe-specific — only the time tabs show
-              it. The Light Studio is a spatial surface with its own affordances;
-              the NLA lane view acts on strips/tracks, not timelineSelection
-              channels (#283 Phase 5 — its own affordances land in 5C/5D). */}
-          {!['lightStudio', 'nla', 'controllers'].includes(activeTab) ? <DockToolbar /> : null}
+          {/* The track-ops toolbar is keyframe-specific — only the key tabs (Dopesheet, Curves)
+              show it. Every other tab acts on something else: shots, strips/tracks, nodes,
+              assets, controllers — each with its own affordances. */}
+          {KEY_TABS.includes(activeTab) ? <DockToolbar /> : null}
         </div>
       )}
-      <div className="flex items-stretch">
+      {/* The playback bar is the timeline's own, whichever tab is up. */}
+      <div className="flex items-stretch" data-key-region="timeline">
         <button
           type="button"
           data-testid="timeline-drawer-toggle"
@@ -156,6 +296,84 @@ export function TimelineDrawer() {
   );
 }
 
+function useWindowHeight(): number {
+  const [h, setH] = useState(() => (typeof window === 'undefined' ? 900 : window.innerHeight));
+  useEffect(() => {
+    const onResize = () => setH(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return h;
+}
+
+// #1703 — the drawer's top edge. Drag up for a taller drawer; arrow keys step it. The height is
+// remembered per tab by the caller (onCommit), so each tab keeps the size it was left at.
+function ResizeHandle({
+  height,
+  min,
+  max,
+  onDrag,
+  onCommit,
+}: {
+  height: number;
+  min: number;
+  max: number;
+  onDrag: (px: number) => void;
+  onCommit: (px: number) => void;
+}) {
+  const drag = useRef<{ startY: number; startH: number; last: number } | null>(null);
+
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { startY: e.clientY, startH: height, last: height };
+  }
+  function onPointerMove(e: PointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    d.last = d.startH + (d.startY - e.clientY);
+    onDrag(d.last);
+  }
+  function onPointerUp(e: PointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    onCommit(d.last);
+  }
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    e.stopPropagation();
+    onCommit(height + (e.key === 'ArrowUp' ? RESIZE_KEY_STEP_PX : -RESIZE_KEY_STEP_PX));
+  }
+
+  return (
+    <div
+      data-testid="timeline-drawer-resize-handle"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize the bottom drawer"
+      aria-valuenow={height}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      title="Drag to resize — each tab keeps its own height"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onKeyDown={onKeyDown}
+      className="group absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize touch-none items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+    >
+      <span className="h-1 w-10 rounded-full bg-border group-hover:bg-fg-dim group-focus-visible:bg-accent" />
+    </div>
+  );
+}
+
 function DockHeader({
   activeTab,
   onSelectTab,
@@ -167,6 +385,8 @@ function DockHeader({
   frame: number;
   totalFrames: number;
 }) {
+  // #1706 — each tab counts the pending proposal's changes it marks.
+  const proposedCounts = useProposalTabCounts();
   return (
     <div
       data-testid="timeline-tab-strip"
@@ -175,36 +395,16 @@ function DockHeader({
       className="flex items-stretch border-b border-border bg-bg-2 text-xs"
       style={{ height: HEADER_HEIGHT_PX }}
     >
-      <TabButton
-        id="dopesheet"
-        label="Dopesheet"
-        active={activeTab === 'dopesheet'}
-        onClick={() => onSelectTab('dopesheet')}
-      />
-      <TabButton
-        id="curve"
-        label="Curve Editor"
-        active={activeTab === 'curve'}
-        onClick={() => onSelectTab('curve')}
-      />
-      <TabButton
-        id="nla"
-        label="NLA"
-        active={activeTab === 'nla'}
-        onClick={() => onSelectTab('nla')}
-      />
-      <TabButton
-        id="lightStudio"
-        label="Light Studio"
-        active={activeTab === 'lightStudio'}
-        onClick={() => onSelectTab('lightStudio')}
-      />
-      <TabButton
-        id="controllers"
-        label="Controllers"
-        active={activeTab === 'controllers'}
-        onClick={() => onSelectTab('controllers')}
-      />
+      {TABS.map((t) => (
+        <TabButton
+          key={t.id}
+          id={t.id}
+          label={t.label}
+          active={activeTab === t.id}
+          proposed={proposedCounts[t.id as DrawerMarkTab] ?? 0}
+          onClick={() => onSelectTab(t.id)}
+        />
+      ))}
       <div className="flex-1" />
       <div className="flex items-center gap-3 px-3 text-fg-dim">
         <span data-testid="timeline-dock-frame-readout">
@@ -220,11 +420,14 @@ function TabButton({
   id,
   label,
   active,
+  proposed,
   onClick,
 }: {
   id: TimelineTab;
   label: string;
   active: boolean;
+  /** #1706 — how many of a pending proposal's changes this tab marks (0: no badge). */
+  proposed: number;
   onClick: () => void;
 }) {
   return (
@@ -240,6 +443,16 @@ function TabButton({
       }`}
     >
       {label}
+      {proposed > 0 ? (
+        <span
+          data-testid={`timeline-tab-${id}-proposed`}
+          aria-label={`${proposed} proposed`}
+          className="ml-1.5 rounded px-1 text-[10px] font-semibold tabular-nums leading-4"
+          style={{ background: PROPOSAL_AMBER, color: '#1a1306' }}
+        >
+          {proposed}
+        </span>
+      ) : null}
     </button>
   );
 }

@@ -17,6 +17,10 @@
 //   (1) type a hex → the LIVE material's colour becomes it, and the dot fills.
 
 import { test, expect } from './_fixtures';
+import { inspectorSectionBody, openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface Op {
   type: string;
@@ -95,10 +99,8 @@ test('#521 — a MaterialOverride colour is editable in the Inspector and reache
   await expect(page.getByTestId('inspector')).toBeVisible();
 
   // The material section, opened the way the sibling override specs open it.
-  const sectionBody = page.getByTestId('inspector-section-body-material');
-  if (!(await sectionBody.isVisible().catch(() => false))) {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  const sectionBody = inspectorSectionBody(page, 'material');
+  await openInspectorSection(page, 'material');
   await expect(sectionBody).toBeVisible();
 
   // 🔑 THE CONTROLS EXIST. This is the half that was missing: before #521 the row rendered

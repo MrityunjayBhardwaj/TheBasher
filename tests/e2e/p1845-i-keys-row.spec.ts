@@ -3,6 +3,10 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface W {
   __basher_dag: {
@@ -32,7 +36,7 @@ async function boot(page: Page, withTimeline: boolean) {
   await page.waitForFunction(() =>
     Boolean((window as unknown as Partial<W>).__basher_dag?.getState().state.outputs.scene),
   );
-  if (withTimeline) await page.getByTestId('floating-toolbar-timeline').click();
+  if (withTimeline) await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await page.evaluate(() => {
     const w = window as unknown as W;
     w.__basher_time.getState().pause();
@@ -216,7 +220,9 @@ test('I over a field with no key says it cannot be keyed', async ({ page }) => {
   await boot(page, false);
   await select(page, 'e_f');
   // The curve name row's field, and the follow row: a field no diamond belongs to.
-  const field = page.locator('input[type="text"], select').first();
+  // Scoped to the inspector: the 2D View keeps its tabs mounted while hidden, and since #1718
+  // its Generated tab carries a select that comes first in the page.
+  const field = page.getByTestId('inspector').locator('input[type="text"], select').first();
   await field.hover();
   const before = await keyCount(page);
   await page.keyboard.press('i');

@@ -17,6 +17,10 @@
 // `hero walk`, the Object's row still read the file's name, and its rename box opened on it.
 
 import { test, expect, type Page } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface DagNode {
   type: string;
@@ -83,7 +87,7 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
     errors.push(`${m.text()} @ ${m.location().url}`);
   });
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('generate-kind-motion').click();
   await page.getByTestId('generate-prompt').fill('a figure walks forward');
   await page.getByTestId('generate-submit').click();
@@ -116,7 +120,6 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
     'the generation stood no Object — every read below would be vacuous',
   ).toBeTruthy();
   expect(ids.clip, 'no clip found for the Object’s skeleton').toBeTruthy();
-  await page.getByTestId('left-sidebar-tab-outliner').click();
   const row = page.getByTestId(`scene-tree-row-${ids.object}`);
   await expect(row).toHaveText('a figure walks forward', { timeout: 5_000 });
 

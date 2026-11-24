@@ -455,7 +455,7 @@ this".
 const AI_RENDER: StrategyResource = {
   topic: 'aiRender',
   description:
-    'AI render bridge — ComfyUI-mediated stylization presets, temporal coherence, cost preview, resume-on-failure.',
+    'AI render bridge — ComfyUI-mediated stylization from workflow files, temporal coherence, cost preview, resume-on-failure.',
   body: `# aiRender — AI render bridge (P5)
 
 The AI render bridge composes a stylization step on top of a RenderJob's
@@ -476,28 +476,29 @@ Skip the AI bridge when:
 - The user just wants raw renders (Beauty pass alone). RenderJob is enough.
 - The user mentions specific shaders / materials / lighting tweaks —
   that's the rendering strategy resource, not aiRender.
-- The user wants something the registered presets don't cover (e.g.
-  3D-mesh-to-2D-line-art-only). Surface the gap; v0.6 adds meta-prompt
-  preset authoring.
+- The user wants something no workflow file Basher ships covers (e.g.
+  3D-mesh-to-2D-line-art-only). Surface the gap: the user can pick any
+  ComfyUI workflow file with Basher markers on a ComfyUI workflow node.
 
-## Available presets (v0.5)
+## Workflow files Basher ships
 
-| presetId           | Required passes                | Demo case                             |
+| workflow           | Passes it reads                | Demo case                             |
 | ------------------ | ------------------------------ | ------------------------------------- |
 | \`stylizedRealism\`  | Beauty + Depth + Normal        | Photoreal cube, golden hour           |
 
-v0.6 adds anime + conceptPaint via meta-prompt authoring (THESIS §28).
-Don't promise them in v0.5.
+The ComfyUI workflow node is generic (#1715): its sockets are the Basher
+markers in the workflow file it holds. Inspect a node (\`dag.inspect\`)
+to see them, with their types.
 
 ## How to wire an AI render pass
 
 The agent's job is to compose three steps in order:
 
-1. **Ensure the upstream RenderJob has the preset's required passes
+1. **Ensure the upstream RenderJob has the passes the file reads
    wired.** For \`stylizedRealism\`: Beauty + Depth + Normal must each
    land on the job's pass-input list. Use \`mutator.render.addPass\` for
    each missing pass kind.
-2. **Add the AI pass.** \`mutator.render.addAIPass({ jobId, presetId,
+2. **Add the AI pass.** \`mutator.render.addAIPass({ jobId, workflow,
    promptText, promptNegative? })\` adds a Prompt + ComfyUIWorkflow chain
    onto the job. The Mutator's preconditions reject if a required pass
    isn't already wired (the rejection diagnostic names the missing
@@ -509,9 +510,11 @@ The agent's job is to compose three steps in order:
 
 ## Temporal coherence
 
-Each frame N>0 is conditioned on frame N-1's stylized output via
-ControlNet img2img on the prev-frame image. First frame uses a 1×1 black
-zero-image. The execute layer (\`runComfyUIWorkflow\`) walks frames in
+A workflow file can feed one of its own outputs back in, a frame later:
+its \`prev_frame_image\` marker names the output in \`feedback_of\`. In
+\`stylizedRealism\` each frame N>0 is conditioned on frame N-1's stylized
+output via img2img that way. The first frame gets the marker's own image,
+or a 1×1 black picture. The execute layer (\`runComfyUIWorkflow\`) walks frames in
 order — re-running with \`lastGoodFrame\` populated continues from the
 next frame. Resume is automatic; the agent doesn't need to specify it.
 
@@ -534,7 +537,7 @@ output, not a mock.
 - **Required pass not wired:** \`addAIPass\` precondition rejects with
   the missing-passes list in the diagnostic. Call \`addPass\` for each,
   retry.
-- **Unknown preset:** schema enum rejects. v0.5 only registers
+- **Unknown workflow:** schema enum rejects. Basher ships
   \`stylizedRealism\`.
 
 ## Conventions
@@ -546,12 +549,12 @@ frame placeholder name (\`prev_frame_image\`).
 
 ## Don't
 
-- Don't author a new ComfyUI workflow JSON inline — register it as a
-  preset in \`src/agent/strategy/presets/\`.
+- Don't author a new ComfyUI workflow JSON inline — a workflow is a file
+  with Basher markers, picked on the node.
 - Don't ship the prompt text as part of the workflow JSON — it's a
-  Prompt node, the user can edit it without re-registering the preset.
+  Prompt node wired to the \`prompt\` input, the user can edit it.
 - Don't request the AI render before the raw passes exist on disk — the
-  preset's compile() reads pass bytes from the job's outputPath. Run
+  frame compiler reads pass bytes from the job's outputPath. Run
   \`runRenderJob\` first OR explain to the user that the order is "raw
   render first, then AI stylize."
 - Don't expose the ComfyUI URL in chat unless the user asks. The

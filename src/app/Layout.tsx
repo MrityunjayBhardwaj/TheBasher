@@ -15,10 +15,14 @@
 // tool buttons route through editorStore.setActiveTool — single writer to
 // gizmoStore.mode (V19 honored).
 //
-// UX-BACKLOG #2 — the grid is now a SINGLE full-bleed column × 3 rows
-// (projectTabs | menu | viewport). The outliner, inspector, agent chat, and
-// timeline are no longer grid bands: they float as absolute rounded islands
-// over the viewport (mounted inside <main>; geometry from ./layoutIslands).
+// UX-BACKLOG #2 — the outliner, inspector and playback bar are not grid bands:
+// they float as absolute rounded islands over the viewport (mounted inside
+// <main>; geometry from ./layoutIslands).
+//
+// #1704 — the agent's chat is a grid column of its own at the right, from under
+// the menu bar to the window's bottom (ChatColumn). The viewport and the bottom
+// drawer end at its left edge; folding it resizes <main>, never remounts the
+// Canvas.
 //
 // P6 W8 C5 — Skip-link (sr-only until focused) added as first focusable
 // element per D-W8-5. Target: <main id="viewport" tabIndex={-1}> wrapping
@@ -32,41 +36,58 @@
 // REF: THESIS.md §11, §17; krama K1; docs/UI-SPEC.md §3.1, §3.2, §3.5,
 // §5.3, §5.4, §8.1 (focus order), §8.2 (keyboard-only).
 
-import type { CSSProperties } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 
 import { AssetDropZone } from './AssetDropZone';
-import { DiffBar } from './DiffBar';
 import { AssetErrorBanner } from './AssetErrorBanner';
 import { FloatingViewportToolbar } from './FloatingViewportToolbar';
-import { AgentDock } from './AgentDock';
+import { ChatColumn } from './ChatColumn';
+import { useChatInspectorFold } from './chatInspectorFold';
+import { useSplitOutlinerFold } from './splitOutlinerFold';
+import { useNodesInspectorFold } from './nodesInspectorFold';
 import { LeftSidebar } from './LeftSidebar';
 import { MenuBar } from './MenuBar';
 import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
+import { ProposalViewportEdge } from './ProposalViewportEdge';
+import { Split3DHeader, SplitCollapsedStrip, SplitDivider } from './SplitChrome';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
-import { GraphView } from './GraphView';
 import { SpreadsheetView } from './SpreadsheetView';
 import { VideoMode } from './video/VideoMode';
 import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useSelectionSummary } from './hooks/useSelectionSummary';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { usePaneFocus } from './stores/agentContextStore';
+import { useChatColumnStore } from './stores/chatColumnStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore } from './stores/editorStore';
+import { useSplitViewStore } from './stores/splitViewStore';
+import { useTwoDViewStore } from './stores/twoDViewStore';
+import { useViewportStore } from './stores/viewportStore';
 import {
-  BOTTOM_BAND,
   CENTER_SURFACE_MAX_WIDTH,
   CENTER_SURFACE_TOP,
-  centerSurfaceWidthCss,
+  centerBandInsets,
+  centerSurfaceBox,
+  chatColumnWidth,
   INSPECTOR_WIDTH,
   ISLAND_GAP,
   OUTLINER_WIDTH,
+  PLAYBACK_BAND,
+  sideIslandBottom,
   sideIslandWidth,
+  splitPaneBoxes,
 } from './layoutIslands';
 
 export function Layout() {
   const space = useEditorStore((s) => s.space);
+  // #1705 — each space's root reports itself as where the director is working (the Where chip).
+  const viewportFocus = usePaneFocus('viewport');
+  const uvFocus = usePaneFocus('uv');
+  const sheetFocus = usePaneFocus('sheet');
+  const videoFocus = usePaneFocus('video');
   const leftSidebarCollapsed = useChromeStore((s) => s.leftSidebarCollapsed);
   const presentMode = useChromeStore((s) => s.presentMode);
   const isPresent = presentMode;
@@ -82,9 +103,9 @@ export function Layout() {
   const viewportSummary = useSelectionSummary();
   // 3-column grid (v0.6 #4 W1 dropped the dedicated toolRail column — the four
   // tools consolidated into the ONE floating pill, Spline region ②; Wave C
-  // dropped the agent `drawer` column — the agent moved to a full-width bottom
-  // dock): tree | viewport | inspector. Present collapses everything but
-  // viewport.
+  // dropped the agent `drawer` column; #1704 brought the chat back as a full-height
+  // column at the far right): tree | viewport | inspector. Present collapses
+  // everything but viewport.
   //
   // Spline redesign Wave B — the scene outliner is ALWAYS-ON (default
   // expanded). When the user folds it the tree column shrinks to a 28px chevron
@@ -105,9 +126,20 @@ export function Layout() {
   // the breakpoint nothing here changes — the desktop side-by-side islands
   // render byte-identically (every branch below guards on isNarrow).
   const isNarrow = useIsNarrowLayout();
+  // #1704 — at ≤ 1440 px opening chat folds the inspector, and unfolding the inspector folds chat.
+  useChatInspectorFold();
+  // #1709 — while the 2D View shows the 3D view beside it, the outliner folds to its rail.
+  useSplitOutlinerFold();
+  // #1953 — the Nodes tab's own panel folds the inspector while it shows (board 8b).
+  useNodesInspectorFold();
   const narrowLeftDrawerOpen = useChromeStore((s) => s.narrowLeftDrawerOpen);
   const narrowRightDrawerOpen = useChromeStore((s) => s.narrowRightDrawerOpen);
-  const toggleNarrowDrawer = useChromeStore((s) => s.toggleNarrowDrawer);
+  const toggleSideDrawer = useChromeStore((s) => s.toggleNarrowDrawer);
+  // #1704 — one overlay at a time on a narrow window: revealing a side panel folds the chat drawer.
+  const toggleNarrowDrawer = (side: 'left' | 'right') => {
+    useChatColumnStore.getState().setVisible(true, false);
+    toggleSideDrawer(side);
+  };
   const closeNarrowDrawers = useChromeStore((s) => s.closeNarrowDrawers);
 
   // ONE source for a side island's box (V46) across both layout modes. Desktop:
@@ -121,6 +153,11 @@ export function Layout() {
   // unmount) so mount-once state survives the space switch, same discipline as
   // the view3d/uv/video slots themselves.
   const chromeHidden = isPresent || space === 'video';
+  // #1703 — an open drawer is a row of its own under the viewport, never an island over it.
+  const drawerOpen = useViewportStore((s) => s.timelineDrawerOpen);
+  // #1704 — the chat column's width: open, the rail, or nothing (narrow overlays; present hides).
+  const chatOpen = useChatColumnStore((s) => s.open);
+  const chatWidth = chatColumnWidth({ isNarrow, isPresent, open: chatOpen });
   const sideIslandStyle = (side: 'left' | 'right', width: number, open: boolean): CSSProperties => {
     const base: CSSProperties = {
       position: 'absolute',
@@ -131,7 +168,10 @@ export function Layout() {
       // Narrow drawers overlay the bottom stack; desktop islands sit beside it.
       zIndex: isNarrow ? 40 : 20,
     };
-    if (!isNarrow) return { ...base, bottom: BOTTOM_BAND };
+    // #1704 — the inspector stops above the orbit gizmo + Persp/Ortho pill; the outliner stops
+    // above the floating playback bar (which owns the bottom band), or runs to the gap when the
+    // drawer is open in its own row.
+    if (!isNarrow) return { ...base, bottom: sideIslandBottom(side, drawerOpen) };
     const offscreen =
       side === 'left'
         ? `translateX(calc(-100% - ${ISLAND_GAP}px))`
@@ -144,12 +184,13 @@ export function Layout() {
     };
   };
 
-  // Centered surfaces (toolbar + bottom stack): the collapse-aware reserve, from
-  // the ONE geometry source (V46) — see centerSurfaceWidthCss. Capped at 960.
-  const centerSurfaceWidth = centerSurfaceWidthCss({
+  // The playback bar: centred in the BOTTOM band (the side islands stop above it; only the
+  // gizmo corner is reserved), from the ONE geometry source (V46) — centerSurfaceBox. Capped at 960.
+  const playbackBox = centerSurfaceBox({
     isNarrow,
     leftCollapsed: leftSidebarCollapsed,
     inspectorCollapsed,
+    band: 'bottom',
     capPx: CENTER_SURFACE_MAX_WIDTH,
   });
 
@@ -159,34 +200,70 @@ export function Layout() {
   // overlap family). It uses the SAME collapse-aware reserve as the other
   // centered surfaces (V46: one geometry source), but no 960px cap — the editor
   // fills the clear band. Starts below the toolbar (CENTER_SURFACE_TOP) and
-  // stops above the bottom agent/timeline stack (BOTTOM_BAND).
-  const twoDViewWidth = centerSurfaceWidthCss({
+  // stops above the floating playback bar (PLAYBACK_BAND), or at the island gap when the drawer is
+  // open in its own row and nothing floats at the bottom (#1704).
+  // #1704 — centred on the clear band between the islands (it spans down beside them: 'top').
+  const twoDViewBox = centerSurfaceBox({
     isNarrow,
     leftCollapsed: leftSidebarCollapsed,
     inspectorCollapsed,
+    band: 'top',
   });
+  const centerSurfaceTopBottom: CSSProperties = {
+    position: 'absolute',
+    top: CENTER_SURFACE_TOP,
+    bottom: drawerOpen ? ISLAND_GAP : PLAYBACK_BAND,
+    zIndex: 15,
+  };
+
+  // #1709 — the one fixed split: the 2D View with the 3D view beside it, across the same clear band
+  // the lone 2D View fills. The 3D side is the ONE existing view3d slot (and its one Canvas),
+  // re-boxed to its half — never a second canvas or renderer. Split is a per-2D-mode choice (UV
+  // opens split, Render result does not); the drawer row and the chat column are outside <main>,
+  // so nothing here can move them.
+  const twoDMode = useTwoDViewStore((s) => s.mode);
+  const splitOn = useSplitViewStore((s) => s.split[twoDMode]);
+  const twoDShare = useSplitViewStore((s) => s.twoDShare);
+  const splitCollapsed = useSplitViewStore((s) => s.collapsed);
+  const splitSwapped = useSplitViewStore((s) => s.swapped);
+  const splitActive = space === 'uv' && splitOn;
+  const splitInsets = centerBandInsets({
+    isNarrow,
+    leftCollapsed: leftSidebarCollapsed,
+    inspectorCollapsed,
+    band: 'top',
+  });
+  const splitBoxes = splitPaneBoxes({
+    insets: splitInsets,
+    twoDShare,
+    collapsed: splitCollapsed,
+    swapped: splitSwapped,
+  });
+  const show3D = space === 'view3d' || (splitActive && !splitCollapsed);
+  const view3dStyle: CSSProperties =
+    splitActive && splitBoxes.view3d
+      ? { ...centerSurfaceTopBottom, display: 'block', ...splitBoxes.view3d }
+      : { display: show3D ? 'block' : 'none', position: 'absolute', inset: 0 };
+
+  // The 3D side is the editor's free camera, never a shot camera: a look-through still on when the
+  // split shows comes back out to the free view.
+  const lookThrough = useViewportStore((s) => s.lookThroughCamera);
+  useEffect(() => {
+    if (splitActive && lookThrough) useViewportStore.getState().setLookThroughCamera(false);
+  }, [splitActive, lookThrough]);
+
   const twoDViewStyle: CSSProperties = {
     // 'block' (not 'flex') — TwoDView is h-full/w-full and owns its own flex
     // column; the wrapper just bounds it. Keeps the p26 display:block contract.
     display: space === 'uv' ? 'block' : 'none',
-    position: 'absolute',
-    top: CENTER_SURFACE_TOP,
-    bottom: BOTTOM_BAND,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    width: twoDViewWidth,
-    zIndex: 15,
-  };
-  // #1675 — the Graph space is the same bounded center surface as the 2D View, so the outliner
-  // and inspector stay beside it: a node clicked in the graph shows its params there.
-  const graphViewStyle: CSSProperties = {
-    ...twoDViewStyle,
-    display: space === 'graph' ? 'block' : 'none',
+    ...centerSurfaceTopBottom,
+    ...(splitActive ? splitBoxes.twoD : twoDViewBox),
   };
   // #1556 — the Spreadsheet takes the same bounded center surface, so the outliner stays beside
-  // it to pick what it shows.
+  // it to pick what it shows (always the lone, centred box — the split is the 2D View's).
   const sheetViewStyle: CSSProperties = {
-    ...twoDViewStyle,
+    ...centerSurfaceTopBottom,
+    ...twoDViewBox,
     display: space === 'sheet' ? 'block' : 'none',
   };
   return (
@@ -194,7 +271,7 @@ export function Layout() {
       data-testid="layout"
       data-present={isPresent ? 'true' : undefined}
       data-space={space}
-      className="grid h-full w-full bg-bg text-fg"
+      className="relative grid h-full w-full bg-bg text-fg"
       style={{
         // UX-BACKLOG #2 — the tree | viewport | inspector three-column grid
         // collapsed to ONE full-bleed column. The outliner + inspector are no
@@ -204,19 +281,26 @@ export function Layout() {
         // #1637 — `minmax(0, …)`: a bare `1fr` is `minmax(auto, 1fr)`, so the column
         // grew to its widest row's content — 38 project tabs made the editor 4,334 px in
         // a 1,512 px window and put the viewport's centre off-screen.
-        gridTemplateColumns: 'minmax(0, 1fr)',
+        // #1704 — a second column holds the chat (ChatColumn), sized here: open, the folded rail,
+        // or 0 (narrow, where the chat overlays; present, where it is hidden).
+        gridTemplateColumns: `minmax(0, 1fr) ${chatWidth}px`,
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu.
-        // UX-BACKLOG #2 slice 2 — the agentdock + timeline rows are GONE: the
-        // agent chat + timeline now float as a stacked bottom-center island over
-        // the full-bleed viewport (mounted inside <main>), so the viewport reads
-        // full-bleed top→bottom. Present collapses every row but the viewport.
-        gridTemplateRows: isPresent ? '0 0 1fr' : '32px auto 1fr',
+        // UX-BACKLOG #2 slice 2 — no agentdock / timeline rows: the closed playback bar floats as a
+        // bottom-center island over the viewport (mounted inside <main>). Present collapses every
+        // row but the viewport.
+        // #1703 — a fourth row holds the open bottom drawer below the viewport: the viewport ends
+        // where the drawer begins, so the drawer never covers the picture. #1704 — it spans the
+        // first column only, ending at the chat column.
+        gridTemplateRows: isPresent ? '0 0 1fr 0' : '32px auto 1fr auto',
+        // #1704 — the chat spans the viewport and drawer rows, so it runs from under the menu bar to
+        // the window's bottom and the drawer ends at its left edge.
         gridTemplateAreas: `
-          "projectTabs"
-          "menu"
-          "viewport"
+          "projectTabs projectTabs"
+          "menu menu"
+          "viewport chat"
+          "drawer chat"
         `,
       }}
     >
@@ -262,14 +346,20 @@ export function Layout() {
             mounts ONCE; never on space switch — same discipline as mode
             switch). Returning to view3d is instant; GPU state preserved. */}
         <div
-          style={{
-            display: space === 'view3d' ? 'block' : 'none',
-            position: 'absolute',
-            inset: 0,
-          }}
+          style={view3dStyle}
           data-testid="view3d-slot"
+          data-split={splitActive ? 'true' : undefined}
+          {...viewportFocus}
+          className={
+            splitActive
+              ? 'overflow-hidden rounded-2xl border border-border shadow-xl shadow-black/40'
+              : undefined
+          }
         >
-          <DiffBar />
+          {splitActive ? <Split3DHeader /> : null}
+          {/* #1706 — a pending proposal is accepted from the chat column (ProposalCard), which every
+              space shows; the 3D slot only marks it, with an amber edge. */}
+          <ProposalViewportEdge />
           <AssetErrorBanner />
           <AssetDropZone>
             <Viewport />
@@ -281,24 +371,25 @@ export function Layout() {
         <div
           style={twoDViewStyle}
           data-testid="uv-slot"
+          {...uvFocus}
           className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
           onContextMenu={(e) => e.stopPropagation()}
         >
           <TwoDView />
         </div>
-        <div
-          style={graphViewStyle}
-          data-testid="graph-slot"
-          className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-          onContextMenu={(e) => e.stopPropagation()}
-        >
-          {/* Mounted only while open: unlike the 3D Canvas there is no GPU state to keep, and a
-              hidden graph would otherwise rebuild itself on every scene change. */}
-          {space === 'graph' && <GraphView />}
-        </div>
+        {splitActive && splitBoxes.divider ? (
+          <SplitDivider
+            insets={splitInsets}
+            style={{ ...centerSurfaceTopBottom, ...splitBoxes.divider }}
+          />
+        ) : null}
+        {splitActive && splitBoxes.strip ? (
+          <SplitCollapsedStrip style={{ ...centerSurfaceTopBottom, ...splitBoxes.strip }} />
+        ) : null}
         <div
           style={sheetViewStyle}
           data-testid="sheet-slot"
+          {...sheetFocus}
           className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
           onContextMenu={(e) => e.stopPropagation()}
         >
@@ -319,6 +410,7 @@ export function Layout() {
             zIndex: 45,
           }}
           data-testid="video-slot"
+          {...videoFocus}
           className="bg-bg"
           onContextMenu={(e) => e.stopPropagation()}
         >
@@ -338,10 +430,11 @@ export function Layout() {
 
         {/* UX-BACKLOG #2 — the outliner (left) + inspector (right) float as
             absolute islands OVER the full-bleed viewport (Spline ③/④). They are
-            TOP-anchored and stop short of the bottom (BOTTOM_BAND) so the
-            bottom-right orbit gizmo + Persp/Ortho pill and the bottom-center
-            agent/timeline stack stay clear — no viewport widget has to dodge
-            them (the H91/V45 floating-overlap trap). The wrappers carry the
+            TOP-anchored; the inspector stops short of the bottom (GIZMO_BAND) so
+            the bottom-right orbit gizmo + Persp/Ortho pill stay clear, and the
+            outliner stops above the floating playback bar (#1704 —
+            sideIslandBottom). No viewport widget
+            has to dodge them (the H91/V45 floating-overlap trap). The wrappers carry the
             FloatingViewportToolbar surface tokens (rounded-2xl border bg-bg-2/95
             shadow-xl backdrop-blur-md — V39 over-stage chrome, contrast-matrix
             covered); the inner panels render transparent so the wrapper surface
@@ -409,27 +502,16 @@ export function Layout() {
           </>
         ) : null}
 
-        {/* UX-BACKLOG #2 slice 2 — the agent chat + timeline float as a
-                STACKED bottom-center island group (the user's chosen layout):
-                agent chat on top, timeline (always-visible Timebar + revealable
-                drawer body that expands upward) below it. Bottom-anchored, so
-                the stack grows UP (agent conversation / opened drawer) without
-                touching the side islands. Width-capped (centerSideReserved, the
-                same collapse-aware reserve as the toolbar — UX #2 follow-up 1:
-                folding a side panel frees the stack to reclaim that width) and
-                centered, so it stays in the clear center band —
-                the bottom-right orbit gizmo + Persp/Ortho pill sit to its right,
-                untouched. Each surface is its own rounded island (same tokens as
-                the side panels); the inner components render their own bg.
-                onContextMenu stops here too (it overlaps <main>). */}
+        {/* UX-BACKLOG #2 slice 2 — the bottom-centre island. #1704 — it holds only playback now:
+            the chat left for its own column (ChatColumn, the `chat` grid area). Bottom-anchored in
+            the bottom band, which the side islands stop above; it reserves the bottom-right orbit
+            gizmo + Persp/Ortho pill's footprint on its right (centerSurfaceBox 'bottom'). onContextMenu stops here (it overlaps <main>). */}
         <div
           onContextMenu={(e) => e.stopPropagation()}
           style={{
             position: 'absolute',
             bottom: ISLAND_GAP,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: centerSurfaceWidth,
+            ...playbackBox,
             // #237 — hidden in VIDEO too (the 3D TimelineDrawer z-20 was COVERED
             // by video-slot z-45, so a click on the covered drawer was
             // intercepted — H122/H129). The compositor has its own LayerTimeline.
@@ -437,24 +519,36 @@ export function Layout() {
           }}
           className="z-20 flex flex-col gap-2"
         >
-          <div
-            data-testid="agentdock-slot"
-            className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-          >
-            <AgentDock />
-          </div>
           {/* The Timebar carries the always-on Auto-Key record indicator
                   (footgun mitigation — must stay visible); only the drawer BODY
                   is revealable. Mounted always (collapsed only in present, which
                   hides the whole stack). */}
-          <div
-            data-testid="timeline-slot"
-            className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
-          >
-            <TimelineDrawer />
-          </div>
+          {/* #1703 — closed, the playback bar floats here; open, the drawer moves to its own
+              full-width row below <main> (the `drawer` grid area). */}
+          {!drawerOpen ? (
+            <div
+              data-testid="timeline-slot"
+              data-docked="false"
+              className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+            >
+              <TimelineDrawer />
+            </div>
+          ) : null}
         </div>
       </main>
+      {drawerOpen ? (
+        <div
+          data-testid="timeline-slot"
+          data-docked="true"
+          onContextMenu={(e) => e.stopPropagation()}
+          style={{ gridArea: 'drawer', display: chromeHidden ? 'none' : 'block' }}
+          className="min-w-0 border-t border-border bg-bg-2"
+        >
+          <TimelineDrawer />
+        </div>
+      ) : null}
+      {/* #1704 — the chat column: every space (3D, 2D, Video), hidden only in present mode. */}
+      <ChatColumn isNarrow={isNarrow} hidden={isPresent} />
     </div>
   );
 }

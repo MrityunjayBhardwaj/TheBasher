@@ -7,6 +7,9 @@
 // Y/Z hold; (C) the per-axis Cycles Add button is re-enabled (PER_AXIS_EXCLUDE now empty).
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface W {
   __basher_dag: {
     getState: () => { dispatchAtomic: (ops: unknown[], s?: string, l?: string) => void };

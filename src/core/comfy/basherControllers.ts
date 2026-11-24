@@ -47,6 +47,10 @@ export interface BasherControllerDecl {
   readonly name: string;
   readonly kind: BasherControllerKind;
   readonly defaultValue: number | string | boolean;
+  /** #1715 — the name of one of the workflow's own `basher_export` outputs this (image)
+   *  controller is fed from, one frame back: the node's optional `feedback_of`. Absent when
+   *  the controller is an ordinary input. Basher's runner fills it; it is never a socket. */
+  readonly feedbackOf?: string;
 }
 
 function str(v: ComfyInputValue | undefined, fallback: string): string {
@@ -113,11 +117,14 @@ export function scanBasherControllers(apiJson: ComfyApiJson): BasherControllerDe
     ).includes(rawKind as BasherControllerKind)
       ? (rawKind as BasherControllerKind)
       : 'float';
+    const feedbackOf =
+      typeof node.inputs.feedback_of === 'string' ? node.inputs.feedback_of.trim() : '';
     out.push({
       nodeId,
       name: str(node.inputs.name, nodeId),
       kind,
       defaultValue: defaultFor(kind, node.inputs.values_json),
+      ...(feedbackOf ? { feedbackOf } : {}),
     });
   }
   out.sort((a, b) => a.nodeId.localeCompare(b.nodeId, undefined, { numeric: true }));

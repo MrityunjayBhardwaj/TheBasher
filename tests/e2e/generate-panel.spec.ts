@@ -30,6 +30,7 @@
 //      the generated clip enters by); ref/architecture/ai-track.md phase A1.
 
 import { test, expect } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface DagWindow {
   __basher_dag?: {
@@ -55,13 +56,17 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => Boolean((window as unknown as DagWindow).__basher_dag));
 
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   const panel = page.getByTestId('generate-panel');
   await expect(panel).toBeVisible();
 
   // The prompt road sits with the file road, not in a home of its own — the
   // placement is the phase's claim, so it is asserted rather than assumed.
-  await expect(page.getByTestId('left-sidebar-import')).toBeVisible();
+  // #1707 — both live in the drawer's Library tab, beside the library itself.
+  const library = page.getByTestId('library-pane');
+  await expect(library.getByTestId('generate-panel')).toBeVisible();
+  await expect(library.getByTestId('library-import')).toBeVisible();
+  await expect(library.getByTestId('library-popover')).toBeVisible();
 
   // Affordance: nothing to submit yet. The schemas in core/motiongen are the
   // enforcement; this is only the button agreeing with them.
@@ -180,7 +185,7 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
 test('the image slot appears exactly where a road exists for it', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('generate-panel')).toBeVisible();
 
   // 🔑 Motion has NO image road in `motiongen`. A slot rendered there would be
@@ -199,7 +204,7 @@ test('an attached image satisfies submit on its own, and takes over from the pro
 }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await page.getByTestId('generate-kind-model').click();
 
   // Empty prompt, nothing attached: refused.
@@ -235,14 +240,22 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => Boolean((window as unknown as DagWindow).__basher_dag));
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
 
   await page.getByTestId('generate-kind-character').click();
   await page.getByTestId('generate-prompt').fill('a stocky dwarf blacksmith');
 
+  // #1720 — the Character road is the Model generate road with a rig: it makes variants and
+  // places the one a director keeps. One variant is enough to see the rigged shape land.
+  await page.getByTestId('generate-variant-count').fill('1');
+
   const before = await page.evaluate(nodeTypes);
   await page.getByTestId('generate-submit').click();
   await expect(page.getByTestId('generate-submit')).toContainText('Generate', { timeout: 60_000 });
+  await page.locator('[data-testid^="model-variant-keep-"]').first().click();
+  await expect(page.locator('[data-testid^="model-variant-"][data-kept]')).toHaveCount(1, {
+    timeout: 30_000,
+  });
   await page.waitForFunction(
     (n) =>
       Object.keys((window as unknown as DagWindow).__basher_dag?.getState().state.nodes ?? {})
@@ -263,6 +276,8 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
   expect(added('Skeleton')).toBe(1);
   expect(added('ArmatureModifier')).toBeGreaterThan(0);
   expect(added('Object')).toBeGreaterThan(0);
+  // And the request is kept on its producer, asking for a rig.
+  expect(added('ModelGenerate')).toBe(1);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
 
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');

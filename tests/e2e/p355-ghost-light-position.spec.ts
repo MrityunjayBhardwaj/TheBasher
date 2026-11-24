@@ -100,7 +100,7 @@ async function proposeLights(page: Page) {
     },
     { keyOps, ctlOps },
   );
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
   await page.waitForTimeout(200);
 }
 

@@ -18,11 +18,18 @@
 // and then, once, CLICK it for real and prove the diff applied. On the pre-fix
 // code the first assertion reads 0/9 (Apply) and 1/9 (Reject).
 //
-// REF: #327; V35 (reveal/affordance reachable), V46 (one geometry source),
+// #1706 — the floating DiffBar is gone: Accept / Reject live in the chat column's change list
+// (ProposalCard), which every space shows. The guarantee this spec exists for is unchanged and is
+// asserted on the new surface: the buttons must be REACHABLE (occlusion-probed, then clicked for
+// real) — with the inspector open or folded, in the narrow layout, and now from the 2D View too,
+// where the old bar (mounted inside the 3D slot) could not be reached at all.
+//
+// REF: #327; #1706; V35 (reveal/affordance reachable), V46 (one geometry source),
 // H91/V45 (the floating-surface overlap family — the toolbar and the 2D View
-// were re-bounded for this same reason; the DiffBar predates the islands).
+// were re-bounded for this same reason; the DiffBar predated the islands).
 
-import { expect, test, type Page } from './_fixtures';
+import type { Page } from '@playwright/test';
+import { expect, test } from './_fixtures';
 import { splitCurveOps } from './_splitCurve';
 
 interface DiffWin {
@@ -59,7 +66,7 @@ async function proposeCurve(page: Page): Promise<void> {
       .getState()
       .propose(w.__basher_dag.getState().state, ops, 'add a curve', ['agent:mesh.add']);
   }, ops);
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
 }
 
 /**
@@ -89,7 +96,7 @@ async function reachableSamples(page: Page, testId: string): Promise<number> {
   );
 }
 
-test.describe('#327 — the DiffBar is reachable, not just visible', () => {
+test.describe("#327 — the proposal's Accept / Reject are reachable, not just visible", () => {
   test('Apply and Reject are unoccluded at the default width with the Inspector open', async ({
     page,
   }) => {
@@ -99,8 +106,10 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
     await page.goto('/');
     await proposeCurve(page);
 
-    expect(await reachableSamples(page, 'diffbar-apply'), 'Apply — occluded sample points').toBe(9);
-    expect(await reachableSamples(page, 'diffbar-reject'), 'Reject — occluded sample points').toBe(
+    expect(await reachableSamples(page, 'proposal-accept'), 'Apply — occluded sample points').toBe(
+      9,
+    );
+    expect(await reachableSamples(page, 'proposal-reject'), 'Reject — occluded sample points').toBe(
       9,
     );
   });
@@ -113,9 +122,9 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
     // No force, no dispatch — the click a director makes. If anything covers the
     // button, Playwright's actionability check fails here rather than silently
     // clicking through to the inspector.
-    await page.getByTestId('diffbar-apply').click();
+    await page.getByTestId('proposal-accept').click();
 
-    await expect(page.getByTestId('diffbar')).toBeHidden();
+    await expect(page.getByTestId('proposal-card')).toBeHidden();
     const landed = await page.evaluate(
       () => (window as unknown as DiffWin).__basher_dag.getState().state.nodes['p327_curve']?.type,
     );
@@ -135,31 +144,47 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
     });
     await proposeCurve(page);
 
-    // Folding the panel WIDENS the bar (it reclaims that band). Widening must
-    // not push the actions back under the 28px chevron strip.
-    expect(await reachableSamples(page, 'diffbar-apply')).toBe(9);
-    expect(await reachableSamples(page, 'diffbar-reject')).toBe(9);
+    // Folding the inspector changes the centre band; the chat column (and the actions in it) must
+    // not depend on it.
+    expect(await reachableSamples(page, 'proposal-accept')).toBe(9);
+    expect(await reachableSamples(page, 'proposal-reject')).toBe(9);
   });
 
-  test('reachable in the NARROW layout too (the other branch of the reserve)', async ({ page }) => {
-    // Below the breakpoint the side panels become off-canvas drawers that
-    // OVERLAY rather than reserve, so the bar takes the full width minus the
-    // edge gaps — a different branch of centerSurfaceWidthCss, and one nothing
-    // else would have exercised.
-    //
-    // (An OPEN drawer sits at zIndex 40, above this bar. That is not this bug
-    // returning: an open drawer is modal — it sits behind a dismissing scrim,
-    // so nothing underneath it is clickable BY DESIGN, and drawers are closed
-    // by default. The reachable state is the default state.)
+  test('reachable in the NARROW layout too (the chat is an overlay drawer there)', async ({
+    page,
+  }) => {
+    // Below the breakpoint the chat is an off-canvas drawer, closed by default. A proposal that
+    // arrives opens it (#1706: a proposal is never invisible), and the actions in it must be on top.
     await page.setViewportSize({ width: 900, height: 900 });
     await page.goto('/');
     await proposeCurve(page);
 
-    expect(await reachableSamples(page, 'diffbar-apply')).toBe(9);
-    expect(await reachableSamples(page, 'diffbar-reject')).toBe(9);
+    expect(await reachableSamples(page, 'proposal-accept')).toBe(9);
+    expect(await reachableSamples(page, 'proposal-reject')).toBe(9);
   });
 
-  test('the bar does not shove the viewport canvas when a diff arrives', async ({ page }) => {
+  test('reachable from the 2D View, where the old bar was hidden with the 3D slot (#1706)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1680, height: 1000 });
+    await page.goto('/');
+    await proposeCurve(page);
+    await page.getByTestId('space-switch-uv').click();
+    // #1709 — the UV mode opens with the 3D view beside it; the case here is the 2D View alone.
+    await page.getByTestId('twodview-split-toggle').click();
+    await expect(page.getByTestId('view3d-slot')).toBeHidden();
+
+    expect(await reachableSamples(page, 'proposal-accept')).toBe(9);
+    expect(await reachableSamples(page, 'proposal-reject')).toBe(9);
+    await page.getByTestId('proposal-accept').click();
+    await expect(page.getByTestId('proposal-card')).toBeHidden();
+    const landed = await page.evaluate(
+      () => (window as unknown as DiffWin).__basher_dag.getState().state.nodes['p327_curve']?.type,
+    );
+    expect(landed).toBe('Object');
+  });
+
+  test('a proposal does not shove the viewport canvas when it arrives', async ({ page }) => {
     // It used to sit in the NORMAL FLOW of the view3d slot, so proposing a diff
     // pushed the canvas down by the bar's height — the ghost preview jumped at
     // the exact moment the director was asked to judge it.
@@ -177,8 +202,8 @@ test.describe('#327 — the DiffBar is reachable, not just visible', () => {
     await proposeCurve(page);
     const after = await canvas.boundingBox();
 
-    expect(after!.y, 'canvas top must not move when the DiffBar appears').toBeCloseTo(before!.y, 0);
-    expect(after!.height, 'canvas must not be squeezed by the DiffBar').toBeCloseTo(
+    expect(after!.y, 'canvas top must not move when a proposal appears').toBeCloseTo(before!.y, 0);
+    expect(after!.height, 'canvas must not be squeezed by a proposal').toBeCloseTo(
       before!.height,
       0,
     );

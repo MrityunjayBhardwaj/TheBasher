@@ -10,6 +10,9 @@
 import { expect, test } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 test('a saved project that fails to read on resume is shown as an error and left untouched', async ({
   page,
 }) => {

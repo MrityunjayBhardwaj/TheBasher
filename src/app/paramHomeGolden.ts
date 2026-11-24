@@ -172,7 +172,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   ColorCorrect:
     '[effect] brightness=(unrouted) contrast=(unrouted) saturation=(unrouted) muted=(unrouted)',
   ComfyUIWorkflow:
-    '[render] presetId=render graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
+    '[render] graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) madeFrom=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
   Composition:
     '[layout] name=layout width=(unrouted) height=(unrouted) fps=(unrouted) durationFrames=(unrouted) background=(unrouted)',
   CurveData: '[curve] points=curve closed=curve resolution=curve',
@@ -211,8 +211,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   KeyframeChannelVec3:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) sourceClipId=(unrouted) sourceHash=(unrouted) keyframes=channel',
   Lag: '[] factor=(unrouted) seedFrame=(unrouted) sourceTransform=(unrouted)',
+  // #1879 — `enabled` became `muted` (the stack mute); routed the same way, nowhere.
   Layer:
-    '[layout,animate] name=layout enabled=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
+    '[layout,animate] name=layout muted=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
   LightData:
     '[light] lightKind=light intensity=light color=light distance=light decay=light angle=light penumbra=light width=light height=light tex=light',
   LightProfileSelect: '[layout] selectedProfile=(unrouted)',
@@ -246,6 +247,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // APPENDED at #902 — text-to-motion as a node. Unrouted like its neighbours
   // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
   // draws these yet, and a home would claim a section renders them when none does.
+  // #1720 — text/image-to-3D as a node. Unrouted like MotionGenerate's row and for its reason: no
+  // inspector card draws them; the Library's Generate form mints them and its details show them.
+  ModelGenerate:
+    '[] prompt=(unrouted) references=(unrouted) seed=(unrouted) provider=(unrouted) rig=(unrouted) count=(unrouted) negativePrompt=(unrouted) faceLimit=(unrouted) quad=(unrouted) texture=(unrouted) pbr=(unrouted) variants=(unrouted)',
   MotionGenerate:
     // #1124 — `name` retired: the clip owns a generated motion's name.
     '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) pathScale=(unrouted)',
@@ -493,4 +498,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1826 adds BodyInputRotation and BodyInputTransform, two cells each (`input`, `slot`),
 // unrouted like BodyInputVec's:
 //   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
-export const GOLDEN_TOTALS = { types: 103, routed: 147, unrouted: 271 } as const;
+// #1720 adds `ModelGenerate`, its twelve params unrouted (the Library's Generate form mints them):
+//   types 103 + 1 = 104 · routed 147 · unrouted 271 + 12 = 283
+// #1715 removes ComfyUIWorkflow's `presetId` (routed to render): the node runs its workflow file.
+//   types 104 · routed 147 - 1 = 146 · unrouted 283
+// #1718 adds ComfyUIWorkflow's `madeFrom`, unrouted like `lastGoodFrame` (the run road writes it):
+//   types 104 · routed 146 · unrouted 283 + 1 = 284
+export const GOLDEN_TOTALS = { types: 104, routed: 146, unrouted: 284 } as const;

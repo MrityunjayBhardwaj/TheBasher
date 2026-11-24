@@ -22,6 +22,7 @@
 // store write, not a DAG dispatch).
 
 import { expect, settleViewFit, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface BasherWindow {
   __basher_viewport?: {
@@ -45,13 +46,14 @@ test('c-1: zoom readout shows the default-framing percentage (a live value, not 
   // 100%. Assert it renders a real integer percentage (the c-1 finding: the readout
   // is wired to the store, not the v0.5 dead "100%" placeholder). The exact fit %
   // varies by viewport (CI vs local), so match the shape, not a literal.
-  await expect(page.getByTestId('top-toolbar-zoom-value')).toHaveText(/^\d+%$/);
+  await expect(await toolbarControl(page, 'top-toolbar-zoom-value')).toHaveText(/^\d+%$/);
 });
 
 test('c-1: zoom readout reflects a camera-zoom change (observed, not inferred)', async ({
   page,
 }) => {
-  const value = page.getByTestId('top-toolbar-zoom-value');
+  // #1935 — the zoom readout lives behind ⋯; the menu stays open while nothing is clicked.
+  const value = await toolbarControl(page, 'top-toolbar-zoom-value');
   // The boot bounds-fit moves the camera until the scene holds still for 45 frames,
   // and every move lands in `cameraZoom` through the same onChange this spec imitates.
   // Driven before it settles, the readout has two writers: measured, the fit can land
@@ -74,7 +76,7 @@ test('c-1: zoom readout reflects a camera-zoom change (observed, not inferred)',
 
   // OBSERVE the DOM text actually update — the binding under test.
   await expect(value).toHaveText('200%');
-  await expect(page.getByTestId('top-toolbar-zoom')).toHaveAttribute(
+  await expect(await toolbarControl(page, 'top-toolbar-zoom')).toHaveAttribute(
     'aria-label',
     'Viewport zoom 200 percent',
   );

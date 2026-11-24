@@ -110,6 +110,95 @@ export type GenerateRiggedCharacterResult =
   | { readonly outcome: 'failed'; readonly reason: string };
 
 /**
+ * #1720 — the rigged road's BYTES, without the import: generate, check, rig.
+ *
+ * Split out of `generateRiggedCharacter` so the Model generate road (`generateModel.ts`) can run
+ * a rigged variant and hold its bytes until a director keeps one, while this file keeps the one
+ * account of what running the rigged road means. `generateRiggedCharacter` is this plus the
+ * import.
+ *
+ * Throws on any failure before a mesh exists. A refused rig does NOT throw: the mesh was
+ * generated and billed, so it comes back as `unrigged` with a `collectGlb` that fetches the
+ * output of the task already run (never a second one, #835) — lazily, so a caller that only
+ * wants the refusal pays for no download.
+ */
+export type RiggedGeneration =
+  | {
+      readonly outcome: 'rigged';
+      readonly glb: ArrayBuffer;
+      readonly taskId: string;
+      readonly arrivedSpec: ReturnType<typeof classifyRigSpec>;
+    }
+  | {
+      readonly outcome: 'unrigged';
+      readonly taskId: string;
+      readonly reason: string;
+      readonly collectGlb: () => Promise<ArrayBuffer>;
+    };
+
+export async function runRiggedGeneration(
+  request: ModelGenerationRequest,
+  options: Omit<GenerateRiggedCharacterOptions, 'name'> = {},
+): Promise<RiggedGeneration> {
+  const report = (p: RiggedCharacterProgress): void => options.onProgress?.(p);
+  const [generation, rigging] = await Promise.all([getModelCapability(), getRiggingCapability()]);
+  const { modelGenVersion } = useSettingsStore.getState();
+
+  report({ phase: 'generating', percent: 0 });
+  // 🔑 THE MESH IS NOT FETCHED HERE, AND MUST NOT BE. Rigging runs service-side
+  // against the task id — `checkRiggable` and `rig` both take `sourceTaskId` —
+  // so this road never had a use for the bytes. Taking the wide result and
+  // binding only `taskId` downloaded a mesh (measured: 7,465,804 bytes) and
+  // discarded it, and that discarded download is the step that made rigged
+  // generation unreachable from a browser at all (#832, #833).
+  const task = await generation.generateTaskOnly(
+    { ...request, modelVersion: request.modelVersion ?? modelGenVersion },
+    (p) => report({ phase: 'generating', percent: p.progress }),
+  );
+
+  // Before the second charge, not after it.
+  report({ phase: 'checking', percent: 0 });
+  const { taskId } = task;
+  const check = await rigging.checkRiggable({ sourceTaskId: taskId });
+  if (!check.riggable) {
+    // 🔑 `detectedRigType: null` means the service did not answer, which is not
+    // the same as "no recognisable body" — so the message says which of the two
+    // happened rather than inventing a body plan it was never told.
+    const detected =
+      check.detectedRigType === null
+        ? 'it did not say what body plan it saw'
+        : `it saw a "${check.detectedRigType}"`;
+    const reason =
+      `the service will not rig this mesh — ${detected}. ` +
+      'Try a prompt that describes a single full-body character.';
+    // 🔑 THE MESH IS COLLECTED BY THE CALLER, ON THIS BRANCH ONLY (#835). This
+    // is not a reversal of #833: that removed a download whose bytes were NEVER
+    // used; these are wanted, and `collectGlb` fetches the output of the task
+    // already run — never a second one, which would bill twice.
+    return { outcome: 'unrigged', taskId, reason, collectGlb: () => task.collectGlb() };
+  }
+
+  report({ phase: 'rigging', percent: 0 });
+  const rigged = await rigging.rig(
+    {
+      sourceTaskId: taskId,
+      spec: options.spec ?? DEFAULT_RIG_SPEC,
+      ...(options.rigType ? { rigType: options.rigType } : {}),
+    },
+    (p) => report({ phase: 'rigging', percent: p.progress }),
+  );
+  return {
+    outcome: 'rigged',
+    glb: rigged.glb,
+    taskId,
+    // Read off the bytes that arrived. `requestedSpec` is what we ASKED for,
+    // and a result reporting the skeleton it asked for is a label that can be
+    // wrong while every test reading it passes.
+    arrivedSpec: classifyRigSpec(boneNamesOf(rigged.glb)),
+  };
+}
+
+/**
  * Generate a mesh, rig it, and put the rigged result in the scene.
  *
  * The request is the same union text-to-3D takes, so an image reference works
@@ -123,49 +212,9 @@ export async function generateRiggedCharacter(
   const subject = options.name ?? describeRequest(request);
   const report = (p: RiggedCharacterProgress): void => options.onProgress?.(p);
   try {
-    const [generation, rigging] = await Promise.all([getModelCapability(), getRiggingCapability()]);
-    const { modelGenVersion } = useSettingsStore.getState();
-
-    report({ phase: 'generating', percent: 0 });
-    // 🔑 THE MESH IS NOT FETCHED HERE, AND MUST NOT BE. Rigging runs service-side
-    // against the task id — `checkRiggable` and `rig` both take `sourceTaskId` —
-    // so this road never had a use for the bytes. Taking the wide result and
-    // binding only `taskId` downloaded a mesh (measured: 7,465,804 bytes) and
-    // discarded it, and that discarded download is the step that made rigged
-    // generation unreachable from a browser at all (#832, #833).
-    const task = await generation.generateTaskOnly(
-      { ...request, modelVersion: request.modelVersion ?? modelGenVersion },
-      (p) => report({ phase: 'generating', percent: p.progress }),
-    );
-
-    // Before the second charge, not after it.
-    report({ phase: 'checking', percent: 0 });
-    const { taskId } = task;
-    const check = await rigging.checkRiggable({ sourceTaskId: taskId });
-    if (!check.riggable) {
-      // 🔑 `detectedRigType: null` means the service did not answer, which is not
-      // the same as "no recognisable body" — so the message says which of the two
-      // happened rather than inventing a body plan it was never told.
-      const detected =
-        check.detectedRigType === null
-          ? 'it did not say what body plan it saw'
-          : `it saw a "${check.detectedRigType}"`;
-      const reason =
-        `the service will not rig this mesh — ${detected}. ` +
-        'Try a prompt that describes a single full-body character.';
-
-      // 🔑 THE MESH IS COLLECTED HERE AND NOWHERE ELSE (#835). By this line a
-      // generation task has run and been BILLED, and a real mesh exists on the
-      // service — it is simply not riggable. Throwing left the director with a
-      // sentence and no way to see what they paid for except by hunting the task
-      // down outside Basher, which is the worst moment to discard a result.
-      //
-      // This is not a reversal of #833. That removed a download whose bytes were
-      // NEVER used; these bytes are wanted, on this branch only, which is the
-      // download-when-it-has-a-use that #833 asked for. `collectGlb` fetches the
-      // output of the task already run — never a second one, which would bill
-      // twice and be a worse bug than the one being fixed.
-      //
+    const run = await runRiggedGeneration(request, options);
+    if (run.outcome === 'unrigged') {
+      const { reason, taskId } = run;
       // 🔴 THE SALVAGE GETS ITS OWN CATCH (#963). Letting it fall to the outer
       // one reported the salvage's error and DISCARDED the refusal, which is the
       // useful half: "it saw an `others`, try a single full-body character" tells
@@ -175,7 +224,7 @@ export async function generateRiggedCharacter(
       let unriggedPath: string;
       try {
         report({ phase: 'importing', percent: 0 });
-        const glb = await task.collectGlb();
+        const glb = await run.collectGlb();
         unriggedPath = await ingestSingleFile(
           { relativePath: 'model.glb', bytes: new Uint8Array(glb) },
           subject,
@@ -204,33 +253,15 @@ export async function generateRiggedCharacter(
       return { outcome: 'unrigged', opfsPath: unriggedPath, taskId, reason };
     }
 
-    report({ phase: 'rigging', percent: 0 });
-    const rigged = await rigging.rig(
-      {
-        sourceTaskId: taskId,
-        spec: options.spec ?? DEFAULT_RIG_SPEC,
-        ...(options.rigType ? { rigType: options.rigType } : {}),
-      },
-      (p) => report({ phase: 'rigging', percent: p.progress }),
-    );
-
     report({ phase: 'importing', percent: 0 });
     const opfsPath = await ingestSingleFile(
-      { relativePath: 'character.glb', bytes: new Uint8Array(rigged.glb) },
+      { relativePath: 'character.glb', bytes: new Uint8Array(run.glb) },
       subject,
     );
     await importGltfFromOpfs(opfsPath);
     report({ phase: 'importing', percent: 100 });
 
-    return {
-      outcome: 'rigged',
-      opfsPath,
-      taskId,
-      // Read off the bytes that arrived. `requestedSpec` is what we ASKED for,
-      // and a result reporting the skeleton it asked for is a label that can be
-      // wrong while every test reading it passes.
-      arrivedSpec: classifyRigSpec(boneNamesOf(rigged.glb)),
-    };
+    return { outcome: 'rigged', opfsPath, taskId: run.taskId, arrivedSpec: run.arrivedSpec };
   } catch (err) {
     const reason = formatAssetError(err);
     useAssetErrorStore.getState().report(subject, `rigged generation failed: ${reason}`);

@@ -22,6 +22,7 @@
 // REF: issue #1815 and its mockup; src/core/dag/registry.ts (`mainInputOfType`);
 //      src/core/dag/chainEdit.ts (`readBlend`); ref GROUND_TRUTH_STACK_VIEWS.
 
+import { outputsOfNode } from '../core/dag/instanceSockets';
 import type { z } from 'zod';
 import { readBlend, type StepBlend } from '../core/dag/chainEdit';
 import { getNodeType, mainInputOfType } from '../core/dag/registry';
@@ -141,7 +142,9 @@ function activeRoute(state: DagState, node: Node, refs: readonly NodeRef[]): num
 }
 
 function wireTypeOf(state: DagState, ref: NodeRef): string {
-  const type = getNodeType(state.nodes[ref.node]?.type ?? '')?.outputs?.[ref.socket]?.type;
+  const producer = state.nodes[ref.node];
+  const def = getNodeType(producer?.type ?? '');
+  const type = def ? outputsOfNode(def, producer?.params)[ref.socket]?.type : undefined;
   return Array.isArray(type) ? type.join(' | ') : String(type ?? 'unknown');
 }
 

@@ -10,6 +10,10 @@
 // (`lightAimOps`): the stack has no row, or the aim object is not an empty, and it goes red.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 type V3 = [number, number, number];
 interface W {
@@ -140,7 +144,7 @@ test('a new spot comes aimed at an empty at the origin, and its aim object can b
     (id) => (window as unknown as W).__basher_selection.getState().select(id),
     objId!,
   );
-  await page.getByTestId('inspector-section-toggle-constraint').click();
+  await openInspectorSection(page, 'constraint');
   const row = page.getByTestId(`constraint-row-${ttId}`);
   await expect(row).toBeVisible();
   await row.locator('button').first().click();

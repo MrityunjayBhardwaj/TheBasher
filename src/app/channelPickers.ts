@@ -38,6 +38,7 @@
 // REF: src/app/animatableParams.ts; src/core/comfy/comfySchedule.ts; src/app/paramDrivers.ts
 //      (`driverChannelValuesForTarget`, the road order); issues #1066, #1065, #1235, #1258.
 
+import { outputsOfNode } from '../core/dag/instanceSockets';
 import type { DagState } from '../core/dag/state';
 import type { ComfyApiJson, ComfyGraphMeta } from '../core/comfy/comfyGraph';
 import { comfyScheduledPaths } from '../core/comfy/comfySchedule';
@@ -91,7 +92,10 @@ export function driverKindsOf(state: DagState, driverId: string): PickedChannelK
   if (p.sourceTransform || p.sourceSpare) return ['number'];
   const ref = singleRef(node, 'in');
   const producer = ref ? state.nodes[ref.node] : undefined;
-  const type = producer ? getNodeType(producer.type)?.outputs[ref!.socket]?.type : undefined;
+  const producerDef = producer ? getNodeType(producer.type) : undefined;
+  const type = producerDef
+    ? outputsOfNode(producerDef, producer!.params)[ref!.socket]?.type
+    : undefined;
   if (type === 'Number') return ['number'];
   if (type === 'Vector3') return ['vec3'];
   return ['number', 'vec3'];

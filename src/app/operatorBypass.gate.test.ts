@@ -165,7 +165,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 90 -> 98 at #1784 (the eight Transform nodes), NOT operators.
     // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), NOT operators.
     // 100 -> 101 -> 102 at #1811 (PolarSplit, OwnWorld). 102 -> 103 at #1811 (Value).
-    expect(listNodeTypes()).toHaveLength(103);
+    // 103 -> 104 at #1720 (ModelGenerate, no operator).
+    expect(listNodeTypes()).toHaveLength(104);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {
@@ -183,6 +184,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       // #1027 — the sixth geometry modifier, joining the same way the fourth and fifth did:
       // by declaring the field, never by being added here.
       ['src/nodes/ComponentGroupOp.ts', 1],
+      // #1879 — a composition's layer: hiding it is the stack mute, so it names `muted` because
+      // its own `chain.bypass` names it (it was `enabled`, true = shown, before).
+      ['src/nodes/Layer.ts', 1],
       ['src/nodes/MaskModifier.ts', 1],
       ['src/nodes/MaterialOverrideOp.ts', 1],
       ['src/nodes/MirrorModifier.ts', 1],
@@ -207,6 +211,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
+      'Layer', // #1879
       'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -227,6 +232,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
+      'Layer', // #1879
       'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -273,7 +279,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 23 -> 24 at #393, the same mechanism a third time: `ArmatureModifier` names `muted`.
     // 24 -> 25 at #1240, on the `mute` side: `PoseLayer` is an animation layer, not an operator.
     // 25 -> 26 at #1353, on the `muted` side: `CaptureModifier` names the param its bypass names.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(26);
+    // 26 -> 27 at #1879, on the `muted` side: `Layer` names the param its bypass names.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(27);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -331,6 +338,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
+      'Layer', // #1879
       'MaskModifier',
       'MaterialOverride',
       'MaterialOverrideOp',

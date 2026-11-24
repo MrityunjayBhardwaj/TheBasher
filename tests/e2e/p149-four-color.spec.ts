@@ -7,6 +7,9 @@
 import { expect, test } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface BasherWindow {
   __basher_dag?: {
     getState: () => {

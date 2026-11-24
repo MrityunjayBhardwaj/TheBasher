@@ -20,19 +20,19 @@ describe('buildDagExportPayload (#428)', () => {
     expect(payload.formatVersion).not.toBe(1);
   });
 
-  it('stamps v30 after stale lens fields were stripped, and the stamp needs no migration on re-import (#1856)', () => {
-    // Pins the v29→v30 bump landmark (#1856; v29 was #1812's): an accidental revert of PROJECT_FORMAT_VERSION
+  it('stamps v32 after layer lists became chains, and the stamp needs no migration on re-import (#1879)', () => {
+    // Pins the v31→v32 bump landmark (#1879; v31 was #1715's): an accidental revert of PROJECT_FORMAT_VERSION
     // goes red here even though the constant-tracking test above would still pass.
     // The literal moves with every format bump BY DESIGN — that is what makes it a
     // landmark rather than a restatement of the constant-tracking test above.
-    expect(PROJECT_FORMAT_VERSION).toBe(30);
+    expect(PROJECT_FORMAT_VERSION).toBe(32);
     const payload = buildDagExportPayload({ id: 'p1', name: 'Proj' }, emptyDagState(), 0);
-    expect(payload.formatVersion).toBe(30);
+    expect(payload.formatVersion).toBe(32);
     // Round-trip: re-importing a freshly exported file must NOT replay the migration
     // ladder — the stamp is already current, so migrateProjectFormat is a clean no-op
     // (this is the whole point of #428: a stale stamp would re-run every migration).
     const reimported = migrateProjectFormat(JSON.parse(JSON.stringify(payload)));
-    expect((reimported as { formatVersion: number }).formatVersion).toBe(30);
+    expect((reimported as { formatVersion: number }).formatVersion).toBe(32);
   });
 
   it('carries the project identity, the DAG snapshot, and the timestamp through unchanged', () => {

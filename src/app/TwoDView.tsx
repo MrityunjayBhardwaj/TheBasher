@@ -1,24 +1,31 @@
 // TwoDView — the unified 2D View that fills the center pane when the editor
 // space is '2d' (Blender's Image Editor: one 2D area, a header selector picks
-// what it shows). Hosts two modes as tabs:
+// what it shows). Hosts three modes as tabs:
 //
 //   - UV            → the UV layout + texture backdrop (UVEditor).
 //   - Render Result → the most-recent still render / AI edit (RenderResultView).
+//   - Generated     → a reference still for a shot's first frame (GeneratedView, #1718).
 //
 // Both panes stay MOUNTED; the inactive one is display:none so each pane's
 // canvas + store subscriptions survive a mode switch (same discipline as the
 // 3D↔2D space toggle and the TimelineDrawer dock). Active mode lives in
 // twoDViewStore (persisted).
 //
-// File-rooted V8: src/app/. Read-only surface — never touches the DAG.
+// File-rooted V8: src/app/. The UV and Render Result panes never touch the DAG; the Generated
+// pane edits it only through its actions (generatedStillActions).
 
 import { UVEditor } from './UVEditor';
+import { GeneratedView } from './GeneratedView';
 import { RenderResultView } from './RenderResultView';
+import { useSplitViewStore } from './stores/splitViewStore';
 import { type TwoDViewMode, useTwoDViewStore } from './stores/twoDViewStore';
 
 export function TwoDView() {
   const mode = useTwoDViewStore((s) => s.mode);
   const setMode = useTwoDViewStore((s) => s.setMode);
+  // #1709 — whether this mode shows the 3D view beside it (per mode: UV opens split, Render not).
+  const split = useSplitViewStore((s) => s.split[mode]);
+  const setSplit = useSplitViewStore((s) => s.setSplit);
 
   return (
     <div data-testid="twodview" className="flex h-full w-full flex-col bg-bg">
@@ -35,6 +42,26 @@ export function TwoDView() {
           active={mode === 'render'}
           onClick={() => setMode('render')}
         />
+        <TabButton
+          id="generated"
+          label="Generated"
+          active={mode === 'generated'}
+          onClick={() => setMode('generated')}
+        />
+        <button
+          type="button"
+          data-testid="twodview-split-toggle"
+          aria-pressed={split}
+          title={
+            split ? 'Hide the 3D view beside the 2D View' : 'Show the 3D view beside the 2D View'
+          }
+          onClick={() => setSplit(mode, !split)}
+          className={`ml-auto flex items-center whitespace-nowrap border-l border-border px-3 py-1.5 font-mono uppercase tracking-wide focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+            split ? 'text-accent' : 'text-fg/50 hover:text-fg/80'
+          }`}
+        >
+          3D beside
+        </button>
       </div>
       <div className="relative flex-1" style={{ minHeight: 0 }}>
         <div
@@ -52,6 +79,14 @@ export function TwoDView() {
           style={{ display: mode === 'render' ? 'block' : 'none' }}
         >
           <RenderResultView />
+        </div>
+        <div
+          data-testid="twodview-generated-pane"
+          data-active={mode === 'generated'}
+          className="absolute inset-0"
+          style={{ display: mode === 'generated' ? 'block' : 'none' }}
+        >
+          <GeneratedView />
         </div>
       </div>
     </div>

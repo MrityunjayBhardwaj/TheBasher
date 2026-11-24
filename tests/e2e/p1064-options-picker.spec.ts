@@ -8,6 +8,11 @@
 
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
+import { openInspector, openLightStudio } from './_rightPanel';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface W {
   __basher_dag: {
@@ -78,7 +83,7 @@ test('the profile picker offers the wired rigs, switches the live one, and shows
   if ((await drawer.getAttribute('data-open')) !== 'true') {
     await page.getByTestId('timeline-drawer-toggle').click();
   }
-  await page.getByTestId('timeline-tab-lightStudio').click();
+  await openLightStudio(page);
   await expect(page.getByTestId('light-studio-panel')).toBeVisible();
   await page.getByTestId('light-studio-profile-add').click();
   await page.getByTestId('light-studio-profile-add').click();
@@ -99,6 +104,8 @@ test('the profile picker offers the wired rigs, switches the live one, and shows
     (id) => (window as unknown as W).__basher_selection.getState().select(id),
     wired.selId,
   );
+  // #1703 — the studio and the inspector are two tabs of the right panel: back to the inspector.
+  await openInspector(page);
   const testid = `inspector-options-${wired.selId}-selectedProfile`;
   const picker = page.getByTestId(testid);
   await expect(picker).toBeVisible();
@@ -121,9 +128,12 @@ test('the profile picker offers the wired rigs, switches the live one, and shows
   // own switcher, a different reader of the same param.
   await picker.selectOption(first.name);
   await expect.poll(() => paramOf(page, wired.selId, 'selectedProfile')).toBe(first.name);
+  // #1703 — the studio is the right panel's other tab, so the second reader is visited in turn.
+  await openLightStudio(page);
   await expect
     .poll(() => shown(page, 'light-studio-profile-select').then((s) => s.value))
     .toBe(first.name);
+  await openInspector(page);
 
   // Rename the live rig. The stored name now selects nothing, and the picker must say so —
   // not show "— no profile —" or the other rig in its place.
@@ -145,7 +155,7 @@ test('the node-reference picker shows a dangling target as not found, and an inv
 }) => {
   await boot(page);
   await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select('n_box'));
-  await page.getByTestId('inspector-section-toggle-constraint').click();
+  await openInspectorSection(page, 'constraint');
   const stack = page.getByTestId('constraint-stack');
   await expect(stack).toBeVisible();
   await page.getByTestId('constraint-add-TrackTo').click();

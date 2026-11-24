@@ -14,7 +14,11 @@
 import type { Page } from '@playwright/test';
 import * as THREE from 'three';
 import { test, expect, settleViewFit } from './_fixtures';
+import { openLightStudio } from './_rightPanel';
 import { splitLightOps } from './_splitLight';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface Node {
   type: string;
@@ -164,7 +168,7 @@ async function addRigLight(page: Page) {
 async function setBrush(page: Page, on: boolean) {
   if ((await page.getByTestId('timeline-drawer').getAttribute('data-open')) !== 'true')
     await page.getByTestId('timeline-drawer-toggle').click();
-  await page.getByTestId('timeline-tab-lightStudio').click();
+  await openLightStudio(page);
   const toggle = page.getByTestId('light-studio-brush-toggle');
   if ((await toggle.getAttribute('aria-pressed')) !== String(on)) await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', String(on));

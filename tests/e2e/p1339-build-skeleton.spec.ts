@@ -10,6 +10,10 @@
 import type { Page } from '@playwright/test';
 import * as THREE from 'three';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface Bone {
   name: string;
@@ -101,6 +105,20 @@ async function clickBone(page: Page, name: string) {
     Math.abs(ndc.x) < 1 && Math.abs(ndc.y) < 1,
     `"${name}" is off the canvas at (${cx.toFixed(0)}, ${cy.toFixed(0)}): something moved the camera`,
   ).toBe(true);
+  // #1708 — editor chrome (the live shot preview, the toolbars) floats over the viewport. A click
+  // that lands on it picks nothing and reads as "the bone was not picked": say what covers it.
+  const covered = await page.evaluate(
+    ([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      if (!el || el.tagName === 'CANVAS') return null;
+      return el.closest('[data-testid]')?.getAttribute('data-testid') ?? el.tagName;
+    },
+    [cx, cy] as const,
+  );
+  expect(
+    covered,
+    `"${name}" at (${cx.toFixed(0)}, ${cy.toFixed(0)}) is under ${covered}`,
+  ).toBeNull();
   await page.mouse.click(cx, cy);
   await expect.poll(() => picked(page)).toBe(name);
 }
@@ -110,6 +128,12 @@ test('#1339 — a skeleton built by hand in Edit mode, and every step undone exa
 }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
+  // #1708 — the live shot preview floats over the bottom of the viewport, and at this framing its
+  // panel covers the first bone's middle. Collapsed to its caption, as acceptance #7 does, so the
+  // clicks reach the canvas.
+  await page.addInitScript(() =>
+    localStorage.setItem('basher.livePreview.v1', JSON.stringify({ collapsed: true })),
+  );
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
   await page.waitForFunction(() =>
@@ -136,7 +160,7 @@ test('#1339 — a skeleton built by hand in Edit mode, and every step undone exa
   await page.keyboard.press('Shift+A');
   await page.getByText('Empty', { exact: true }).hover();
   await page.getByText('Armature', { exact: true }).click();
-  await expect(page.getByTestId('armature-mode')).toBeVisible();
+  await expect(await toolbarControl(page, 'armature-mode')).toBeVisible();
   // Framed on where the chain will grow, from the side so every link is long on screen.
   await page.evaluate(() => {
     const t = (window as unknown as W).__basher_three.getState();
@@ -147,7 +171,7 @@ test('#1339 — a skeleton built by hand in Edit mode, and every step undone exa
   graphs.push(await graph(page));
 
   // Edit mode, and the tip picked.
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   await clickBone(page, 'Bone');
   await expect(page.getByTestId('edit-bone')).toBeVisible();
 
@@ -215,6 +239,12 @@ test('#1339 — the Edit-mode gizmo moves a joint; its children follow, or stay 
 }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
+  // #1708 — the live shot preview floats over the bottom of the viewport, and at this framing its
+  // panel covers the first bone's middle. Collapsed to its caption, as acceptance #7 does, so the
+  // clicks reach the canvas.
+  await page.addInitScript(() =>
+    localStorage.setItem('basher.livePreview.v1', JSON.stringify({ collapsed: true })),
+  );
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
   await settleViewFit(page);
@@ -303,6 +333,12 @@ test('#1526 — a second quick extrude keeps its bone selected; undoing it clear
   // straight after it, before the canvas re-renders (CI's slow frames did this on their own).
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 900 });
+  // #1708 — the live shot preview floats over the bottom of the viewport, and at this framing its
+  // panel covers the first bone's middle. Collapsed to its caption, as acceptance #7 does, so the
+  // clicks reach the canvas.
+  await page.addInitScript(() =>
+    localStorage.setItem('basher.livePreview.v1', JSON.stringify({ collapsed: true })),
+  );
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
   await settleViewFit(page);

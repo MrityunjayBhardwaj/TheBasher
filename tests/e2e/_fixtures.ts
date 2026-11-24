@@ -56,8 +56,36 @@
 
 import { test as base, expect } from '@playwright/test';
 
-export const test = base.extend({
-  page: async ({ page }, use) => {
+/**
+ * #1952 — how the side panels start. The editor's first start shows the outliner and the inspector
+ * as RAILS ("the viewport is the film"), and that is what a spec gets by default: `'rails'` adds
+ * nothing, so the app boots exactly as a new director's does.
+ *
+ * A spec that works inside the outliner or the inspector (rows, fields, stacks) declares
+ * `test.use({ sidePanels: 'open' })`: it then runs as a returning director who opened both panels.
+ * The saved chrome record is seeded only when ABSENT, on every navigation, so a spec that folds a
+ * panel and reloads still sees its own choice, and one that deletes the record and reloads lands
+ * back on open panels (the state it was written against).
+ */
+export type SidePanels = 'rails' | 'open';
+
+export const test = base.extend<{ sidePanels: SidePanels }>({
+  sidePanels: ['rails', { option: true }],
+  page: async ({ page, sidePanels }, use) => {
+    if (sidePanels === 'open') {
+      await page.addInitScript(() => {
+        try {
+          if (localStorage.getItem('basher.chrome.v1') == null) {
+            localStorage.setItem(
+              'basher.chrome.v1',
+              JSON.stringify({ leftSidebarCollapsed: false, inspectorCollapsed: false }),
+            );
+          }
+        } catch {
+          /* storage disabled — the panels boot as rails */
+        }
+      });
+    }
     // v0.6 #4 W4 — first-run routing. boot now lands a TRUE first run (no
     // persisted `basher.lastProjectId`) on the pre-editor HOME, not the editor.
     // Every editor spec does `goto('/')` and expects the editor, so seed the

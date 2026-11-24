@@ -29,6 +29,8 @@ const STATEFUL = ['Lag', 'Solver'] as const;
 const IMPURE = [
   'ComfyUIWorkflow',
   'Lag',
+  // #1939 — reads `ctx.time` for its source frame, so its cache key must carry the time.
+  'MediaClip',
   'RenderJob',
   'Solver',
   'TimeSource',

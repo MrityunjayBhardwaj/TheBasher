@@ -31,9 +31,13 @@
 //      src/app/studioProfileIO.ts; src/viewport/SceneFromDAG.tsx; #386.
 
 import { expect, test } from './_fixtures';
+import { openLightStudio } from './_rightPanel';
 import { dragRowOnto as dragTreeRowOnto } from './_treeDrag';
 import type { Page } from '@playwright/test';
 import { splitLightOps } from './_splitLight';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface W {
   __basher_dag: {
@@ -235,7 +239,7 @@ test.describe('#386 C3 — the split posable light, observed', () => {
     if ((await drawer.getAttribute('data-open')) !== 'true') {
       await page.getByTestId('timeline-drawer-toggle').click();
     }
-    await page.getByTestId('timeline-tab-lightStudio').click();
+    await openLightStudio(page);
     await expect(page.getByTestId('light-studio-panel')).toBeVisible();
 
     // EXPORT through the real button, and read what actually landed in the file.

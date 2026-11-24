@@ -6,6 +6,7 @@
 
 import { test, expect } from './_fixtures';
 import { seedCubeObjectId } from './_seedNodes';
+import { toolbarControl } from './_toolbar';
 
 interface BasherWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown> } } };
@@ -50,7 +51,7 @@ test('P3#1 timeline drawer is closed by default (preserves baseline)', async ({ 
 test('P3#2 toggling the drawer opens it and reveals dopesheet + curve editor panes', async ({
   page,
 }) => {
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   await expect(page.getByTestId('timeline-drawer')).toHaveAttribute('data-open', 'true');
   // P6 W5 (D-W5-1): both panes mount whenever the drawer is open; the
   // inactive pane is in the DOM but hidden via `display: none` so V8
@@ -112,7 +113,7 @@ test('P3#3 dopesheet renders a channel after a Mutator chain runs', async ({ pag
       },
     });
   }, seedBoxId);
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   // P6 W9: the SVG Dopesheet rendered a DOM `channel-row-{id}` group with
   // per-keyframe `keyframe-diamond-*` nodes. TimelineCanvas paints all of
   // that onto a 2D <canvas> (D-W9-2/D-W9-4 — no per-row DOM, no
@@ -162,7 +163,7 @@ test('P3#4 clicking a channel row makes the curve editor render its track', asyn
       },
     });
   }, seedBoxId);
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   // P6 W5 (D-W5-3): channel selection happens on the dopesheet (default
   // tab); user must explicitly switch to the Curve Editor tab to see
   // the track. P6 W9: the dopesheet is now a 2D canvas — selecting a
@@ -210,11 +211,11 @@ test.skip('P3#5 SUPERSEDED — per-channel mute shipped (#263/#264); covered by 
   // intentionally empty — coverage lives in p263-channel-mute.spec.ts.
 });
 
-test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pending', async ({
+test('P3#6 the proposal shows the time-range when an animation Mutator chain is pending', async ({
   page,
 }) => {
   // Stage a pending diff carrying a KeyframeChannelVec3 addNode with two
-  // keyframes spanning t=0 → t=2. The DiffBar's time-range indicator
+  // keyframes spanning t=0 → t=2. The proposal card's time-range indicator (the DiffBar's, before #1706)
   // should surface "0 → 2s" so the user sees where the change lands in time.
   await page.waitForFunction(() => {
     const w = window as unknown as { __basher_diff?: unknown };
@@ -257,7 +258,7 @@ test('P3#6 DiffBar shows the time-range when an animation Mutator chain is pendi
       .getState()
       .propose(state, ops, 'test bounce', ['agent:mutator.timeline.addChannel']);
   });
-  await expect(page.getByTestId('diffbar-time-range')).toBeVisible();
-  await expect(page.getByTestId('diffbar-time-range')).toContainText('0');
-  await expect(page.getByTestId('diffbar-time-range')).toContainText('2');
+  await expect(page.getByTestId('proposal-time-range')).toBeVisible();
+  await expect(page.getByTestId('proposal-time-range')).toContainText('0');
+  await expect(page.getByTestId('proposal-time-range')).toContainText('2');
 });

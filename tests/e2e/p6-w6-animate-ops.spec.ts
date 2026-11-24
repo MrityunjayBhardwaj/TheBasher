@@ -20,6 +20,7 @@
 // D-W6-1..5 (memory/project_p6_w6_context.md).
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface KeyframeShape {
   time: number;
@@ -158,7 +159,7 @@ test.beforeEach(async ({ page }) => {
       'seed',
     );
   });
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
 });
 
 async function readChannelKeyframes(

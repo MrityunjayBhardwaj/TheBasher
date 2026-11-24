@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  STYLIZED_REALISM_META,
+  STYLIZED_REALISM_WORKFLOW,
+} from '../../core/comfy/builtinWorkflows';
 import { StubComfyUICapability } from '../../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
 import { MemoryStorage } from '../../core/storage';
@@ -65,7 +69,7 @@ function buildAiRenderState() {
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: 0,
       frameEnd: 9,
       lastGoodFrame: -1,
@@ -81,7 +85,7 @@ function buildAiRenderState() {
     s = applyOp(s, {
       type: 'connect',
       from: { node: id, socket: 'out' },
-      to: { node: 'cw', socket: 'pass-input' },
+      to: { node: 'cw', socket: id },
     }).next;
   }
   s = applyOp(s, {
@@ -187,7 +191,8 @@ describe('agent.render.summarizeStylized', () => {
     expect(result.ops).toEqual([]);
     const parsed = JSON.parse(result.text!) as {
       workflowId: string;
-      presetId: string;
+      workflow: string;
+      output: string;
       frame: number;
       sourceHash: string;
       outputPath: string;
@@ -195,7 +200,9 @@ describe('agent.render.summarizeStylized', () => {
       lastGoodFrame: number;
     };
     expect(parsed.workflowId).toBe('cw');
-    expect(parsed.presetId).toBe('stylizedRealism');
+    // #1715 — the workflow file it runs and the output summarized, not a preset.
+    expect(parsed.workflow).toBe('Stylized realism');
+    expect(parsed.output).toBe('stylized');
     expect(parsed.frame).toBe(0);
     expect(parsed.outputPath).toBe('renders/job1/stylized_stylizedRealism_0000.png');
     expect(parsed.bytesPresent).toBe(false);

@@ -22,25 +22,24 @@
 import { useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
-import { cookMotionGenerations, motionCookOffer, placeCookedMotion } from './cookMotionGenerations';
+import { motionCookOffer } from './cookMotionGenerations';
+import { recookMotion, recookWithNewSeed, seedIsDriven } from './recookMotion';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
 
 export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId }) {
   const state = useDagStore((s) => s.state);
   const [busy, setBusy] = useState(false);
   const offer = motionCookOffer(state, producerId, uiEvaluatorCache);
+  const driven = seedIsDriven(producerId, state.nodes);
 
-  async function run() {
+  async function run(kind: 'recook' | 'seed' = 'recook') {
     setBusy(true);
     try {
-      // SCOPED to this node (#964). Unscoped, one press cooked every producer the
-      // graph reported as pending — which after a reload is all of them, because
-      // the generated-clip cache is module state and does not survive one.
-      await cookMotionGenerations(producerId);
-      // A re-cook is on a clip that is already bound, so the character it walks
-      // exists and placement can find it. On a first generation this is a no-op,
-      // because the road that mints has already placed after its bind.
-      placeCookedMotion();
+      // SCOPED to this node (#964), through the one road the strip's buttons take too (#1721).
+      // Unscoped, one press cooked every producer the graph reported as pending — which after a
+      // reload is all of them, because the generated-clip cache is module state.
+      if (kind === 'recook') await recookMotion(producerId);
+      else await recookWithNewSeed(producerId);
     } finally {
       // Always cleared, even on a refusal: the callee never throws, and a button
       // stuck on "Generating…" would be a second failure on top of the first.
@@ -61,11 +60,27 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
         type="button"
         data-testid="motion-cook-run"
         disabled={offer.disabled || busy}
-        onClick={run}
+        onClick={() => void run('recook')}
         className="w-full rounded border border-border px-2 py-1 text-[10px] disabled:opacity-40"
       >
         {busy ? 'Generating…' : offer.label}
       </button>
+      {/* #1721 — New seed: a different take of the same prompt on the same path. Offered only once
+          a clip is wired (there is something to re-cook into) and while no driver owns the seed. */}
+      {offer.status !== null ? (
+        <button
+          type="button"
+          data-testid="motion-cook-newseed"
+          disabled={driven || busy}
+          title={
+            driven ? 'The seed is driven — change it at its source' : 'Pick a new seed and re-cook'
+          }
+          onClick={() => void run('seed')}
+          className="mt-1 w-full rounded border border-border px-2 py-1 text-[10px] disabled:opacity-40"
+        >
+          New seed
+        </button>
+      ) : null}
       {offer.stale ? (
         <p data-testid="motion-cook-stale" className="mt-1 text-fg/40">
           The clip still plays its last result until you re-cook.

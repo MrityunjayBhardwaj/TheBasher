@@ -6,6 +6,7 @@
 // The snap MATH is unit-tested in viewportStore.test.ts; this proves the wiring.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 interface W {
   __basher_dag: {
@@ -40,8 +41,8 @@ test('rotate snaps to the 5° increment only when Snap + Affect▸Rotate are on'
   expect(unsnapped![1]).toBeCloseTo(12, 3);
 
   // Enable the master snap toggle, then the Rotate Affect chip (now visible).
-  await page.getByTestId('floating-toolbar-snap-toggle').click();
-  await page.getByTestId('floating-toolbar-snap-affect-rotate').click();
+  await (await toolbarControl(page, 'floating-toolbar-snap-toggle')).click();
+  await (await toolbarControl(page, 'floating-toolbar-snap-affect-rotate')).click();
   await page.waitForTimeout(100);
 
   // Grab rotate to 12° → snaps to the nearest 5° multiple = 10°.

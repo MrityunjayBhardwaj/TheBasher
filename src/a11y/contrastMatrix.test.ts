@@ -854,10 +854,10 @@ const ROWS: Row[] = [
     textSize: 'small',
   },
 
-  // ─── AssetLibrary (src/app/AssetLibrary.tsx) ────────────────────────
+  // ─── AssetLibrary (src/app/library/LibraryPane.tsx since #1707) ──────
   // UX backlog #6: the asset library re-homed from the floating popover
-  // (bg-2/95) into the LeftSidebar's "Assets" tab, so it now renders over the
-  // panel's OPAQUE bg-bg-2 (the aside background). Header fg-dim; entry
+  // (bg-2/95) into the LeftSidebar's "Assets" tab, and #1707 moved it on to
+  // the bottom drawer's Library tab (the drawer island's surface). Header fg-dim; entry
   // bg-bg-1/40 + border-border; entry available text-fg/90, hover bg-1;
   // unavailable text-fg-mute.
   {

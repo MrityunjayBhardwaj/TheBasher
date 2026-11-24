@@ -47,6 +47,10 @@
 // REF: src/app/materialRegistry.ts (`build`'s `prep`); issues #554, #535, #181.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface MeshMaterial {
   hasMap: boolean;
@@ -104,9 +108,7 @@ async function selectBoxAndAttachMap(page: import('@playwright/test').Page) {
     (window as unknown as BasherWindow).__basher_selection!.getState().select('n_box');
   });
   const editor = page.getByTestId('inspector-material-editor-n_box_data');
-  if (!(await editor.isVisible())) {
-    await page.getByTestId('inspector-section-toggle-material').click();
-  }
+  await openInspectorSection(page, 'material');
   await expect(editor).toBeVisible();
   await page
     .getByTestId('inspector-map-file-n_box_data-albedo')

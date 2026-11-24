@@ -3,7 +3,8 @@
 // Below LAYOUT_NARROW_MAX (1024px) the three columns of chrome won't fit, so
 // the side islands become OFF-CANVAS OVERLAY DRAWERS (closed by default; an
 // edge tab reveals one, a scrim dismisses it) and the centered surfaces (the
-// toolbar pill + the bottom agent/timeline stack) go FULL-WIDTH. The
+// toolbar pill + the bottom playback bar) go FULL-WIDTH. #1704 — the chat column
+// is an overlay drawer here too (p1704-chat-column.spec.ts C#8). The
 // bottom-right orbit gizmo + Persp/Ortho pill are hidden (their corner is taken
 // by the full-width stack).
 //
@@ -11,6 +12,10 @@
 // the off-canvas + full-width + tab-presence assertions → these fail.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 test.describe('narrow layout (<1024px)', () => {
   test.use({ viewport: { width: 900, height: 820 } });
@@ -43,8 +48,11 @@ test.describe('narrow layout (<1024px)', () => {
 
   test('N#2 the toolbar + bottom stack go full-width', async ({ page }) => {
     const layout = await page.getByTestId('layout').boundingBox();
-    const toolbar = await page.getByTestId('floating-viewport-toolbar').boundingBox();
-    const stack = await page.getByTestId('agentdock-slot').boundingBox();
+    // #1935 — the pill hugs its content now (what does not fit goes behind ⋯), so the full-width
+    // claim is about the band it is fitted to, the space the toolbar may use.
+    const toolbar = await page.getByTestId('floating-toolbar-band').boundingBox();
+    // #1704 — the bottom-centre island is the playback bar alone now.
+    const stack = await page.getByTestId('timeline-slot').boundingBox();
     if (!layout || !toolbar || !stack) throw new Error('missing boxes');
     // Full-width minus the edge gaps (24px) → > 90% of the layout. With the
     // desktop reserve they would be ~half the width here → fails.
@@ -91,7 +99,7 @@ test.describe('narrow layout (<1024px)', () => {
   });
 
   test('N#6 present mode hides the drawers, tabs, and scrim', async ({ page }) => {
-    await page.getByTestId('top-toolbar-present').click();
+    await (await toolbarControl(page, 'top-toolbar-present')).click();
     await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
     await expect(page.getByTestId('tree-slot')).toBeHidden();
     await expect(page.getByTestId('left-drawer-tab')).toHaveCount(0);

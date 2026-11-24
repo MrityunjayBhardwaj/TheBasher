@@ -18,7 +18,7 @@
 import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';
 import type { NodeDefinition } from '../core/dag/types';
-import type { EvalCtx } from '../core/dag/types';
+import type { EvalCtx, ImageExtent } from '../core/dag/types';
 import { DEFAULT_IMAGE_DESCRIPTOR, type ImageValue } from './types';
 import { nameParam, widget } from './paramWidget';
 
@@ -51,10 +51,23 @@ export function mediaClipFrameAt(params: MediaClipParams, seconds: number): numb
   return Math.max(0, Math.min(frames - 1, idx));
 }
 
+/** #1716 — a still image is a still; a video is a run of its source frames, 0..srcFrames-1 at
+ *  srcFps (the same frames `mediaClipFrameAt` clamps to). */
+export function mediaClipExtent(params: MediaClipParams): ImageExtent {
+  if ((params.mediaKind ?? 'video') === 'image') return { kind: 'still' };
+  return {
+    kind: 'frames',
+    range: { start: 0, end: Math.max(1, params.srcFrames ?? 1) - 1, fps: params.srcFps ?? 30 },
+  };
+}
+
 export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
   type: 'MediaClip',
   version: 1,
-  pure: true,
+  // #1939 — NOT pure: evaluate reads `ctx.time` to pick the source frame, and the evaluator keys
+  // a pure node on params and inputs only, so a pure clip read through one cache repeated the
+  // first frame it cached at every later time. TimeSource's rule: time enters an impure node.
+  pure: false,
   cost: 'cheap',
   paramSchema: MediaClipParams,
   inputs: {},
@@ -83,6 +96,10 @@ export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
         mediaKind: params.mediaKind ?? 'video',
         frameIndex,
       }),
+      extent: mediaClipExtent(params),
+      // #1947 — an image clip is one file, so it says where: the value's `passKind` has to name
+      // some kind, and without this a reader of the bytes took the clip for the job's beauty pass.
+      ...((params.mediaKind ?? 'video') === 'image' && params.src ? { storedAt: params.src } : {}),
     };
   },
 };

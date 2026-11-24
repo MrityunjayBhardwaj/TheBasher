@@ -12,6 +12,7 @@
 // A socket with no `available` is always available. A param that is missing reads as its
 // schema default, which is what a node saved before the param existed holds once parsed.
 
+import { inputExists, outputExists } from './instanceSockets';
 import type { NodeDefinition, SocketAvailability } from './types';
 
 const defaults = new WeakMap<NodeDefinition, Record<string, unknown> | null>();
@@ -44,14 +45,16 @@ function holds(
   return typeof value === 'string' && rule.in.includes(value);
 }
 
-/** Whether input `socket` of a `def` node with these `params` is available. */
+/** Whether input `socket` of a `def` node with these `params` is available. #1715 — a socket
+ *  a node's params no longer give (its workflow file changed) is not: its wire is kept and read
+ *  as unconnected, the same rule. */
 export function inputAvailable(def: NodeDefinition, params: unknown, socket: string): boolean {
-  return holds(def, def.inputs[socket]?.available, params);
+  return inputExists(def, params, socket) && holds(def, def.inputs[socket]?.available, params);
 }
 
 /** Whether output `socket` of a `def` node with these `params` is available. */
 export function outputAvailable(def: NodeDefinition, params: unknown, socket: string): boolean {
-  return holds(def, def.outputs[socket]?.available, params);
+  return outputExists(def, params, socket) && holds(def, def.outputs[socket]?.available, params);
 }
 
 /** Why a socket is not available, for a refusal: which param, and the values that would make it. */

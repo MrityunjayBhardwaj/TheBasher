@@ -14,6 +14,9 @@ import { test, expect } from './_fixtures';
 import { drawnImportMeshes, firstMaterialMesh, importedMeshes } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const FOLDER = 'matedit';
 
 interface BasherWindow {

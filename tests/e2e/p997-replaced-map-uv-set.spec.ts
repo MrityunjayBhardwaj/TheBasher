@@ -73,6 +73,9 @@ import type { Page } from '@playwright/test';
 import { drawnImportMeshes, firstMaterialMesh, importRoots } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 /** 64×64: a 16px BLUE border around a RED centre — the same border/centre shape as the
  *  fixture's own image, in hues the fixture does not use. */
 const BORDER_CENTRE_64 =

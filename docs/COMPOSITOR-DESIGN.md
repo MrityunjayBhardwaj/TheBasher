@@ -108,27 +108,37 @@ renderer/viewer does the pixel work, mirroring Scene→renderer).
 
 ```ts
 CompositionParams = { name, width, height, fps, durationFrames, background }
-inputs:  { layers: { type: 'Layer', cardinality: 'list' } }   // order = composite z-order (top = front)
-outputs: { out: { type: 'Composition' } }                      // a layer can consume a comp → nesting
-evaluate → CompositionValue { layers: LayerValue[], width, height, fps, durationFrames }
+inputs:  { in: { type: 'Image', cardinality: 'single' } }  // the TOP of the layer stack (#1879)
+outputs: { out: { type: 'Composition' } }
+evaluate → CompositionValue { image: ImageValue | null, width, height, fps, durationFrames }
 ```
 
+#1879 — the layers are a **chain on the Image lane**, not a list: each `Layer` reads everything
+behind it on `below`, and the comp reads the front layer on `in`. Every stack in Basher is a chain
+of T → T steps (#1805); this is the Image instance. How the stack is stored is known in one place,
+`src/app/video/videoLayers.ts` (`compositionLayerIds`, `stackLayerOnTopOps`,
+`buildReorderLayerOps`). Saved files from before (v31 and earlier) are converted on load.
+
 Nesting = a `Layer` whose source is another `Composition`. That is the sequencing
-mechanism — no separate NLE container.
+mechanism — no separate NLE container. (Not wired yet: a comp outputs a `Composition`, not an
+`Image`. Its own issue.)
 
 ### 4.2 `Layer`
 
 ```ts
 LayerParams = {
-  name, enabled, solo, locked,
+  name, muted, solo, locked, // muted = hidden: the stack mute, which passes `below` through
   startFrame,            // position of the layer's in-point on the comp timeline
   inPoint, outPoint,     // trim of the source (source-local frames)
   blendMode,             // 'normal' | 'add' | 'multiply' | 'screen' | …
   opacity,               // keyframeable (V57 channel: paramPath 'opacity')
   transform,             // 2D anchor/position/scale/rotation — keyframeable
 }
-inputs:  { source: { type: 'Image', cardinality: 'single' } }  // time-varying Image (see §4.3)
-outputs: { out: { type: 'Layer' } }
+inputs:  {
+  below:  { type: 'Image', cardinality: 'single' },  // the stack behind it — its chain socket
+  source: { type: 'Image', cardinality: 'single' },  // its own time-varying picture (see §4.3)
+}
+outputs: { out: { type: 'Image' } }                   // the stack with this layer on top
 ```
 
 `opacity` / `transform` are driven by V57 channels targeting the Layer node — the
@@ -232,8 +242,8 @@ only when blend modes / performance demand it.
 Evolve the existing `src/timeline/` drawer into the **Composition timeline**:
 
 - **Layer outline column** (left): rows for each layer, twirl triangle → properties
-  - effects; enable/solo/lock toggles; reorder by drag (= `buildMoveModifierOps`
-    analogue on the `layers` list).
+  - effects; visibility (mute)/solo/lock toggles; reorder by drag (`buildReorderLayerOps`,
+    which rewires the layer chain).
 - **Track area** (right): each layer's bar (trim/move handles); twirled-open property
   rows show V57 keyframes on the SAME ruler/playhead/zoom as today ([[V50]]); the
   graph-editor toggle swaps to `CurveEditor`.

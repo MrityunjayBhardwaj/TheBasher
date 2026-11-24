@@ -15,6 +15,7 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { toolbarControl } from './_toolbar';
 
 type Q = [number, number, number, number];
 interface W {
@@ -148,7 +149,7 @@ test('#1177 — I on a handled rotation curve, mid-segment and on a key, leaves 
       params: { name: 'quaternion', target: 'n_box', paramPath: 'quaternion', keyframes },
     });
   }, KEYS);
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
 
   const before: Q[] = [];
   for (const t of PROBES) before.push(await drawnAt(page, t));

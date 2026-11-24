@@ -2,7 +2,8 @@
 // changes nothing (the target's non-strict schema strips the unknown key). It
 // used to be a silent success — the agent reported done, the DiffBar showed an
 // accepted op, and nothing changed. It is now surfaced as a REPORTABLE no-op in
-// the DiffBar (the same amber row the mutator warnings use), so the director
+// the proposal card in chat (#1706; the DiffBar before it — the same amber row the mutator
+// warnings use), so the director
 // sees the op-vs-subject mismatch BEFORE accepting.
 //
 // This drives the diff STORE directly (the same seam every agent e2e uses) to
@@ -54,13 +55,15 @@ async function propose(page: Page, wrongHalf: boolean): Promise<void> {
     ];
     w.__basher_diff.getState().propose(w.__basher_dag.getState().state, ops, 'recolor');
   }, wrongHalf);
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
 }
 
-test('#423 — a wrong-half write surfaces a REPORTABLE row in the DiffBar', async ({ page }) => {
+test('#423 — a wrong-half write surfaces a REPORTABLE row in the proposal card', async ({
+  page,
+}) => {
   await page.goto('/');
   await propose(page, true);
-  const row = page.getByTestId('diffbar-reportable');
+  const row = page.getByTestId('proposal-reportable');
   await expect(row).toBeVisible();
   await expect(row).toContainText('changed nothing');
   await expect(row).toContainText('material');
@@ -71,6 +74,6 @@ test('#423 control — the same write on the owning half shows NO reportable row
 }) => {
   await page.goto('/');
   await propose(page, false);
-  await expect(page.getByTestId('diffbar')).toBeVisible();
-  await expect(page.getByTestId('diffbar-reportable')).toHaveCount(0);
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
+  await expect(page.getByTestId('proposal-reportable')).toHaveCount(0);
 });

@@ -51,6 +51,7 @@ function registerLiar(nodeType: string, declares: PassRole, emits: ImagePassKind
       passKind: emits,
       descriptor: DEFAULT_IMAGE_DESCRIPTOR,
       sourceHash: 'deadbeef',
+      extent: { kind: 'frames', range: null },
     }),
   } as never);
 }

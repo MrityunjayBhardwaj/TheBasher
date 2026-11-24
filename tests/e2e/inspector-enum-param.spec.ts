@@ -16,6 +16,9 @@ import { expect, test } from './_fixtures';
 import { splitSphereDataId, splitSphereOps } from './_splitSphere';
 import { modifierChainOps } from './_modifierStack';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Op {
   type: string;
   [k: string]: unknown;

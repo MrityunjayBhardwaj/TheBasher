@@ -140,6 +140,9 @@ const CONSUMERS: Record<string, Decision> = {
   // #1811 — a chain step reads its settings through `resolveEvaluatedParam`, as a keyed value.
   'src/app/constraintChain.ts': authored('folds-its-own-overlays'),
   'src/app/keyedCook.ts': authored('folds-its-own-overlays'),
+  // #1950 — the camera a render pass films through: hands the authored state and the evaluator's
+  // cache to `resolveCameraPoseAt` (activeCamera.ts, its row above), which folds the camera's keys.
+  'src/app/filmedCamera.ts': authored('delegates-to-a-folding-resolver'),
   // #1829 — imports only the `EvaluatorCache` type: the drawn world read hands the authored state
   // and the caller's cache to `resolveWorldTransform`'s walk and the constraint resolvers (their
   // rows). Not a new road.
@@ -175,6 +178,10 @@ const CONSUMERS: Record<string, Decision> = {
   // left this table. `resolveMeshUVSpace` and `cookMotionGenerations` import the cache
   // TYPE only, to take one from their UI caller and hand it to the resolver they already called.
   'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
+  // #1716 — the node view's frame-pick marker evaluates a still input's producers at frame 0,
+  // DELIBERATELY: what it reads is whether the producer is a still or a run of frames and which
+  // frame a still input takes, which no playhead changes.
+  'src/app/sceneGraph.ts': authored('fixed-ctx-by-design'),
   'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
   // #1681 — the path fit takes the cook button's cache (TYPE only) and hands the authored state to
@@ -192,6 +199,9 @@ const CONSUMERS: Record<string, Decision> = {
   // #1318 — the Comfy batch bakes create one cache per bake for `resolveEvaluatedParam`, which
   // folds the channels and drivers itself, so the state it is handed must stay authored.
   'src/app/video/compileComfyBatch.ts': authored('delegates-to-a-folding-resolver'),
+  // #1715 — the frame runner's keyed number / text inputs, read through `resolveEvaluatedParam`
+  // on `controller:<nodeId>` (which folds the channels itself) with one cache per run.
+  'src/app/render/controllerValue.ts': authored('delegates-to-a-folding-resolver'),
   // #1766 — a camera's Track-To aim brought into its parent's space. It takes its caller's cache
   // (TYPE only) and hands the authored state to the Track-To and parent-world resolvers, which
   // fold their own overlays. No new road: the three camera reads it serves called them directly.
@@ -214,6 +224,26 @@ const CONSUMERS: Record<string, Decision> = {
   // graph depend on where the scrubber happened to be, so two cooks of an
   // unedited project would disagree.
   'src/app/asset/bakeGeneratedClip.ts': authored('fixed-ctx-by-design'),
+  // #1721 — a generated run's strip asks the same question as the cook above, per run: is the
+  // clip's baked hash behind the producer's request (`clipBakeStates`), and does the path still
+  // fit the character (`motionPathScaleFit`). AUTHORED and fixed-ctx for the same reason: whether
+  // a run is stale is a property of the generation, not of where the playhead is.
+  'src/nodes/motionGenerateRuns.ts': authored('fixed-ctx-by-design'),
+  // #1718 — whether a ComfyUI workflow's pictures are current: its first output's hash read at its
+  // first frame, AUTHORED, for the same reason as the run strips above. Whether a run is stale is a
+  // property of the run, not of where the playhead is.
+  'src/nodes/comfyWorkflowMade.ts': authored('fixed-ctx-by-design'),
+  // #1718 — Regenerate reads the same made state through it, to order its runs and record what
+  // each landed from. Fixed-ctx for the same reason.
+  'src/app/render/regenerateWorkflow.ts': authored('fixed-ctx-by-design'),
+  // #1717 — what a workflow's pictures are made from, over every frame it makes: the graph AUTHORED
+  // at each of those frames, with the camera on screen and the scene's channels read through the
+  // resolvers the render uses. Fixed-ctx: the frames are the workflow's, not the playhead.
+  'src/app/render/workflowMadeFrom.ts': authored('fixed-ctx-by-design'),
+  // #1717 — the Video space's shot clips read each shot's made state through it, and Generate
+  // re-reads it before each shot. Fixed-ctx for the same reason.
+  'src/app/video/shotClips.ts': authored('fixed-ctx-by-design'),
+  'src/app/video/shotClipActions.ts': authored('fixed-ctx-by-design'),
   // #935 — the node road's placement half reads the landed generation's world
   // offset off the producer. AUTHORED and fixed-ctx for the third time in this
   // chain and for the third instance of one reason: where a character stands at
@@ -399,7 +429,21 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 64 → 66, not new roads: #1829's drawn world read and #1516's keep-position reparent cache,
     // each declared above. 66 → 67 at #1810 (the world fold). 68 → 69 at #575, a compute node's
     // keyed settings at its cook, declared above.
-    expect(evaluatorConsumers()).toHaveLength(69); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 69 → 70 at #1716, a new road: the node view's frame-pick marker (declared above as
+    // fixed-ctx).
+    // 70 → 71 at #1721, a new road: the NLA pane's generated-run strips (declared above as
+    // fixed-ctx).
+    // 71 → 72 at #1715, a new road: the frame runner's keyed workflow inputs (declared above as
+    // delegates-to-a-folding-resolver).
+    // 72 → 74 at #1718, two new roads: a ComfyUI workflow's made state, and Regenerate reading it
+    // (both declared above as fixed-ctx).
+    // 74 → 75 at #1717, a new road: what a workflow is made from over all its frames (declared
+    // above as fixed-ctx).
+    // 75 → 77 at #1717: the shot clips and their Generate read that made state (declared above as
+    // fixed-ctx).
+    // 77 → 78 at #1950: a render pass's camera on screen (declared above as
+    // delegates-to-a-folding-resolver).
+    expect(evaluatorConsumers()).toHaveLength(78); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

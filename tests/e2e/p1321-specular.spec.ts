@@ -19,6 +19,9 @@ import type { Page } from '@playwright/test';
 import { openInspectorSection } from './_inspectorSections';
 import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const BOX = 'n_p1321_box';
 
 interface DrawnMaterial {

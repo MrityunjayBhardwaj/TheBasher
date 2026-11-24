@@ -19,14 +19,20 @@
 //     and a socket is visible only while available, BKE_node_runtime.hh `is_visible`); the
 //     evaluator ignores it, so drawing it would show a value flowing where none does;
 //   • a node that follows another's name says whose (in its tooltip: today every one is also
-//     wired to the node it follows, so a line would only repeat the wire).
+//     wired to the node it follows, so a line would only repeat the wire);
+//   • #1716 — a row where a run of frames enters a still input says which frame it picks (the
+//     first, today), so the wire shows a still being taken from frames rather than hiding it.
 //
 // REF: src/core/dag/layout.ts (viewEdgesOf, viewRowsOf, levelOf); src/app/collections.ts
 //      (hiddenNodes); src/app/timeDependence.ts (timeDependentNodes).
 
+import { brokenInputsOf, inputsOfNode, outputsOfNode } from '../core/dag/instanceSockets';
 import { levelOf, viewEdgesOf, viewRowsOf, type ViewEdge, type ViewRow } from '../core/dag/layout';
+import { nodeValueParams } from '../core/dag/nodeValues';
 import type { DagState } from '../core/dag/state';
-import type { NodeId, NodeRef } from '../core/dag/types';
+import type { InputDescriptor, NodeId, NodeRef, OutputDescriptor } from '../core/dag/types';
+import { evaluate, evaluateInputRef, type EvaluatorCache } from '../core/dag/evaluator';
+import { imageTakeOf, isImageValueLike } from '../core/dag/imageExtent';
 import { relationsOf } from '../core/dag/idRefSweep';
 import { getNodeType } from '../core/dag/registry';
 import { inputAvailable, outputAvailable } from '../core/dag/socketAvailability';
@@ -39,7 +45,117 @@ export interface GraphInputRow extends ViewRow {
   /** Set when what drives this row is hidden: the type of the first node driving it, so the
    *  row takes its colour. */
   readonly tint?: string;
+  /** #1716 — set on a still input fed a run of frames: the frame each such wire picks, in wire
+   *  order. Absent when nothing is picked. */
+  readonly picks?: readonly number[];
+  /** #1715 — on a node whose sockets come from its settings (a workflow node's file): what the
+   *  socket takes, in words ("still image", "frames", "number", "text"). Such a node draws every
+   *  socket it has, wired or not, so the file's sockets can be read off the node. */
+  readonly socketType?: string;
+  /** #1715 — a wire kept on a socket the node's file no longer has: read as unconnected. */
+  readonly broken?: true;
 }
+
+/**
+ * #1716 — the frames picked on `id`'s wired input `socket`, or undefined when the input does not
+ * take a still or every wire into it already carries one. Asks the evaluator's own arrival
+ * (`evaluateInputRef`) at frame 0, so the row says what the node is really handed. Only still
+ * inputs are evaluated, and a producer that cannot be evaluated yet shows no marker.
+ */
+function picksOn(
+  state: DagState,
+  id: NodeId,
+  socket: string,
+  cache: EvaluatorCache | undefined,
+): number[] | undefined {
+  const node = state.nodes[id];
+  const def = node ? getNodeType(node.type) : undefined;
+  const desc = def ? inputsOfNode(def, node.params)[socket] : undefined;
+  if (imageTakeOf(desc, node?.params) !== 'still') return undefined;
+  const picks: number[] = [];
+  for (const ref of bindingRefs(node.inputs?.[socket])) {
+    try {
+      const v = evaluateInputRef(state, id, socket, ref, { cache }).value;
+      if (isImageValueLike(v) && v.extent.kind === 'still' && v.extent.pickedFrame !== undefined)
+        picks.push(v.extent.pickedFrame);
+    } catch {
+      // Not evaluable yet (an authoring state): nothing to say about the wire.
+    }
+  }
+  return picks.length > 0 ? picks : undefined;
+}
+
+function withPicks(
+  state: DagState,
+  id: NodeId,
+  rows: GraphInputRow[],
+  cache: EvaluatorCache | undefined,
+): GraphInputRow[] {
+  return rows.map((r) => {
+    if (r.ref) return r;
+    const picks = picksOn(state, id, r.socket, cache);
+    return picks ? { ...r, picks } : r;
+  });
+}
+/** #1715 — a socket's type in words: an Image by what it takes, else its type name. */
+function typeInWords(desc: InputDescriptor | OutputDescriptor, params: unknown): string {
+  const take =
+    'takes' in desc
+      ? typeof desc.takes === 'function'
+        ? desc.takes(params)
+        : desc.takes
+      : undefined;
+  if (take === 'still') return 'still image';
+  if (take === 'frames') return 'frames';
+  const t = Array.isArray(desc.type) ? desc.type[0] : desc.type;
+  if (t === 'Number') return 'number';
+  if (t === 'String') return 'text';
+  return String(t).toLowerCase();
+}
+
+/**
+ * #1715 — a node whose sockets come from its settings draws all of them, each with its type, and
+ * a row for every wire it keeps on a socket its file no longer has. Every other node draws the
+ * rows its wires land on, as before.
+ */
+function withOwnSockets(
+  state: DagState,
+  id: NodeId,
+  rows: GraphInputRow[],
+  outputs: readonly string[],
+  cache: EvaluatorCache | undefined,
+): { inputs: GraphInputRow[]; outputs: readonly string[]; outputTypes?: Record<string, string> } {
+  const node = state.nodes[id];
+  const def = node ? getNodeType(node.type) : undefined;
+  if (!node || !def?.instanceSockets) return { inputs: rows, outputs };
+  const ins = inputsOfNode(def, node.params);
+  const out: GraphInputRow[] = Object.entries(ins).map(([socket, desc]) => {
+    const drawn = rows.find((r) => r.socket === socket && !r.ref);
+    return {
+      ...(drawn ?? { socket, count: 0, ref: false }),
+      socketType: typeInWords(desc, node.params),
+    };
+  });
+  for (const socket of brokenInputsOf(def, node)) {
+    out.push({ socket, count: bindingRefs(node.inputs[socket]).length, ref: false, broken: true });
+  }
+  out.push(...rows.filter((r) => r.ref));
+  const outs = outputsOfNode(def, node.params);
+  const outputTypes: Record<string, string> = {};
+  const extentOf = (socket: string) => {
+    try {
+      // The output's own value says whether it is a still or frames (#1716's extent).
+      const v = evaluate(state, id, { socket, cache }).value;
+      return isImageValueLike(v) ? (v.extent.kind === 'still' ? 'still image' : 'frames') : null;
+    } catch {
+      return null;
+    }
+  };
+  for (const [socket, desc] of Object.entries(outs))
+    outputTypes[socket] = extentOf(socket) ?? typeInWords(desc, node.params);
+  return { inputs: out, outputs: Object.keys(outs), outputTypes };
+}
+
 export type GraphWire = ViewEdge;
 export type GraphFlag = 'scene' | 'render';
 
@@ -48,8 +164,11 @@ export interface GraphNode {
   readonly type: string;
   readonly name: string;
   readonly inputs: readonly GraphInputRow[];
-  /** Output sockets something reads, in first-use order. */
+  /** Output sockets something reads, in first-use order. #1715 — a node whose sockets come from
+   *  its settings lists every output it has. */
   readonly outputs: readonly string[];
+  /** #1715 — each listed output's type in words, for a node whose sockets come from its settings. */
+  readonly outputTypes?: Readonly<Record<string, string>>;
   /** Hidden in the viewport (its own flag or a collection's). */
   readonly hidden: boolean;
   /** How many nodes its sub-network shows one level down; 0 when it owns none. */
@@ -63,6 +182,8 @@ export interface GraphNode {
   readonly away: number;
   /** The name of the node whose name this one follows (`meta.nameFrom`), or null. */
   readonly namedAfter: string | null;
+  /** #1953 — the params it shows on itself, editable in place (`nodeValueParams`). */
+  readonly values: readonly string[];
 }
 
 export interface SceneGraph {
@@ -193,13 +314,49 @@ function live(state: DagState, w: ViewEdge): boolean {
 }
 
 /**
+ * #1953 — the nodes past the objects: every Scene node, then whatever reads only what is already
+ * past them and feeds nothing on (the render output, which reads only the scene). An object never
+ * qualifies: it feeds the scene, which is the point where the network ends.
+ */
+function pastTheObjects(state: DagState, wires: readonly ViewEdge[]): Set<NodeId> {
+  const past = new Set(Object.keys(state.nodes).filter((id) => state.nodes[id].type === 'Scene'));
+  const into = new Map<NodeId, NodeId[]>();
+  const feeds = new Set<NodeId>();
+  for (const w of wires) {
+    if (w.ref) continue;
+    into.set(w.to, [...(into.get(w.to) ?? []), w.from]);
+    feeds.add(w.from);
+  }
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [id, from] of into) {
+      if (past.has(id) || feeds.has(id) || !from.every((f) => past.has(f))) continue;
+      past.add(id);
+      grew = true;
+    }
+  }
+  return past;
+}
+
+/**
  * What the view draws at one level: the top level (`level` null or absent), or the sub-network
  * of the owner named. A level that does not exist (its owner was deleted, or the node named
  * holds no sub-network) reads as the top.
  */
 export function sceneGraphOf(
   state: DagState,
-  opts: { showHidden: boolean; showAnimation?: boolean; level?: NodeId | null },
+  opts: {
+    showHidden: boolean;
+    showAnimation?: boolean;
+    level?: NodeId | null;
+    /** #1953 — the Nodes tab's own reading: a network ends at its object, so the Scene node
+     *  that gathers every object, and what reads only the scene (the render output), are not
+     *  drawn. The agent's `dag.inspect` leaves this off: it wires new objects into the scene,
+     *  so it has to see where they go. */
+    endAtObjects?: boolean;
+  },
+  /** #1716 — for the frame-pick markers, which evaluate a still input's producers. */
+  cache?: EvaluatorCache,
 ): SceneGraph {
   const levels = levelOf(state);
   const owners = new Set(levels.values());
@@ -210,7 +367,8 @@ export function sceneGraphOf(
   const here = Object.keys(state.nodes).filter((id) => levels.get(id) === level);
   const visible = here.filter((id) => !drawn || drawn.has(id));
   const sidecars = new Set(opts.showAnimation ? [] : visible.filter((id) => isSidecar(state, id)));
-  const shown = new Set(visible.filter((id) => !sidecars.has(id)));
+  const ends = opts.endAtObjects ? pastTheObjects(state, all) : new Set<NodeId>();
+  const shown = new Set(visible.filter((id) => !sidecars.has(id) && !ends.has(id)));
   const wires = all.filter((w) => shown.has(w.from) && shown.has(w.to));
   const rows = viewRowsOf(wires);
 
@@ -245,18 +403,30 @@ export function sceneGraphOf(
   };
   const nodes = here
     .filter((id) => shown.has(id))
-    .map((id) => ({
+    .map((id) => {
+      const own = withOwnSockets(
+        state,
+        id,
+        withPicks(state, id, withTints(rows.inputs.get(id) ?? [], tinted.get(id) ?? []), cache),
+        rows.outputs.get(id) ?? [],
+        cache,
+      );
+      return { id, own };
+    })
+    .map(({ id, own }) => ({
       id,
       type: state.nodes[id].type,
       name: nodeDisplayName(state.nodes, id),
-      inputs: withTints(rows.inputs.get(id) ?? [], tinted.get(id) ?? []),
-      outputs: rows.outputs.get(id) ?? [],
+      inputs: own.inputs,
+      outputs: own.outputs,
+      ...(own.outputTypes ? { outputTypes: own.outputTypes } : {}),
       hidden: hidden.has(id),
       inside: inside.get(id) ?? 0,
       flags: flagged(id),
       timeDependent: timed.has(id),
       away: away.get(id) ?? 0,
       namedAfter: followed(id),
+      values: nodeValueParams(state, id),
     }));
 
   const path: NodeId[] = [];

@@ -20,6 +20,9 @@ import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 import { firstMaterialMesh } from './_importedMesh';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const FIXTURE = 'albedo-textured-quad.gltf';
 const PLAIN = 'two-material-textured-quad.gltf'; // metallic-roughness map only, NO base color
 

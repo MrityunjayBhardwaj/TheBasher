@@ -169,6 +169,9 @@ const imageSrc = {
   sourceHash: 'gate-src',
 };
 
+// #1879 — a layer's OWN picture, its side input. The spine (`below`) carries `imageSrc`.
+const layerPicture = { ...imageSrc, sourceHash: 'gate-layer-picture' };
+
 const WIRED_MATERIAL = {
   kind: 'OpenPBRMaterial',
   spec: openpbrMaterialSchema().parse({ name: 'wired', base: { color: '#00ff00' } }),
@@ -244,6 +247,17 @@ const ROWS = [
     hash: '18b8ed1d',
   },
   {
+    // #1879 — a composition's layer, the first operator with a side input of its spine's own
+    // type: muted, the stack below (`below`) passes through and its own picture does not.
+    // Hash measured at introduction: it equals ColorCorrect's, because both hand back the same
+    // `imageSrc` untouched — the reference-identity row below is what says so directly.
+    type: 'Layer',
+    src: imageSrc,
+    picture: layerPicture,
+    params: { opacity: 0.5 },
+    hash: '18b8ed1d',
+  },
+  {
     type: 'MaterialOverrideOp',
     src: meshSrc('#222222'),
     params: { color: '#00ff88', overridden: { color: true } },
@@ -299,7 +313,9 @@ type Row = (typeof ROWS)[number];
 
 /** The operator's resolved inputs, as `evaluate` receives them. */
 function inputsOf(row: Row): Record<string, unknown> {
-  const inputs: Record<string, unknown> = { target: row.src };
+  // The spine is the operator's declared chain socket, not a name (#396): a layer's is `below`.
+  const inputs: Record<string, unknown> = { [getNodeType(row.type)!.chain!.input]: row.src };
+  if ('picture' in row) inputs.source = row.picture;
   if ('armature' in row) inputs.armature = row.armature;
   if ('material' in row && row.material) inputs.material = [WIRED_MATERIAL];
   return inputs;
@@ -351,8 +367,11 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 90 -> 98 at #1784 (the eight Transform nodes), NOT operators, so the operator count does not move.
     // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), likewise.
     // 100 -> 101 -> 102 at #1811 (PolarSplit, OwnWorld). 102 -> 103 at #1811 (Value).
-    expect(listNodeTypes()).toHaveLength(103);
-    expect(operators()).toHaveLength(13);
+    // 103 -> 104 at #1720 (ModelGenerate, no operator).
+    // #1879 — `Layer` becomes an operator (a composition's layer stack): the type count stays at
+    // 104 and the operator count moves 13 -> 14.
+    expect(listNodeTypes()).toHaveLength(104);
+    expect(operators()).toHaveLength(14);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

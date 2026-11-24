@@ -24,6 +24,7 @@
 // REF: src/app/FloatingViewportToolbar.tsx (toolbarMenuAnchor); UX-BACKLOG #5.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 async function box(loc: import('@playwright/test').Locator) {
   const b = await loc.boundingBox();
@@ -42,7 +43,7 @@ test('#5 the Add menu opens below the toolbar pill (no overlap), left-aligned to
   const toolbar = await box(page.getByTestId('floating-viewport-toolbar'));
   const addBtn = await box(page.getByTestId('top-toolbar-add'));
 
-  await page.getByTestId('top-toolbar-add').click();
+  await (await toolbarControl(page, 'top-toolbar-add')).click();
   const menu = page.getByTestId('add-menu');
   await expect(menu).toBeVisible();
   const m = await box(menu);

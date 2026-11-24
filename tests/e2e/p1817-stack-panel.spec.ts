@@ -3,6 +3,10 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 type V3 = [number, number, number];
 interface W {
@@ -114,7 +118,7 @@ test('the Constraint Stack builds, blends, reorders and cuts a chain, and the ob
 
   // The card is on the object, empty, and "+ add" offers the constraints.
   await select(page, 'n_box');
-  await page.getByTestId('inspector-section-toggle-stack').click();
+  await openInspectorSection(page, 'stack');
   const panel = page.getByTestId('constraint-chain-panel');
   await expect(panel).toBeVisible();
   await page.getByTestId('constraint-chain-empty-n_box-constraints').click();

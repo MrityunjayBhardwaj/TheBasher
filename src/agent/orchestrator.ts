@@ -267,6 +267,24 @@ export interface TurnOptions {
   motionModel?: string;
   modelCapability?: ModelGenerationCapability;
   modelVersion?: string;
+  /**
+   * #1705 — the composer's context chips: where the director was last working and when (the
+   * playhead and its shot), and whether the selection (What) was dismissed. Each becomes one line
+   * of the turn's Context block in the USER message; absent fields add nothing.
+   */
+  context?: TurnContext;
+}
+
+/** #1705 — what the context chips tell the model beyond the selection. */
+export interface TurnContext {
+  /** Where: the pane the director last clicked, typed or dragged in, e.g. "Curves · Box position". */
+  pane?: string;
+  /** When: the playhead and its shot, e.g. "Shot 2 · 3.40 s". */
+  playhead?: string;
+  /** What was dismissed: the Selected nodes line is left out. */
+  omitSelection?: boolean;
+  /** Also: objects, panes or shots the director added with @, e.g. "Shot 2 (4.00–7.50 s)". */
+  also?: readonly string[];
 }
 
 /**
@@ -288,6 +306,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
     motionModel,
     modelCapability,
     modelVersion,
+    context,
   } = options;
   const sessionStore = useAgentSessionStore.getState();
 
@@ -320,7 +339,9 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
 
   // F2: read fresh DAG state for context. The LLM-facing user message
   // bundles the current scene summary + selection + the user request.
-  const initialContext = buildContextBlock(useDagStore.getState().state, selectedNodeIds);
+  // #1705 — plus the chips (Where / When), kept here and never in the system prompt, so a moved
+  // playhead does not churn the cached prompt.
+  const initialContext = buildContextBlock(useDagStore.getState().state, selectedNodeIds, context);
 
   // The wire-format conversation — what we actually send to the API.
   // Distinct from session.messages (UI-facing).
@@ -1010,6 +1031,7 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
     `- Use dag.exec only for ops the Mutator catalog does not cover (raw addNode/connect/disconnect for node types not yet wrapped, custom multi-step plans). Make sure new nodes are wired into the scene aggregator's "children" socket so they appear. To hang an Object, Group or Null under another Object or Group, connect the parent's "world" output to the child's "parent" input (not into the parent's "children").`,
     `- The Context block lists "Anchors" — the project's named outputs (scene, render) resolved to their concrete node ids (e.g. "n_scene"). Use those exact ids when wiring connections. NEVER use the literal string "scene" or "render" as a node id; that's the placeholder NAME, not a real id.`,
     `- The user's current selection appears in the Context block at the start of each turn — prefer acting on selected nodes when the request says "this", "selected", "it".`,
+    `- The Context block may also carry "Where:" (the editor pane the user was last working in: Curves, Nodes, Shots, the viewport…) and "When:" (the playhead and its shot). They set the default meaning of a request: "make it rougher" in Nodes is about a material, in Curves about the motion curve shown there, at the shot under the playhead. Anything the request names explicitly wins over them.`,
     `- When the user references an existing node by description (e.g. "the cube", "the green sphere", "selected"), call agent.identify FIRST to resolve the reference to a concrete node id before constructing any Op. The orchestrator may force this call on round 1; receive a "match" with concrete ids, then act. If the result is "ambiguous" or "no-match" the turn ends — do not attempt to guess; the user will pick the candidate next turn.`,
     `- After agent.identify resolves a "match", a follow-up user message will state the concrete ids ("Identify resolved → ..."). Use ONLY those ids in subsequent ops; the closure-preservation gate rejects ops that target nodes outside the resolved scope.`,
     `- Describe your changes clearly so the user knows what you propose.`,
@@ -1019,12 +1041,13 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
   ].join('\n');
 }
 
-function buildContextBlock(
+export function buildContextBlock(
   dagState: {
     nodes: Record<string, { type: string; params?: unknown }>;
     outputs: Record<string, { node: string; socket: string } | unknown>;
   },
   selectedNodeIds: ReadonlySet<string>,
+  context: TurnContext = {},
 ): string {
   const summary = summarizeDag(dagState.nodes, dagState.outputs);
 
@@ -1066,7 +1089,17 @@ function buildContextBlock(
       ? `Selected nodes:\n${selectionDetails.join('\n')}`
       : 'Selected nodes: none.';
 
-  return ['Context (current DAG state):', summary, '', anchorsBlock, '', selectionBlock].join('\n');
+  // #1705 — the chips. Each line exists only when its chip does, so a turn with none sends exactly
+  // the block it sent before there were chips.
+  const lines = ['Context (current DAG state):', summary, '', anchorsBlock];
+  if (!context.omitSelection) lines.push('', selectionBlock);
+  const chipLines: string[] = [];
+  if (context.pane)
+    chipLines.push(`Where: ${context.pane} (the editor pane the user last worked in)`);
+  if (context.playhead) chipLines.push(`When: ${context.playhead} (the playhead, film time)`);
+  if (context.also && context.also.length > 0) chipLines.push(`Also: ${context.also.join('; ')}`);
+  if (chipLines.length > 0) lines.push('', ...chipLines);
+  return lines.join('\n');
 }
 
 function truncate(s: string, limit: number): string {

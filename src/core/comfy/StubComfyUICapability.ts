@@ -48,6 +48,13 @@ export class StubComfyUICapability implements ComfyUICapability {
   readonly id = 'stub';
   readonly kind = 'stub' as const;
 
+  /**
+   * Test helper (#1718) — one entry per submission, in order: the names of the Basher outputs the
+   * submitted workflow declares. Lets a test (and the e2e seam) see which workflow ran when,
+   * and how many times, without a server.
+   */
+  readonly submissions: string[][] = [];
+
   private nextJobId = 1;
   private cancelled = new Set<string>();
   private readonly errorQueue: Error[];
@@ -63,6 +70,7 @@ export class StubComfyUICapability implements ComfyUICapability {
   }
 
   async submit(workflowJson: ComfyWorkflowJson, inputs: ComfyInputs): Promise<ComfySubmitResult> {
+    this.record(workflowJson);
     if (this.errorQueue.length > 0) {
       const err = this.errorQueue.shift()!;
       throw err;
@@ -82,6 +90,7 @@ export class StubComfyUICapability implements ComfyUICapability {
     inputs: ComfyInputs,
     onEvent?: (event: ComfyProgressEvent) => void,
   ): Promise<ComfyBatchResult> {
+    this.record(workflowJson);
     if (this.errorQueue.length > 0) {
       const err = this.errorQueue.shift()!;
       throw err;
@@ -125,6 +134,12 @@ export class StubComfyUICapability implements ComfyUICapability {
 
   async cancel(jobId: string): Promise<void> {
     this.cancelled.add(jobId);
+  }
+
+  private record(workflowJson: ComfyWorkflowJson): void {
+    this.submissions.push(
+      scanBasherExports((workflowJson as ComfyApiJson) ?? {}).map((e) => e.name),
+    );
   }
 
   /** Test helper — has cancel(jobId) been called? */

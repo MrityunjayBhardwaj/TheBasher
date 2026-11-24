@@ -16,8 +16,17 @@
 //
 // Reverting the grid→islands change (panels back as docked columns) flips the
 // position:absolute + full-bleed-width assertions → these fail.
+//
+// #1704 — the agent chat is no longer a bottom island: it is a full-height grid
+// column at the window's right (p1704-chat-column.spec.ts). "Full-bleed" here
+// is now measured against the layout MINUS that column, and the bottom-centre
+// island is the playback bar alone. Updated on purpose to the decided layout.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -34,10 +43,13 @@ test.beforeEach(async ({ page }) => {
 test('#2.1 the viewport is full-bleed — no reserved side columns', async ({ page }) => {
   const main = await page.getByTestId('viewport-slot').boundingBox();
   const layout = await page.getByTestId('layout').boundingBox();
-  if (!main || !layout) throw new Error('missing boxes');
-  // The viewport <main> spans (essentially) the full layout width. Revert to the
-  // tree | viewport | inspector grid → main shrinks by ~560px → this fails.
-  expect(main.width).toBeGreaterThan(layout.width * 0.98);
+  const chat = await page.getByTestId('agentdock-slot').boundingBox();
+  if (!main || !layout || !chat) throw new Error('missing boxes');
+  // The viewport <main> spans (essentially) the full layout width left of the
+  // chat column (#1704). Revert to the tree | viewport | inspector grid → main
+  // shrinks by another ~560px → this fails.
+  expect(main.x).toBeLessThan(layout.x + 1);
+  expect(main.width).toBeGreaterThan((layout.width - chat.width) * 0.98);
 });
 
 for (const { id, edge } of [
@@ -62,10 +74,14 @@ for (const { id, edge } of [
     } else {
       expect(main.x + main.width - (box.x + box.width)).toBeLessThan(24);
     }
-    // Top-anchored, and STOPS SHORT of the bottom so the bottom widget band
-    // (orbit gizmo / Persp-Ortho / the bottom-center stack) stays clear.
+    // Top-anchored. The inspector STOPS SHORT of the bottom so the bottom-right
+    // orbit gizmo + Persp/Ortho stay clear; the outliner has nothing under it
+    // since the chat left the bottom band (#1704), so it runs to the island gap.
     expect(box.y - main.y).toBeLessThan(24);
-    expect(main.y + main.height - (box.y + box.height)).toBeGreaterThan(100);
+    const bottomGap = main.y + main.height - (box.y + box.height);
+    // #1704 — the outliner stops just above the floating playback bar, which owns the bottom band.
+    if (edge === 'right') expect(bottomGap).toBeGreaterThan(100);
+    else expect(bottomGap).toBeLessThanOrEqual(61);
   });
 }
 
@@ -93,8 +109,9 @@ test('#2.4 V35 — collapsing the outliner island keeps its expand toggle reacha
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
 });
 
-// Slice 2 (bottom islands): the agent chat + timeline float as a STACKED
-// bottom-center island group; the viewport is now full-bleed top→bottom.
+// Slice 2 (bottom islands): the playback bar floats as a bottom-center island
+// (#1704 — alone: the chat moved to its own column); the viewport is full-bleed
+// top→bottom.
 test('#2.5 the viewport is full-bleed vertically — no docked bottom rows', async ({ page }) => {
   const main = await page.getByTestId('viewport-slot').boundingBox();
   const layout = await page.getByTestId('layout').boundingBox();
@@ -104,28 +121,34 @@ test('#2.5 the viewport is full-bleed vertically — no docked bottom rows', asy
   expect(main.y + main.height).toBeGreaterThan(layout.y + layout.height - 8);
 });
 
-test('#2.6 agent chat + timeline are a centered stack — chat ABOVE timeline', async ({ page }) => {
-  const agent = await page.getByTestId('agentdock-slot').boundingBox();
+test('#2.6 the bottom island is the playback bar alone, centred in the bottom band', async ({
+  page,
+}) => {
   const timeline = await page.getByTestId('timeline-slot').boundingBox();
-  const layout = await page.getByTestId('layout').boundingBox();
-  if (!agent || !timeline || !layout) throw new Error('missing boxes');
-  // Both centered on the layout.
-  const layoutCenter = layout.x + layout.width / 2;
-  expect(Math.abs(agent.x + agent.width / 2 - layoutCenter)).toBeLessThan(24);
-  expect(Math.abs(timeline.x + timeline.width / 2 - layoutCenter)).toBeLessThan(24);
-  // Same width (one stack), and the chat sits directly above the timeline.
-  expect(Math.abs(agent.width - timeline.width)).toBeLessThan(2);
-  expect(agent.y + agent.height).toBeLessThanOrEqual(timeline.y + 1);
+  const main = await page.getByTestId('viewport-slot').boundingBox();
+  const pill = await page.getByTestId('projection-toggle').boundingBox();
+  if (!timeline || !main || !pill) throw new Error('missing boxes');
+  // #1704 — centred between the viewport's left edge and the bottom-right Persp/Ortho pill (the
+  // band the playback bar owns), never running under the pill; sitting at the bottom.
+  const bandCenter = (main.x + pill.x) / 2;
+  expect(Math.abs(timeline.x + timeline.width / 2 - bandCenter)).toBeLessThan(24);
+  expect(timeline.x + timeline.width).toBeLessThanOrEqual(pill.x);
+  expect(main.y + main.height - (timeline.y + timeline.height)).toBeLessThan(24);
+  // #1704 — nothing of the chat is in <main> any more (it was stacked above the bar).
+  await expect(page.getByTestId('viewport-slot').getByTestId('agent-chat')).toHaveCount(0);
 });
 
-// Follow-up 1: the centered-surface reserve (toolbar pill + bottom stack) is
-// collapse-AWARE — folding both side panels to their 28px strips frees the
-// centered band, so the toolbar and the bottom stack reclaim the width that was
-// previously reserved for the expanded islands (V46: ONE collapse-aware
-// geometry source, no stale static reserve).
-test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async ({ page }) => {
+// Follow-up 1: the centered-surface reserve is collapse-AWARE — folding both
+// side panels to their 28px strips frees the centered band, so the toolbar
+// reclaims the width that was reserved for the expanded islands (V46: ONE
+// collapse-aware geometry source). #1704 — the playback bar no longer depends on
+// the panels at all: they stop above the bottom band it owns, so its width
+// holds steady (updated on purpose from "widens").
+test('#2.8 collapsing both side panels widens the toolbar; the playback bar keeps its band', async ({
+  page,
+}) => {
   const toolbarBefore = await page.getByTestId('floating-viewport-toolbar').boundingBox();
-  const stackBefore = await page.getByTestId('agentdock-slot').boundingBox();
+  const stackBefore = await page.getByTestId('timeline-slot').boundingBox();
   if (!toolbarBefore || !stackBefore) throw new Error('missing boxes');
 
   // Fold both side islands to their chevron strips.
@@ -134,13 +157,13 @@ test('#2.8 collapsing both side panels widens the toolbar + bottom stack', async
   await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'true');
 
   const toolbarAfter = await page.getByTestId('floating-viewport-toolbar').boundingBox();
-  const stackAfter = await page.getByTestId('agentdock-slot').boundingBox();
+  const stackAfter = await page.getByTestId('timeline-slot').boundingBox();
   if (!toolbarAfter || !stackAfter) throw new Error('missing boxes');
 
-  // Both centered surfaces are now wider. With a STATIC reserve they would be
-  // pinned to the expanded footprint regardless of collapse → these fail.
+  // The toolbar is wider. With a STATIC reserve it would be pinned to the
+  // expanded footprint regardless of collapse → this fails.
   expect(toolbarAfter.width).toBeGreaterThan(toolbarBefore.width + 40);
-  expect(stackAfter.width).toBeGreaterThan(stackBefore.width + 40);
+  expect(Math.abs(stackAfter.width - stackBefore.width)).toBeLessThan(2);
 });
 
 // Follow-up 3: the first-run orbit hint sits just above the bottom-center stack
@@ -157,7 +180,7 @@ test('#2.9 opening the timeline drawer hides the orbit hint', async ({ page }) =
 });
 
 test('#2.7 present mode hides every floating island', async ({ page }) => {
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
   // Islands stay MOUNTED (mount-once discipline) but display:none → hidden +
   // removed from the tab order (D-W8-8). Revert present-hide → these are visible.

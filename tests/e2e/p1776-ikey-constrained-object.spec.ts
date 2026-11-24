@@ -9,6 +9,10 @@
 
 import { expect, test } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 type V3 = [number, number, number];
 interface Chan {
@@ -52,7 +56,7 @@ async function boot(page: Page) {
     w.__basher_time.getState().setTime(0);
     w.__basher_selection.getState().select('n_box');
   }, OWN_ROT);
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
 }
 
 const dispatch = (page: Page, op: unknown) =>

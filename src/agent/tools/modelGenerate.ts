@@ -1,52 +1,37 @@
-// model.generate — agent tool. Text or an image becomes a mesh in the graph.
+// model.generate — agent tool. Text becomes a mesh in the graph, through a `ModelGenerate` node
+// that keeps the request (#1720).
 //
-// The claim phase A4 makes is that a generated mesh takes the identical code path
-// an imported GLB takes, and this file is where that claim is either kept or
-// quietly broken. It keeps it by having nothing of its own: the handler ingests
-// the bytes with `ingestSingleFile` and builds ops with
-// `buildGltfImportOpsFromOpfs` — the same two functions the human drop path and
-// `library.import` call, unmodified. There is no second road to keep in step and
-// no provenance flag for anything downstream to branch on.
+// The claim phase A4 makes is that a generated mesh takes the identical code path an imported
+// GLB takes, and it is still kept: the mesh is ingested with `ingestSingleFile` and its ops are
+// built with `buildGltfImportOpsFromOpfs` — the two functions the human drop path and
+// `library.import` call, unmodified. What #1720 adds is upstream of that road: the ops also add a
+// `ModelGenerate` holding the prompt, the seed, the provider and the variant it kept, so the
+// model can be regenerated and traced. It is the SAME builder the director's Keep uses
+// (`buildKeepVariantOps`, via `buildGenerateAndKeepOps`), so UI == agent by construction.
 //
-// Shaped after `library.import`, which is the closest sibling: async, brings an
-// asset into the scene, returns Op[] for the Diff and NEVER dispatches (V7). It
-// is a tool rather than a mutator for the reason A1 recorded: a mutator's `build`
-// is synchronous and pure by contract, and generation is network I/O — modelling
-// it as a mutator would mean either lying about purity or inventing a node type
-// whose evaluation performs I/O, which is the provenance branch A4 exists to
-// avoid.
+// Shaped after `library.import`: async, brings an asset into the scene, returns Op[] for the
+// Diff and NEVER dispatches (V7). It is a tool rather than a mutator because generation is
+// network I/O and a mutator's `build` is synchronous and pure by contract.
 //
-// 🔴 ONE HONEST DIFFERENCE FROM library.import, STATED BECAUSE IT IS A SIDE
-// EFFECT BEFORE ACCEPTANCE. `library.import` names an asset that already exists;
-// generation has to create one, so this handler WRITES A FILE TO OPFS before it
-// returns, and that write survives even if the director rejects the Diff. That is
-// deliberate rather than overlooked: the ops reference the asset by path, so the
-// bytes must exist for the ops to mean anything, and the generation has already
-// been paid for by the time they arrive. A rejected Diff leaves a usable asset in
-// My Imports rather than silently discarding something the director was billed
-// for. What it must NOT do is dispatch, and it does not.
+// 🔴 ONE HONEST DIFFERENCE FROM library.import, STATED BECAUSE IT IS A SIDE EFFECT BEFORE
+// ACCEPTANCE. Generation has to create an asset, so this handler WRITES TO THE STORE before it
+// returns — the variant's bytes, the kept asset and the record beside it — and those writes
+// survive a rejected Diff. Deliberate: the ops reference the asset by path, so the bytes must
+// exist for the ops to mean anything, and the generation has already been paid for. A rejected
+// Diff leaves a usable asset in Your imports rather than discarding something billed. What it
+// must NOT do is dispatch, and it does not.
 //
-// The model version is NOT an argument. It is configuration: a director chooses
-// it once in Settings, and the tool generates with what is configured. Letting
-// the agent name a version per call would spread the surface across every prompt
-// for no gain — the model is not choosing between capabilities, it is asking for
-// a mesh.
+// The model version is NOT an argument. It is configuration: a director chooses it once in
+// Settings, and the tool generates with what is configured.
 //
-// REF: src/agent/tools/libraryImport.ts (the pattern);
-//      src/agent/tools/motionGenerate.ts (the A1 sibling);
-//      src/app/asset/generateModel.ts (the human half);
-//      ref/architecture/ai-track.md phase A4.
+// REF: src/app/asset/generateModel.ts (the road both surfaces share);
+//      src/agent/tools/libraryImport.ts (the pattern); src/nodes/ModelGenerate.ts.
 
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
-import { MAX_FACE_LIMIT, describeRequest } from '../../core/modelgen';
-import type { ModelGenerationRequest } from '../../core/modelgen';
-import { ingestSingleFile } from '../../app/asset/importCommon';
-import {
-  buildGltfImportOpsFromOpfs,
-  leftBehindNotice,
-  refusalNotice,
-} from '../../app/asset/importGltf';
+import { MAX_FACE_LIMIT } from '../../core/modelgen';
+import { buildGenerateAndKeepOps } from '../../app/asset/generateModel';
+import { leftBehindNotice } from '../../app/asset/importGltf';
 
 export const modelGenerateSchema = z.object({
   prompt: z
@@ -68,6 +53,11 @@ export const modelGenerateSchema = z.object({
   texture: z.boolean().optional().describe('Generate texture (default true)'),
   pbr: z.boolean().optional().describe('Generate PBR materials (default true)'),
   name: z.string().optional().describe('Name for the imported asset (defaults to the prompt)'),
+  seed: z
+    .number()
+    .int()
+    .optional()
+    .describe('Seed for the generation; omitted chooses one, and it is recorded on the node'),
 });
 
 export type ModelGenerateArgs = z.infer<typeof modelGenerateSchema>;
@@ -75,13 +65,12 @@ export type ModelGenerateArgs = z.infer<typeof modelGenerateSchema>;
 export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
   name: 'model.generate',
   description:
-    'Generate a 3D mesh from a text description. Returns an Op[] that adds the ' +
-    'identical nodes a dropped .glb file produces — the file’s objects standing ' +
-    'under the scene, each linked into the active collection, with no wrapper ' +
-    'around them — because the generated bytes are ingested and ' +
-    'imported by the same two functions a file drop uses, so every road open to ' +
-    'an imported mesh is open to this one. The model version and API key are ' +
-    'configured in Settings, not chosen per call.',
+    'Generate a 3D mesh from a text description. Returns an Op[] that adds a ModelGenerate ' +
+    'node holding the prompt, seed and provider (so the model can be regenerated and traced), ' +
+    'and the identical nodes a dropped .glb file produces — the file’s objects standing ' +
+    'under the scene, each linked into the active collection, with no wrapper around them — ' +
+    'because the generated bytes are ingested and imported by the same two functions a file ' +
+    'drop uses. The model version and API key are configured in Settings, not chosen per call.',
   paramSchema: modelGenerateSchema,
   async handler(args: ModelGenerateArgs, ctx: ToolContext): Promise<ToolResult> {
     if (!ctx.modelCapability) {
@@ -101,55 +90,37 @@ export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
       return { ops: [], text: 'Error: the project has no scene output to import into.' };
     }
 
-    const request: ModelGenerationRequest = {
-      source: 'text',
-      prompt: args.prompt,
-      ...(args.negativePrompt !== undefined ? { negativePrompt: args.negativePrompt } : {}),
-      ...(args.faceLimit !== undefined ? { faceLimit: args.faceLimit } : {}),
-      ...(args.quad !== undefined ? { quad: args.quad } : {}),
-      ...(args.texture !== undefined ? { texture: args.texture } : {}),
-      ...(args.pbr !== undefined ? { pbr: args.pbr } : {}),
-      ...(ctx.modelVersion !== undefined ? { modelVersion: ctx.modelVersion } : {}),
-    };
-
-    let opfsPath: string;
-    let taskId: string;
     try {
-      const generated = await ctx.modelCapability.generate(request);
-      taskId = generated.taskId;
-      opfsPath = await ingestSingleFile(
-        { relativePath: 'model.glb', bytes: new Uint8Array(generated.glb) },
-        args.name ?? describeRequest(request),
-      );
+      const made = await buildGenerateAndKeepOps(ctx.dagState, ctx.modelCapability, {
+        prompt: args.prompt,
+        ...(args.name !== undefined ? { name: args.name } : {}),
+        ...(args.seed !== undefined ? { seed: args.seed } : {}),
+        ...(ctx.modelVersion !== undefined ? { modelVersion: ctx.modelVersion } : {}),
+        knobs: {
+          ...(args.negativePrompt !== undefined ? { negativePrompt: args.negativePrompt } : {}),
+          ...(args.faceLimit !== undefined ? { faceLimit: args.faceLimit } : {}),
+          ...(args.quad !== undefined ? { quad: args.quad } : {}),
+          ...(args.texture !== undefined ? { texture: args.texture } : {}),
+          ...(args.pbr !== undefined ? { pbr: args.pbr } : {}),
+        },
+      });
+      const variant = made.variants[0];
+      return {
+        ops: made.ops,
+        text:
+          `Generated "${args.name ?? args.prompt}" (task ${variant?.taskId ?? '?'}, seed ${variant?.seed ?? '?'}, ` +
+          `provider ${ctx.modelCapability.id}) — saved to ${made.opfsPath} and imported as native ` +
+          `geometry, standing where the file puts it. The request is kept on Model generate node ` +
+          `${made.nodeId}, so it can be regenerated.${leftBehindNotice(made.notices)}`,
+      };
     } catch (err) {
-      // A licence refusal, a rejected key and a transport failure all land here,
-      // and all are things the model can act on — an unrecorded service is a
-      // settings-and-paperwork problem, a timeout is a retry. Returning the
-      // message beats throwing, which would end the turn with nothing to read.
+      // A licence refusal, a rejected key, a transport failure and an import refusal all land
+      // here, and all are things the model can act on. Returning the message beats throwing,
+      // which would end the turn with nothing to read.
       return {
         ops: [],
         text: `Error: model generation failed — ${err instanceof Error ? err.message : String(err)}`,
       };
     }
-
-    // V7 — the FORKED state, never the live store. The tool returns ops for the
-    // Diff; the director accepts before anything in the graph changes.
-    const chain = await buildGltfImportOpsFromOpfs(opfsPath, ctx.dagState);
-    // #1053 — a file the native reader refused is not imported at all.
-    if (chain.road === 'refused') {
-      return {
-        ops: [],
-        text: `Error: generated "${args.name ?? args.prompt}" (task ${taskId}) was saved to ${opfsPath} but not imported — ${refusalNotice(chain.nativeRefusal)}.`,
-      };
-    }
-    const landed = 'native geometry, standing where the file puts it';
-
-    return {
-      ops: chain.ops,
-      text:
-        `Generated "${args.name ?? args.prompt}" (task ${taskId}) — imported from ` +
-        `${opfsPath} as ${landed}. It is an ordinary imported ` +
-        `asset, with nothing in the graph marking it as generated.${leftBehindNotice(chain.notices)}`,
-    };
   },
 };

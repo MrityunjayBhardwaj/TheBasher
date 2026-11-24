@@ -7,7 +7,10 @@
 // One stack PER BAND: the fold groups by paramPath, so a driver on `position` and one on
 // `material.metalness` never contend, and the panel must not imply they do.
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from './_fixtures';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface W {
   __basher_dag: {

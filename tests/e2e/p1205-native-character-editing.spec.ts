@@ -13,6 +13,10 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 type Vec3 = [number, number, number];
 interface Node {
@@ -237,7 +241,7 @@ test('selecting the armature shows the file’s keys as dopesheet rows, and writ
       ).length,
     base!,
   );
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const rows = async () => Number(await host.getAttribute('data-channel-count'));

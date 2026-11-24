@@ -333,7 +333,57 @@ export interface InputDescriptor {
    * the other way round. Read through `worldChildrenOf` (`core/dag/worldChildren.ts`).
    */
   gathersChildren?: true;
+  /**
+   * #1716 — what an Image input does with time: `'still'` reads one image, `'frames'` steps
+   * through a run of them. Absent: the input takes whatever arrives and passes it on (an effect).
+   * A function when the node's own params decide (a ComfyUI workflow node is a still or a
+   * video workflow by how it is set up). Allowed on an input that accepts `Image` only.
+   *
+   * The value says which it carries ({@link ImageExtent}); the evaluator reconciles the two where
+   * the value enters the input, read through `imageTakeOf` (`imageExtent.ts`):
+   *  - a still into `'frames'` holds for the whole range. Nothing to do: a still's value does
+   *    not change with time, which every still producer keeps (it reads no time).
+   *  - frames into `'still'` picks a frame: the first of the run. The producer is evaluated at
+   *    that frame and the value arrives as a still that names the frame it was picked from.
+   */
+  takes?: ImageTake | ((params: unknown) => ImageTake);
 }
+
+/** #1715 — the sockets a node has by its params ({@link NodeDefinition.instanceSockets}). */
+export interface InstanceSockets {
+  readonly inputs: Readonly<Record<SocketId, InputDescriptor>>;
+  readonly outputs: Readonly<Record<SocketId, OutputDescriptor>>;
+}
+
+/** #1716 — see {@link InputDescriptor.takes}. */
+export type ImageTake = 'still' | 'frames';
+
+/**
+ * #1716 — the frames a run of images covers, inclusive, at `fps` (so a frame turns into a time).
+ * In the producer's own frames: a video file's are its source frames, a ComfyUI workflow's are
+ * the timeline frames it renders.
+ */
+export interface ImageFrameRange {
+  readonly start: number;
+  readonly end: number;
+  readonly fps: number;
+}
+
+/**
+ * #1716 — whether an Image value is one picture or a run of frames. Lives on the value
+ * (`ImageValue.extent`, `src/nodes/types.ts`) because the socket is one type for both: the
+ * producer knows, the wire does not.
+ *
+ *  - `still`: one image, the same at every time. `pickedFrame` is set when the still was picked
+ *    out of a run of frames on its way into a still input, and names that frame.
+ *  - `frames`: the value at time t is the frame at t. `range` is the run it covers, or null when
+ *    the producer renders whatever time it is asked for (a render pass) and has no end of its own.
+ *
+ * Read it through `matchImageExtent` so a new arm is a compile error at every reader.
+ */
+export type ImageExtent =
+  | { readonly kind: 'still'; readonly pickedFrame?: number }
+  | { readonly kind: 'frames'; readonly range: ImageFrameRange | null };
 
 /**
  * #1548 — one NAMED input of a sub-network, declared by the node that owns it (the Solver's
@@ -426,6 +476,19 @@ export interface ResolvedInputs {
  *  or sit in a socket name, so this never collides with a socket. */
 export function sourceIdsKey(socket: string): string {
   return `${socket}#sourceIds`;
+}
+
+/** #1950 — where the evaluator puts a {@link NodeDefinition.filmsCamera} node's camera on screen.
+ *  `#` cannot start or sit in a socket name, so this never collides with a socket. */
+export const FILMED_CAMERA_KEY = '#filmedCamera';
+
+/**
+ * #1950 — the camera on screen at the time being evaluated, as the evaluator handed it to a
+ * {@link NodeDefinition.filmsCamera} node: `undefined` when none was handed over (no read
+ * registered, or `evaluate` called by hand), `null` when the read found no camera to film with.
+ */
+export function filmedCameraOf(inputs: ResolvedInputs): unknown {
+  return inputs[FILMED_CAMERA_KEY];
 }
 
 /**
@@ -523,8 +586,11 @@ export type BypassKind =
  * declare a spine and a stack walks past them) and belong to no offered stack. Giving one
  * of them a section that a stack actually reads would make that stack offer a member it
  * does not have — a lying label with a one-commit fuse.
+ *
+ * `'layer'` (#1879): a composition's layer stack, on the Image lane. Its door is Add Layer, which
+ * wraps a source as a layer, so no "+ Add" menu lists the bare type.
  */
-export type OperatorSection = 'modifier' | 'material' | 'effect' | 'none';
+export type OperatorSection = 'modifier' | 'material' | 'effect' | 'layer' | 'none';
 
 /**
  * Everything that is true of a node BECAUSE it is an operator, declared once.
@@ -586,6 +652,15 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   keyedCook?: boolean;
   /**
+   * #1950 — this node films through a camera, and what it outputs depends on the camera ON SCREEN
+   * at the time being evaluated: the cut a switch's keys put there and that camera's keyed, aimed,
+   * parented pose. Keys live off the graph, so the evaluator asks a read registered above it
+   * (`setFilmedCamera`) and hands the answer over beside the inputs ({@link filmedCameraOf}), in
+   * the node's cache key by its value. The render passes declare it, so their `sourceHash` follows
+   * the camera the render draws with rather than the switch's authored one.
+   */
+  filmsCamera?: true;
+  /**
    * #1811 — the bottom of a constraint chain: its world output is the world of the object this
    * param names BEFORE that object's chain (the parent's world times its own transform). A param
    * and not a wire, because the chain ends at that object: a wire would be a loop.
@@ -601,6 +676,17 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   paramSchema: z.ZodType<P, z.ZodTypeDef, unknown>;
   inputs: Record<SocketId, InputDescriptor>;
   outputs: Record<SocketId, OutputDescriptor>;
+  /**
+   * #1715 — sockets a node of this type has by its own params, on top of `inputs`/`outputs`:
+   * a ComfyUI workflow node has one per Basher marker in its workflow file. Pure, and the same
+   * params give the same sockets. A socket here carries a type, a cardinality and (Image) a
+   * `takes`, never the structural flags (body, world, chain, owns, gathersChildren, sourceIds,
+   * available), so a reader that only looks for those may keep reading `inputs`. A wire on a
+   * socket the params no longer give is kept and read as unconnected, as #1801 keeps a wire on a
+   * socket that is not available. Read through `inputsOfNode`/`outputsOfNode`
+   * (`instanceSockets.ts`), never by calling this.
+   */
+  instanceSockets?: (params: unknown) => InstanceSockets;
   /**
    * #1548 — the named inputs of the sub-network this node owns (see `BodyInputDescriptor`).
    * Only a node with `body` sockets declares them.

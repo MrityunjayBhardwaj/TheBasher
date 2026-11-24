@@ -13,6 +13,10 @@
 // box stays its own scene child.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface BasherWindow {
   __basher_dag?: {
@@ -123,10 +127,8 @@ test.describe('v0.6 #2 W4 — material-scalar animation boundary-pair (H40)', ()
     // The material section (and its ParamDiamond) is rendered against the linked
     // BoxData (the material's owner), so the editor + diamond testids are keyed to
     // n_box_data even though the user selected the Object n_box.
-    const editor = page.getByTestId('inspector-material-editor-n_box_data');
-    if (!(await editor.isVisible())) {
-      await page.getByTestId('inspector-section-toggle-material').click();
-    }
+    await openInspectorSection(page, 'material');
+    await expect(page.getByTestId('inspector-material-editor-n_box_data')).toBeVisible();
     const diamond = page.getByTestId(`inspector-diamond-n_box_data-${PARAM}`);
     await expect(diamond).toBeVisible();
 

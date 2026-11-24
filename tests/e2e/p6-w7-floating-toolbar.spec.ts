@@ -21,6 +21,10 @@
 
 import { expect, test } from './_fixtures';
 import { seedCubeObjectId } from './_seedNodes';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface BasherWindow {
   __basher_editor?: { getState: () => { activeTool: string } };
@@ -57,8 +61,9 @@ test('P6.W7#1 R8 visible in edit; all 11 testids reachable (closes §11 #1)', as
     'floating-toolbar-snap-toggle',
     'floating-toolbar-snap-step',
   ];
+  // #1935 — reachable = inline, or in the ⋯ menu (toolbarControl opens it when needed).
   for (const id of ids) {
-    await expect(page.getByTestId(id), `${id} should be visible`).toBeVisible();
+    await expect(await toolbarControl(page, id), `${id} should be visible`).toBeVisible();
   }
 });
 
@@ -67,8 +72,11 @@ test('P6.W7#2 click R8 Move → store + R8 highlight agree synchronously (V19)',
   // tool surface, so V19 sync is proven between R8 and the editorStore (and
   // the keyboard, in #4). The cross-surface duplication this test once
   // guarded against is structurally gone.
-  await page.getByTestId('floating-toolbar-move').click();
-  await expect(page.getByTestId('floating-toolbar-move')).toHaveAttribute('data-active', 'true');
+  await (await toolbarControl(page, 'floating-toolbar-move')).click();
+  await expect(await toolbarControl(page, 'floating-toolbar-move')).toHaveAttribute(
+    'data-active',
+    'true',
+  );
   const tool = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_editor!.getState().activeTool,
   );
@@ -81,7 +89,10 @@ test('P6.W7#4 keyboard E sets rotate; R8 reflects it (V19 — keyboard ↔ R8 sy
   // Click body to defocus any incidental editable surface.
   await page.locator('body').click({ position: { x: 5, y: 5 } });
   await page.keyboard.press('e');
-  await expect(page.getByTestId('floating-toolbar-rot')).toHaveAttribute('data-active', 'true');
+  await expect(await toolbarControl(page, 'floating-toolbar-rot')).toHaveAttribute(
+    'data-active',
+    'true',
+  );
   const tool = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_editor!.getState().activeTool,
   );
@@ -102,7 +113,7 @@ test('P6.W7#5 R8 Home button reframes camera on selected node', async ({ page })
 
   // Click Home — should not throw, and primaryNodeId should still be
   // set after the click (frameSelected reads it, doesn't mutate it).
-  await page.getByTestId('floating-toolbar-home').click();
+  await (await toolbarControl(page, 'floating-toolbar-home')).click();
   const primaryAfter = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_selection!.getState().primaryNodeId,
   );
@@ -113,7 +124,7 @@ test('P6.W7#6 R8 Grid button toggles viewportStore.gridVisible', async ({ page }
   const before = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_viewport!.getState().gridVisible,
   );
-  await page.getByTestId('floating-toolbar-grid').click();
+  await (await toolbarControl(page, 'floating-toolbar-grid')).click();
   const after = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_viewport!.getState().gridVisible,
   );
@@ -122,9 +133,13 @@ test('P6.W7#6 R8 Grid button toggles viewportStore.gridVisible', async ({ page }
 
 test('P6.W7#7 R8 shading-rendered flips viewportStore.shading to "rendered"', async ({ page }) => {
   // Default is studio per viewportStore.ts:74.
-  await expect(page.getByTestId('floating-toolbar-shading-studio')).toHaveClass(/text-accent/);
-  await page.getByTestId('floating-toolbar-shading-rendered').click();
-  await expect(page.getByTestId('floating-toolbar-shading-rendered')).toHaveClass(/text-accent/);
+  await expect(await toolbarControl(page, 'floating-toolbar-shading-studio')).toHaveClass(
+    /text-accent/,
+  );
+  await (await toolbarControl(page, 'floating-toolbar-shading-rendered')).click();
+  await expect(await toolbarControl(page, 'floating-toolbar-shading-rendered')).toHaveClass(
+    /text-accent/,
+  );
   const shading = await page.evaluate(
     () => (window as unknown as BasherWindow).__basher_viewport!.getState().shading,
   );
@@ -151,7 +166,7 @@ test('P6.W7#8 Present chrome-hide hides R1/R2/R5/R7 + R8; Esc restores; Canvas D
 
   // Enter present (the re-home for the deleted `director` mode). The Present
   // toggle now lives on the consolidated floating pill (testid preserved).
-  await page.getByTestId('top-toolbar-present').click();
+  await (await toolbarControl(page, 'top-toolbar-present')).click();
   await expect(page.getByTestId('layout')).toHaveAttribute('data-present', 'true');
 
   // Chrome hidden.

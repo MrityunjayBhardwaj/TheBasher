@@ -24,10 +24,12 @@ import { hashString, hashValue, type ContentHash } from './hash';
 import { getNodeType, registryEpoch, requireNodeType } from './registry';
 import { loopedWorldRefs, type DagState, type EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
+import { inputsOfNode } from './instanceSockets';
 import { inputAvailable, outputAvailable } from './socketAvailability';
 import { bodyInputLeavesOf } from './subnetworks';
 import type {
   EvalCtx,
+  ImageTake,
   InputDescriptor,
   NodeDefinition,
   NodeId,
@@ -35,7 +37,14 @@ import type {
   ResolvedInputs,
 } from './types';
 import { drawnInputsOf } from './worldChildren';
-import { sourceIdsKey } from './types';
+import {
+  asPickedStill,
+  ctxForPickedFrame,
+  framePickedFor,
+  imageTakeOf,
+  type ImageValueLike,
+} from './imageExtent';
+import { FILMED_CAMERA_KEY, sourceIdsKey } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
 // former home imports THIS module, so without that move the edge would have closed the cycle
@@ -452,6 +461,23 @@ export function setKeyedParams(read: KeyedParams | null): void {
   keyedParams = read;
 }
 
+// #1950 — the camera a render pass films through, as it is ON SCREEN at the time being evaluated:
+// the camera a switch's cut puts there and that camera's pose with its keys, aim and parent folded.
+// Keys and cuts live off the graph, so a pass that hashed only its inputs saw the switch's AUTHORED
+// camera at every frame. The read lives above this module (it is the resolver the render and the
+// viewport film with) and is registered, as the fold above is. Hashed by its VALUE into the node's
+// cache key, so a frame whose camera did not move keeps its key and one whose camera did, misses.
+export type FilmedCamera = (
+  state: DagState,
+  nodeId: NodeId,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+) => unknown;
+let filmedCamera: FilmedCamera | null = null;
+export function setFilmedCamera(read: FilmedCamera | null): void {
+  filmedCamera = read;
+}
+
 /** #1810 — whether `socket` is `def`'s world output. */
 function isWorldOutput(def: NodeDefinition | undefined, socket: string): boolean {
   return def?.outputs[socket]?.world === true;
@@ -774,8 +800,10 @@ export function evaluate(
     // node types and this node's cache key already carries its own.
     const resolved: ResolvedInputs = {};
     const inputHashes: Record<string, string | string[]> = {};
+    // #1715 — this node's own sockets: a workflow node's come from its file.
+    const ownInputs = inputsOfNode(def, node.params);
     for (const [socket, rawBinding] of Object.entries(drawnInputsOf(state, id, node))) {
-      const into = def.inputs[socket];
+      const into = ownInputs[socket];
       // #1810 — the parent input feeds the world output only, never the node's own value.
       if (into?.world === true) continue;
       // #1811 — and so does a constraint chain's.
@@ -790,11 +818,12 @@ export function evaluate(
           ? rawBinding
           : null;
       if (binding === null) continue;
+      const take = imageTakeOf(into, node.params);
       if (Array.isArray(binding)) {
         const values: unknown[] = [];
         const hashes: string[] = [];
         for (const ref of binding) {
-          const sub = evalRef(ref, depth + 1);
+          const sub = pickedArrival(state, options, take, ref, evalRef(ref, depth + 1));
           values.push(arrive(into, ref, sub.value));
           hashes.push(`${ref.socket}:${sub.hash}`);
         }
@@ -803,10 +832,17 @@ export function evaluate(
         // #1668 — a socket that picks by identity also gets who each element is.
         if (into?.sourceIds === true) resolved[sourceIdsKey(socket)] = binding.map((r) => r.node);
       } else {
-        const sub = evalRef(binding, depth + 1);
+        const sub = pickedArrival(state, options, take, binding, evalRef(binding, depth + 1));
         resolved[socket] = arrive(into, binding, sub.value);
         inputHashes[socket] = `${binding.socket}:${sub.hash}`;
       }
+    }
+
+    // #1950 — a node that films hears which camera is on screen now, by value in its key.
+    if (def.filmsCamera === true && filmedCamera) {
+      const onScreen = filmedCamera(state as DagState, id, ctx, cache);
+      resolved[FILMED_CAMERA_KEY] = onScreen;
+      inputHashes[FILMED_CAMERA_KEY] = hashValue(onScreen);
     }
 
     onStack.delete(id);
@@ -867,6 +903,52 @@ export function evaluate(
     };
   }
   return result;
+}
+
+/**
+ * #1716 — what `ref` delivers into `consumerId`'s input `socket`, for a reader that evaluates a
+ * producer for a socket on its own instead of evaluating the consumer (the ComfyUI run walks its
+ * frames and hands each frame's passes to a compiler). It applies the same arrival the evaluator
+ * does, so frames wired into a still input are the picked frame here too.
+ */
+export function evaluateInputRef(
+  state: EvaluableState,
+  consumerId: NodeId,
+  socket: string,
+  ref: NodeRef,
+  options: EvaluateOptions = {},
+): EvalResult {
+  const consumer = state.nodes[consumerId];
+  const consumerDef = consumer ? getNodeType(consumer.type) : undefined;
+  const into = consumerDef ? inputsOfNode(consumerDef, consumer!.params)[socket] : undefined;
+  const sub = evaluate(state, ref.node, { ...options, socket: ref.socket });
+  return pickedArrival(state, options, imageTakeOf(into, consumer?.params), ref, sub);
+}
+
+/**
+ * #1716 — `sub`, what `ref` gave at the time being evaluated, as it enters an input taking `take`.
+ * Frames into a still input are the producer's value at the picked frame (`framePickedFor`: the
+ * first of the run), arriving as a still that names the frame. The hash is the picked frame's,
+ * so a still input reads the same cache entry at every time. Anything else passes untouched.
+ */
+function pickedArrival(
+  state: EvaluableState,
+  options: EvaluateOptions,
+  take: ImageTake | undefined,
+  ref: { node: NodeId; socket: string },
+  sub: EvalResult,
+): EvalResult {
+  const frame = framePickedFor(take, sub.value);
+  if (frame === null) return sub;
+  const picked = evaluate(state, ref.node, {
+    ...options,
+    ctx: ctxForPickedFrame(sub.value as ImageValueLike, frame),
+    socket: ref.socket,
+  });
+  return {
+    value: asPickedStill(picked.value, frame),
+    hash: hashString(`pick:${frame}:${picked.hash}`),
+  };
 }
 
 function extractSocket(value: unknown, socket: string): unknown {

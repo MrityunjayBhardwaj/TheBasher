@@ -1,9 +1,11 @@
-// #1675 — the Graph editor space, against the REAL app: View ▸ Editor Space ▸ Graph draws the live
-// scene as nodes, a node clicked there is selected in the app (the inspector shows it), a node
-// selected in the app is marked in the graph, and Tab leaves the Graph for the 3D View, unmounting it. Unwiring the
-// menu item, the slot, or the selection hand-off drops one of these assertions.
+// #1675 — the node view, against the REAL app. #1703 moved it from an editor space to the bottom
+// drawer's Nodes tab: View ▸ Nodes opens it there and draws the live scene as nodes, a node clicked
+// there is selected in the app (the inspector shows it), a node selected in the app is marked in
+// the graph, and leaving the tab or closing the drawer unmounts it. Unwiring the menu item, the
+// tab, or the selection hand-off drops one of these assertions.
 
 import { expect, test } from './_fixtures';
+import { openDrawerTab } from './_drawer';
 
 interface DagWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, unknown> } } };
@@ -14,20 +16,23 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('menu-file-button')).toBeVisible();
 });
 
-test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection', async ({ page }) => {
+test('View ▸ Nodes draws the scene in the drawer and shares the selection', async ({ page }) => {
   const layout = page.getByTestId('layout');
   await page.getByTestId('menu-view-button').click();
-  await page.getByTestId('menu-view-space').hover();
-  await page.getByTestId('menu-view-space-graph').click();
-  await expect(layout).toHaveAttribute('data-space', 'graph');
-  await expect(page.getByTestId('graph-view')).toBeVisible();
+  await page.getByTestId('menu-view-nodes').click();
+  await expect(page.getByTestId('timeline-tab-nodes')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('timeline-drawer').getByTestId('graph-view')).toBeVisible();
+  // The viewport stays up above it: the node view is not a space.
+  await expect(layout).toHaveAttribute('data-space', 'view3d');
 
   // Every node of the starter scene is drawn (#1765: the sun comes aimed by a Track-To). A
   // constraint on a chain is a wired step (#1811), so it is drawn with the wires it sits on; only
   // one that just names its object, with no wire, is animation, hidden until asked for and counted
   // as hidden. Which types are constraints comes from the product's own list, so the expectation
   // follows the default project as it gains or loses one.
-  const { total, onChain, constraints } = await page.evaluate(async () => {
+  // #1953 — a network ends at its object: the Scene node, and the render output that reads only
+  // it, are not drawn (`ends`).
+  const { total, onChain, constraints, ends } = await page.evaluate(async () => {
     const { ADDABLE_CONSTRAINTS } = await import('/src/app/constraintStack.ts');
     const types = new Set(ADDABLE_CONSTRAINTS.map((c: { type: string }) => c.type));
     const nodes = Object.values(
@@ -39,15 +44,17 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
       total: nodes.length,
       onChain: wired.map((n) => n.id),
       constraints: steps.length - wired.length,
+      ends: nodes.filter((n) => n.type === 'Scene' || n.type === 'RenderOutput').length,
     };
   });
   // The premise: the starter scene's aim is on a chain, so the case below is not empty.
   expect(onChain.length).toBeGreaterThan(0);
   expect(total).toBeGreaterThan(constraints);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints);
+  expect(ends).toBe(2);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints - ends);
   for (const id of onChain) await expect(page.locator(`[data-graph-node="${id}"]`)).toHaveCount(1);
   const counts = page.getByTestId('graph-view-counts');
-  await expect(counts).toContainText(`${total - constraints} nodes`);
+  await expect(counts).toContainText(`${total - constraints - ends} nodes`);
   if (constraints > 0) await expect(counts).toContainText(`${constraints} animation hidden`);
   else await expect(counts).not.toContainText('animation hidden');
 
@@ -55,7 +62,7 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   const camera = page.locator('[data-graph-node="n_camera"]');
   await camera.locator('rect').first().click({ force: true });
   await expect(camera).toHaveAttribute('data-selected', 'true');
-  await expect(page.getByTestId('graph-slot')).toBeVisible();
+  await expect(page.getByTestId('nodes-pane')).toBeVisible();
   const selected = await page.evaluate(async () => {
     const m = await import('/src/app/stores/selectionStore.ts');
     return m.useSelectionStore.getState().primaryNodeId;
@@ -73,24 +80,14 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   );
   await expect(camera).not.toHaveAttribute('data-selected', 'true');
 
-  // Tab is not a road into the Graph, but it is a road out.
-  await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
-  await page.keyboard.press('Tab');
-  await expect(layout).toHaveAttribute('data-space', 'view3d');
-
-  // Both buttons are roads in: the switcher at the top right and the toolbar.
-  await page.getByTestId('space-switch-graph').click();
-  await expect(layout).toHaveAttribute('data-space', 'graph');
+  // Another tab is a road out, and the tab itself a road back in.
+  await openDrawerTab(page, 'dopesheet');
+  await expect(page.getByTestId('graph-view')).toHaveCount(0);
+  await openDrawerTab(page, 'nodes');
   await expect(page.getByTestId('graph-view')).toBeVisible();
-  await page.getByTestId('toolbar-space-view3d').click();
-  await expect(layout).toHaveAttribute('data-space', 'view3d');
-  await page.getByTestId('toolbar-space-graph').click();
-  await expect(layout).toHaveAttribute('data-space', 'graph');
 
-  await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
-  await page.keyboard.press('Tab');
-  await expect(layout).toHaveAttribute('data-space', 'view3d');
   // Closed, the graph is not mounted at all, so it does no work while the 3D View is up.
+  await page.getByTestId('timeline-drawer-toggle').click();
   await expect(page.getByTestId('graph-view')).toHaveCount(0);
 });
 
@@ -128,7 +125,7 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
     });
     if (!keyed.ok) throw new Error(keyed.reason);
   });
-  await page.getByTestId('space-switch-graph').click();
+  await openDrawerTab(page, 'nodes');
   const solver = page.locator('[data-graph-node="s_solver"]');
   await expect(solver).toBeVisible();
 
@@ -160,11 +157,11 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
   });
   await expect(page.locator('[data-graph-line="ref:s_driver>n_box"]')).toHaveCount(1);
   await page.getByTestId('graph-view-ref-lines').selectOption('all');
-  // The scene and render outputs are flags on their nodes.
-  await expect(page.locator('[data-graph-node="n_scene"] [data-graph-badges]')).toHaveAttribute(
-    'data-graph-badges',
-    /SCENE/,
-  );
+  // #1953 — a network ends at its object: the Scene node (which carried the SCENE flag) and the
+  // render output are not drawn.
+  await expect(page.locator('[data-graph-node="n_scene"]')).toHaveCount(0);
+  await expect(page.locator('[data-graph-node="n_render"]')).toHaveCount(0);
+  const ends = 2;
   const inside = Number(
     await solver.locator('[data-graph-inside]').getAttribute('data-graph-inside'),
   );
@@ -172,9 +169,12 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
   const total = await page.evaluate(
     () => Object.keys((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).length,
   );
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside - ends);
 
-  await solver.locator('rect').first().dblclick({ force: true });
+  await solver
+    .locator('rect')
+    .first()
+    .dblclick({ force: true, position: { x: 30, y: 12 } });
   await expect(page.getByTestId('graph-view-path-s_solver')).toBeVisible();
   await expect(page.locator('[data-graph-node]')).toHaveCount(inside);
   await expect(solver).toHaveCount(0);
@@ -198,5 +198,5 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
 
   await page.getByTestId('graph-view-path-top').click();
   await expect(page.getByTestId('graph-view-path-s_solver')).toHaveCount(0);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - inside - ends);
 });

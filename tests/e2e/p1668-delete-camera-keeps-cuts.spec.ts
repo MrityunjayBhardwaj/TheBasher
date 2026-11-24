@@ -16,6 +16,7 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
+import { openDrawerTab } from './_drawer';
 
 // Several sampled frames and four renders, each a page round trip.
 test.setTimeout(180_000);
@@ -183,7 +184,7 @@ test('deleting the camera in the middle of the list moves no other shot, and one
   );
   expect(keyed.ok, keyed.reason).toBe(true);
 
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await expect(page.locator('[data-testid^="shot-row-"]')).toHaveCount(5);
   const before = await drawnAt(page, MID);
   expect(before, 'each shot on its camera').toEqual([seedX, 40, 80, 20, 60]);
@@ -215,7 +216,7 @@ test('deleting the camera in the middle of the list moves no other shot, and one
   );
   const shot4After = await renderAt(page, 7);
   expect(shot4After, 'the render of shot 4 is now shot 3’s camera').toBe(await renderAt(page, 5));
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await expect(page.locator('[data-testid^="shot-row-"]')).toHaveCount(4);
   await setPlayhead(page, 7);
   await page.screenshot({ path: 'test-results/p1668-after-delete.png' });

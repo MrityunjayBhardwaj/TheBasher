@@ -18,6 +18,7 @@
 
 import { expect, test } from './_fixtures';
 import { splitCubeOps } from './_splitCube';
+import { toolbarControl } from './_toolbar';
 
 interface BasherWindow {
   __basher_dag?: {
@@ -129,7 +130,7 @@ test('P7.1 — drag retimes a keyframe: evaluated delta reflects new timing, val
     { cubeOps: splitCubeOps({ objectId: 'sun', color: '#ff0000' }) },
   );
 
-  await page.getByTestId('floating-toolbar-timeline').click();
+  await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
   const host = page.getByTestId('timeline-canvas');
   await expect(host).toBeVisible();
   const canvas = host.locator('canvas');

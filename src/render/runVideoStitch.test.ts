@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../core/comfy/builtinWorkflows';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
@@ -59,7 +60,7 @@ function buildStitchState(opts: { frameEnd?: number; outputPath?: string } = {})
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: 0,
       frameEnd: opts.frameEnd ?? 4,
       lastGoodFrame: -1,
@@ -74,7 +75,7 @@ function buildStitchState(opts: { frameEnd?: number; outputPath?: string } = {})
   s = applyOp(s, {
     type: 'connect',
     from: { node: 'beauty', socket: 'out' },
-    to: { node: 'cw', socket: 'pass-input' },
+    to: { node: 'cw', socket: 'beauty' },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -93,7 +94,7 @@ function buildStitchState(opts: { frameEnd?: number; outputPath?: string } = {})
   }).next;
   s = applyOp(s, {
     type: 'connect',
-    from: { node: 'cw', socket: 'out' },
+    from: { node: 'cw', socket: 'stylized' },
     to: { node: 'stitch', socket: 'pass-input' },
   }).next;
   s = applyOp(s, {

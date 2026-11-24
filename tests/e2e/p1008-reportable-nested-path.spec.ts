@@ -42,13 +42,13 @@ async function propose(page: Page, badLeaf: boolean): Promise<void> {
     ];
     w.__basher_diff.getState().propose(w.__basher_dag.getState().state, ops, 'pin the transform');
   }, badLeaf);
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
 }
 
 test('#1008 — a bad leaf under a real root surfaces a REPORTABLE row', async ({ page }) => {
   await page.goto('/');
   await propose(page, true);
-  const row = page.getByTestId('diffbar-reportable');
+  const row = page.getByTestId('proposal-reportable');
   await expect(row).toBeVisible();
   await expect(row).toContainText('changed nothing');
   // The row names the path ONCE. It used to read "Ignored overridden.bogus on
@@ -63,6 +63,6 @@ test('#1008 — a bad leaf under a real root surfaces a REPORTABLE row', async (
 test('#1008 control — the real nested path shows NO reportable row', async ({ page }) => {
   await page.goto('/');
   await propose(page, false);
-  await expect(page.getByTestId('diffbar')).toBeVisible();
-  await expect(page.getByTestId('diffbar-reportable')).toHaveCount(0);
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
+  await expect(page.getByTestId('proposal-reportable')).toHaveCount(0);
 });

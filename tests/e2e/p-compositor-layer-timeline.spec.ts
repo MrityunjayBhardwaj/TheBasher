@@ -1,7 +1,7 @@
 // Compositor spine 1c.3a — the layer timeline (outline + bars + toggles).
 // Falsifiable against the REAL app: adding media layers renders a row + a bar per
 // layer, rows show FRONT-on-top, and the visibility toggle round-trips through a
-// setParam op (the Layer node's `enabled` flips). Unwiring the row render or the
+// setParam op (the Layer node's `muted` flips, #1879). Unwiring the row render or the
 // toggle dispatch drops an assertion.
 
 import { expect, test } from './_fixtures';
@@ -15,11 +15,12 @@ interface DagWindow {
   __basher_dag?: { getState: () => { state: { nodes: Record<string, DagNode> } } };
 }
 
+/** Whether the layer is shown: #1879 — not muted (hiding a layer is the stack mute). */
 function layerEnabled(page: import('@playwright/test').Page, layerId: string) {
   return page.evaluate((id) => {
     const w = window as unknown as DagWindow;
     const n = w.__basher_dag?.getState().state.nodes[id];
-    return (n?.params as { enabled?: boolean } | undefined)?.enabled;
+    return (n?.params as { muted?: boolean } | undefined)?.muted !== true;
   }, layerId);
 }
 
@@ -55,7 +56,7 @@ test('each layer renders an outline row + a time bar', async ({ page }) => {
   await expect(page.getByTestId('layer-timeline-playhead')).toBeVisible();
 });
 
-test('the visibility toggle flips the Layer node enabled param', async ({ page }) => {
+test('the visibility toggle mutes the Layer node, and unmutes it', async ({ page }) => {
   await addClip(page);
   await expect(page.getByTestId('video-mode-layer-count')).toHaveText('1 layer', {
     timeout: 8_000,

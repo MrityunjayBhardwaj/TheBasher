@@ -10,6 +10,7 @@
 // The graph is the example's own, with a Beauty pass, a render job, a workflow and a stitch
 // wired onto its scene and camera, so the count comes from the real character chain.
 
+import { STYLIZED_REALISM_META, STYLIZED_REALISM_WORKFLOW } from '../core/comfy/builtinWorkflows';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../nodes/registerAll';
 import { __retargetRunsForTests } from '../nodes/RetargetClip';
@@ -35,7 +36,12 @@ async function exampleWithBatchRoads(): Promise<DagState> {
     s = applyOp(s, o).next;
   };
   const wire = (from: string, to: string, socket: string) =>
-    op({ type: 'connect', from: { node: from, socket: 'out' }, to: { node: to, socket } });
+    op({
+      type: 'connect',
+      // #1715 — the workflow's output is its file's `stylized`.
+      from: { node: from, socket: from === 'cw' ? 'stylized' : 'out' },
+      to: { node: to, socket },
+    });
 
   op({ type: 'addNode', nodeId: 'pass', nodeType: 'BeautyPass', params: {} });
   wire('n_scene', 'pass', 'scene');
@@ -62,7 +68,7 @@ async function exampleWithBatchRoads(): Promise<DagState> {
     nodeId: 'cw',
     nodeType: 'ComfyUIWorkflow',
     params: {
-      presetId: 'stylizedRealism',
+      graph: { apiJson: STYLIZED_REALISM_WORKFLOW, meta: STYLIZED_REALISM_META },
       frameStart: 0,
       frameEnd: LAST_FRAME,
       lastGoodFrame: -1,
@@ -70,7 +76,7 @@ async function exampleWithBatchRoads(): Promise<DagState> {
     },
   });
   wire('p', 'cw', 'prompt');
-  wire('pass', 'cw', 'pass-input');
+  wire('pass', 'cw', 'beauty');
   wire('n_time', 'cw', 'time');
 
   op({
@@ -84,13 +90,8 @@ async function exampleWithBatchRoads(): Promise<DagState> {
   return s;
 }
 
-const compile: CompileWorkflowFn = async ({ presetId, prompt, passes, frame }) => ({
-  workflowJson: {
-    preset: presetId,
-    frame,
-    promptText: prompt.text,
-    passKinds: passes.map((q) => q.passKind),
-  },
+const compile: CompileWorkflowFn = async ({ apiJson, frame }) => ({
+  workflowJson: { ...apiJson, _frame: { frame } },
   inputs: { images: {}, scalars: { frame } },
 });
 
@@ -147,15 +148,14 @@ describe('#1318 — the batch render roads retarget the walk once per run', () =
       ['n_scene', 'depth', 'scene'],
       ['n_camera', 'depth', 'camera'],
       ['n_time', 'depth', 'time'],
-      ['depth', 'cw', 'pass-input'],
+      ['depth', 'cw', 'depth'],
     ] as const)
       s2 = applyOp(s2, {
         type: 'connect',
         from: { node: from, socket: 'out' },
         to: { node: to, socket },
       }).next;
-    const passes = s2.nodes.cw.inputs['pass-input'];
-    expect(Array.isArray(passes) ? passes.length : 0).toBe(2);
+    expect([s2.nodes.cw.inputs.beauty, s2.nodes.cw.inputs.depth].every(Boolean)).toBe(true);
     const n = await retargetsDuring(() =>
       dryRun('cw', s2, {
         capability: new StubComfyUICapability(),

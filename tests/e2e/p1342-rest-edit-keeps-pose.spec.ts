@@ -9,6 +9,10 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface Node {
   type: string;
@@ -92,7 +96,7 @@ test('#1342 — a joint moved in Edit mode keeps its hand-pose, and the skin ben
     t.camera.position.set(0, 1.2, 5);
   });
   await page.getByTestId(`scene-tree-row-${armature}`).click();
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   await page.evaluate(async (id) => {
     const b = await import('/src/app/stores/boneSelectionStore.ts');
     b.useBoneSelectionStore.getState().selectBone(id, 'Bone1', ['Bone0', 'Bone1']);
@@ -106,12 +110,12 @@ test('#1342 — a joint moved in Edit mode keeps its hand-pose, and the skin ben
   await page.screenshot({ path: test.info().outputPath('1-posed-before.png') });
 
   // Edit mode: raise Bone1's rest joint to y = 1.5 from the panel, children following.
-  await page.getByTestId('armature-mode').selectOption('edit');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('edit');
   await expect(page.getByTestId('edit-bone')).toBeVisible();
   await page.getByTestId('edit-bone-position-y').fill('1.5');
 
   // Back to Pose mode: the hand-pose is still Bone1's, and bends the bar about the new joint.
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   await expect(page.getByTestId('inspector-bone-pose-rotation-z')).toHaveValue('90');
   const after = await tip(page);
   await page.screenshot({ path: test.info().outputPath('2-posed-after.png') });

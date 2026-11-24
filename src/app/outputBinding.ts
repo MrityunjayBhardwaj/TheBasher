@@ -7,6 +7,7 @@
 // window renders its own scene. The op binds one name and stays plain; this keeps the two names
 // agreeing, so a door that binds one also moves the other in the same commit.
 
+import { outputsOfNode } from '../core/dag/instanceSockets';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { OUTPUT_SOCKET_TYPES, type NodeId, type NodeRef, type Op } from '../core/dag/types';
@@ -29,7 +30,8 @@ export function setOutputOps(
   }
   const node = state.nodes[nodeId];
   if (!node) return { ok: false, reason: `There is no node "${nodeId}".` };
-  const outputs = getNodeType(node.type)?.outputs ?? {};
+  const def = getNodeType(node.type);
+  const outputs = def ? outputsOfNode(def, node.params) : {};
   const socket = Object.keys(outputs).find((s) => outputs[s].type === wants);
   if (socket === undefined) {
     return {

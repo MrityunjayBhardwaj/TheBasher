@@ -14,6 +14,9 @@ import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { drawnImportMeshes } from './_importedMesh';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 const FIXTURE = 'src/core/import/__fixtures__/rigless-hierarchy-blender-default.fbx';
 const ORACLE = 'src/core/import/__fixtures__/blender-oracle-fbx-rigless-hierarchy.json';
 

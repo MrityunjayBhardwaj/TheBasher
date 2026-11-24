@@ -12,6 +12,7 @@
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { toolbarControl } from './_toolbar';
 
 type V = [number, number, number];
 interface W {
@@ -152,7 +153,7 @@ for (const c of CASES)
         params: { name: 'position', target: 'n_box', paramPath: 'position', keyframes },
       });
     }, c.keys);
-    await page.getByTestId('floating-toolbar-timeline').click();
+    await (await toolbarControl(page, 'floating-toolbar-timeline')).click();
 
     const before: V[] = [];
     for (const t of PROBES) before.push(await drawnAt(page, t));

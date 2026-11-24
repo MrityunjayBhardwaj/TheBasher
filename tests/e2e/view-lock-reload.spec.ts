@@ -34,6 +34,9 @@
 
 import { test, expect, settleViewFit } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 interface Win {
   __basher_three: {
     getState: () => {

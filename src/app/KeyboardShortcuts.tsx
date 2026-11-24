@@ -24,6 +24,8 @@
 //   Cmd/Ctrl + I      — invert selection (#226 Slice 3)
 //   Cmd/Ctrl + Shift + C — camera-from-view (snapshot orbit pose into a
 //                       new PerspectiveCamera node)
+//   Cmd/Ctrl + L      — open/fold the chat column, focusing the composer on
+//                       open (#1704); works from any field, types nothing
 //
 // Animate-mode only (P6 W6):
 //   Space             — play / pause toggle
@@ -56,6 +58,9 @@ import { useAddMenuStore } from './stores/addMenuStore';
 import { useMoveToCollectionMenuStore } from './stores/moveToCollectionMenuStore';
 import { useNotificationStore } from './stores/notificationStore';
 import { useChromeStore } from './stores/chromeStore';
+import { useChatColumnStore } from './stores/chatColumnStore';
+import { focusChatComposer } from './ChatColumn';
+import { NARROW_LAYOUT_QUERY } from './layoutIslands';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
@@ -73,6 +78,9 @@ import {
 } from './keepPlaceReparent';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
+import { useNodesTabStore } from './stores/nodesTabStore';
+import { useTimelineDockStore } from './stores/timelineDockStore';
+import { useAgentContextStore } from './stores/agentContextStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { hoveredElements, underMouse } from './animate/rowKey';
 import { nodeDisplayName } from './sceneTreeWalk';
@@ -231,9 +239,13 @@ function buildKeyframeDeleteOp(): Op[] | null {
  * #1483 — whether the pointer is over the timeline (dope sheet, curve editor, NLA…). A key pressed
  * there belongs to the timeline, as Blender sends a key to the editor under the pointer. Read off
  * the DOM's own hover state at the moment of the key, so nothing has to track it.
+ * #1703 — the region is more than one element (the open drawer's time editors and the playback
+ * bar; the drawer's other tabs are not in it), so every one of them is asked.
  */
 export function pointerOverTimeline(): boolean {
-  return document.querySelector('[data-key-region="timeline"]')?.matches(':hover') ?? false;
+  return Array.from(document.querySelectorAll('[data-key-region="timeline"]')).some((el) =>
+    el.matches(':hover'),
+  );
 }
 
 /** #1483 — why Delete removed no key, in words for the notice. */
@@ -334,6 +346,12 @@ function dismissTopmostTransient(): void {
   if (useMoveToCollectionMenuStore.getState().open) {
     // 2b. Close an open Move to Collection menu (#397).
     useMoveToCollectionMenuStore.getState().close();
+    return;
+  }
+  if (useViewportStore.getState().lookThroughCamera) {
+    // 2c. #1708 — leave the camera view for the free view (Blender's Numpad 0 back out). Above
+    // the selection floor: a shot double-clicked into camera view keeps its camera selected.
+    useViewportStore.getState().setLookThroughCamera(false);
     return;
   }
   // 3. Floor: clear the selection (the pre-existing Esc behavior). We do NOT
@@ -453,6 +471,34 @@ export function KeyboardShortcuts() {
           else historyUndo();
           return;
         }
+      }
+      // #1704 — Cmd/Ctrl+L opens or folds the chat column. Before the typing guard, like Cmd+S: a
+      // modifier chord types nothing, so it is safe from any field (including the composer, where
+      // it folds the chat), and preventDefault keeps the browser's address-bar focus from taking it.
+      // A window keydown only arrives while the page has focus, so it never fires from the browser's
+      // own UI. Present mode hides the chat, so there it is left to the browser.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        (e.key === 'l' || e.key === 'L') &&
+        !useChromeStore.getState().presentMode
+      ) {
+        e.preventDefault();
+        const narrow =
+          typeof window.matchMedia === 'function' && window.matchMedia(NARROW_LAYOUT_QUERY).matches;
+        if (narrow) useChromeStore.getState().closeNarrowDrawers();
+        const nowOpen = useChatColumnStore.getState().toggle(narrow);
+        if (nowOpen) {
+          focusChatComposer();
+        } else if (
+          e.target instanceof HTMLElement &&
+          e.target.closest('[data-testid="agentdock-slot"]')
+        ) {
+          // Folding with focus inside the chat would leave focus on a hidden element.
+          e.target.blur();
+        }
+        return;
       }
       if (isTypingTarget(e.target)) return;
       const cmd = e.metaKey || e.ctrlKey;
@@ -651,6 +697,20 @@ export function KeyboardShortcuts() {
           e.preventDefault();
           useRenameStore.getState().begin(primary, 'outliner');
         }
+        return;
+      }
+
+      // #1953 — N folds and unfolds the Nodes tab's own panel while the director works there
+      // (Blender's N over the node editor): the drawer shows the Nodes tab and it is the pane last
+      // pressed, typed or focused in. Nothing else binds N, so elsewhere it does nothing.
+      if (
+        (e.key === 'n' || e.key === 'N') &&
+        useViewportStore.getState().timelineDrawerOpen &&
+        useTimelineDockStore.getState().activeTab === 'nodes' &&
+        useAgentContextStore.getState().lastPane === 'nodes'
+      ) {
+        e.preventDefault();
+        useNodesTabStore.getState().togglePanel();
         return;
       }
 

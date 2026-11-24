@@ -12,7 +12,7 @@
 // REF: THESIS §43, §49, §51; project_p4_prompt locked decisions.
 
 import { z } from 'zod';
-import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
+import { filmedCameraOf, type NodeDefinition, type ResolvedInputs } from '../core/dag/types';
 import {
   DEFAULT_IMAGE_DESCRIPTOR,
   type CameraValue,
@@ -20,7 +20,7 @@ import {
   type SceneValue,
   type TimeValue,
 } from './types';
-import { buildPassSourceHash } from './passes/passHash';
+import { buildPassSourceHash, RENDER_PASS_EXTENT } from './passes/passHash';
 import { recomposeCameraObject } from './cameraRecompose';
 
 export const BeautyPassParams = z.object({
@@ -33,6 +33,8 @@ export const BeautyPassNode: NodeDefinition<BeautyPassParams, ImageValue> = {
   type: 'BeautyPass',
   version: 1,
   pure: true,
+  // #1950 — its hash follows the camera on screen at the time, not the switch's authored one.
+  filmsCamera: true,
   cost: 'cheap',
   paramSchema: BeautyPassParams,
   mainInput: 'scene',
@@ -68,7 +70,9 @@ export const BeautyPassNode: NodeDefinition<BeautyPassParams, ImageValue> = {
         scene,
         camera,
         time,
+        filmed: filmedCameraOf(inputs),
       }),
+      extent: RENDER_PASS_EXTENT,
     };
   },
 };

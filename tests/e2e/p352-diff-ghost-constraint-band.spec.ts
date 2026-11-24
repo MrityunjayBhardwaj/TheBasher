@@ -169,7 +169,7 @@ async function proposeFollowPath(page: Page) {
         'agent:mutator.constrain',
       ]);
   }, EVAL_TIME);
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
   await page.waitForTimeout(200);
 }
 
@@ -309,7 +309,7 @@ async function seedAimSceneAndPropose(page: Page) {
       ['agent:mutator.constrain'],
     );
   });
-  await expect(page.getByTestId('diffbar')).toBeVisible();
+  await expect(page.getByTestId('proposal-card')).toBeVisible();
   await page.waitForTimeout(200);
 }
 

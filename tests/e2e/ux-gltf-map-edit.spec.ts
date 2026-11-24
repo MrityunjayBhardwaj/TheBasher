@@ -24,6 +24,9 @@ import type { Page } from '@playwright/test';
 import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 /** 64×64 PNG (the p997 replacement) — its width identifies it once drawn. */
 const PNG_64 =
   'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAjUlEQVR4nO3aQQrAMBDDQK3o/7+cviGEEgSdu2HBJ8MOLMokTuIkTuIkTuIkTuIkTuIkTuIkTuIk7tkNLIYvzeY+yTcgcRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRIncRI3/7/QZRIncRIncRIncRIncRIncRIncRLn7QNOvS62BH8fnp+WAAAAAElFTkSuQmCC';

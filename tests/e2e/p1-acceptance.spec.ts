@@ -11,15 +11,18 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 import { splitSphereOps } from './_splitSphere';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 /**
- * Open the bundled-assets popover (P6 W2.5 replacement for the
- * dedicated Library panel). The asset tiles render only while the
- * popover is open; tests that need to interact with one click the
- * Assets trigger button first.
+ * Open the asset library (since #1707 the bottom drawer's Library tab, which
+ * the toolbar's Assets button opens). The asset tiles render only while it is
+ * open; tests that need to interact with one click the Assets button first.
  */
 async function openAssetsPopover(page: Page): Promise<void> {
-  await page.getByTestId('top-toolbar-assets').click();
+  await (await toolbarControl(page, 'top-toolbar-assets')).click();
   await expect(page.getByTestId('library-popover')).toBeVisible();
 }
 
@@ -337,10 +340,8 @@ test('P1#4 scene tree shows the DAG hierarchy in Pro mode', async ({ page }) => 
     };
     (window as unknown as Win).__basher_chrome!.getState().setLeftSidebarCollapsed(false);
   });
-  // UX #6 — the left panel is tabbed (Outliner | Assets); the availability
-  // gate above selected the Assets tab. Switch back to Outliner so the scene
-  // tree is rendered before asserting its rows.
-  await page.getByTestId('left-sidebar-tab-outliner').click();
+  // #1707 — the library is in the bottom drawer, so the outliner stays up while
+  // the availability gate above opened it; the scene tree is rendered as is.
   await expect(page.getByTestId('scene-tree')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4r')).toBeVisible();
   await expect(page.getByTestId('scene-tree-row-p1_4t')).toBeVisible();

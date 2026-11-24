@@ -38,6 +38,7 @@ const CENSUS: Record<string, string> = {
   // The active camera and the lighting profile: which one, not whether.
   'src/app/activeCamera.ts': 'which camera is active',
   'src/app/shots.ts': 'which camera is active',
+  'src/app/video/shotClips.ts': "wires a shot's render passes to the scene's camera switch",
   'src/app/resolveRigLightSources.ts': 'which lighting profile is active',
   'src/app/studioProfiles.ts': 'finds the profile select to write to',
   'src/app/studioProfileIO.ts': "reads a rig's lights to save a profile",

@@ -22,7 +22,10 @@
 
 import { useMemo, useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
-import type { NodeId } from '../../core/dag/types';
+import type { DagState } from '../../core/dag/state';
+import type { NodeId, NodeRef } from '../../core/dag/types';
+import { workflowSocketsOf } from '../../nodes/ComfyUIWorkflow';
+import { nodeDisplayName } from '../sceneTreeWalk';
 import {
   comfyParamPath,
   importComfyGraph,
@@ -94,6 +97,9 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
     () => (apiJson ? scanBasherControllers(apiJson) : []),
     [apiJson],
   );
+  // #1951 — a marker fed by a wire (or by its own output, a frame back) shows where it comes from.
+  const dagState = useDagStore((s) => s.state);
+  const markerSources = useMemo(() => markerSourcesOf(dagState, nodeId), [dagState, nodeId]);
   const params = useMemo<readonly ComfyParam[]>(() => {
     const gp = graphParam as { apiJson?: ComfyApiJson; meta?: ComfyGraphMeta } | null | undefined;
     if (!gp?.apiJson) return [];
@@ -110,7 +116,14 @@ export function ComfySourceSection({ nodeId }: { nodeId: NodeId }) {
     return (
       <div data-testid={`comfy-controls-${nodeId}`} className="flex flex-col">
         {controllers.map((c) =>
-          !isScalarControllerKind(c.kind) ? (
+          markerSources[c.nodeId] ? (
+            <ComfyMarkerSourceRow
+              key={c.nodeId}
+              markerNodeId={c.nodeId}
+              name={c.name}
+              source={markerSources[c.nodeId]!}
+            />
+          ) : !isScalarControllerKind(c.kind) ? (
             <ComfyMediaControllerRow key={c.nodeId} comfyNodeId={nodeId} decl={c} />
           ) : c.kind === 'bool' ? (
             <ComfyControllerBoolRow key={c.nodeId} comfyNodeId={nodeId} decl={c} />
@@ -517,6 +530,64 @@ function ComfyControllerBoolRow({
  *  LoadImage rows use, so the compile path's applyComfyImageBindings uploads the bytes
  *  + rewrites the controller's `image` input at submit FOR FREE (the out-of-band media
  *  transport, docs/COMFYUI-BASHER-NODES.md). kind=video binding is the next slice. */
+/** Where a workflow marker's value comes from, when it is not the panel's to set: a wire into its
+ *  socket (the run reads the wire first, `workflowInputsAt`), or its own output a frame back. */
+export type MarkerSource =
+  | { readonly kind: 'wired'; readonly from: NodeId; readonly label: string }
+  | { readonly kind: 'fed'; readonly from: string };
+
+/** #1951 — each marker of workflow `comfyNodeId` that is wired or fed, by marker node id. */
+export function markerSourcesOf(
+  state: DagState,
+  comfyNodeId: NodeId,
+): Record<string, MarkerSource | undefined> {
+  const node = state.nodes[comfyNodeId];
+  if (!node || node.type !== 'ComfyUIWorkflow') return {};
+  const sockets = workflowSocketsOf(node.params);
+  const out: Record<string, MarkerSource | undefined> = {};
+  for (const input of sockets.inputs) {
+    const binding = node.inputs[input.socket];
+    const ref = (Array.isArray(binding) ? binding[0] : binding) as NodeRef | undefined;
+    if (ref && state.nodes[ref.node]) {
+      out[input.nodeId] = {
+        kind: 'wired',
+        from: ref.node,
+        label: nodeDisplayName(state.nodes, ref.node),
+      };
+    }
+  }
+  for (const f of sockets.fed) out[f.nodeId] = { kind: 'fed', from: f.from };
+  return out;
+}
+
+function ComfyMarkerSourceRow({
+  markerNodeId,
+  name,
+  source,
+}: {
+  markerNodeId: string;
+  name: string;
+  source: MarkerSource;
+}) {
+  return (
+    <div
+      data-testid={`comfy-controller-source-${markerNodeId}`}
+      data-source={source.kind}
+      className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
+      title={
+        source.kind === 'wired'
+          ? `Wired from ${source.label}: the run reads the wire. Disconnect it in the Nodes view to set it here.`
+          : `Fed from this workflow's "${source.from}" output on the frame before.`
+      }
+    >
+      <span className="flex-1 truncate text-fg">{name}</span>
+      <span className="truncate text-fg-dim">
+        {source.kind === 'wired' ? `← ${source.label}` : `← ${source.from}, frame before`}
+      </span>
+    </div>
+  );
+}
+
 function ComfyMediaControllerRow({
   comfyNodeId,
   decl,

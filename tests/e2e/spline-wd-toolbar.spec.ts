@@ -10,6 +10,7 @@
 // THESIS §196.
 
 import { expect, test } from './_fixtures';
+import { toolbarControl } from './_toolbar';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -47,38 +48,35 @@ test('WD#2 toolbar chips dropped the UPPERCASE dev-tool treatment', async ({ pag
 test('WD#3 §196 — Add and Assets create paths survive the restyle', async ({ page }) => {
   const toolbar = page.getByTestId('floating-viewport-toolbar');
   await expect(toolbar.getByTestId('top-toolbar-add')).toBeVisible();
-  await expect(toolbar.getByTestId('top-toolbar-assets')).toBeVisible();
+  // #1935 — Assets moved into the pill's ⋯ menu (the decided board); it is one click away.
+  await expect(await toolbarControl(page, 'top-toolbar-assets')).toBeVisible();
 });
 
-test('WD#4 the pill stays one row and scrolls horizontally (no wrap, no bar)', async ({ page }) => {
-  // Narrow the window so the toolbar can't fit — it must overflow-scroll on a
-  // single line, not wrap to a taller stack.
+test('WD#4 the pill stays one row and never scrolls: what does not fit is behind ⋯', async ({
+  page,
+}) => {
+  // #1935 — narrow the window: the pill used to overflow-scroll here, hiding its right end.
+  // Now it stays on one line, its content fits its box, and ⋯ holds the rest.
   await page.setViewportSize({ width: 900, height: 760 });
   const toolbar = page.getByTestId('floating-viewport-toolbar');
   await expect(toolbar).toBeVisible();
   const r = await page.evaluate(() => {
     const el = document.querySelector('[data-testid="floating-viewport-toolbar"]') as HTMLElement;
     const cs = getComputedStyle(el);
-    el.scrollLeft = 9999;
     return {
       flexWrap: cs.flexWrap,
       overflowX: cs.overflowX,
-      scrollbarWidth: cs.scrollbarWidth,
       clientH: el.clientHeight,
-      overflowsX: el.scrollWidth > el.clientWidth,
-      scrolledLeft: el.scrollLeft,
+      fits: el.scrollWidth <= el.clientWidth,
     };
   });
   // Single row: re-adding `flex-wrap` makes it stack → clientHeight balloons
   // past one button row → this fails.
   expect(r.flexWrap).toBe('nowrap');
   expect(r.clientH).toBeLessThan(50);
-  // Overflows on X and actually scrolls horizontally (items don't compress).
-  expect(r.overflowX).toBe('auto');
-  expect(r.overflowsX).toBe(true);
-  expect(r.scrolledLeft).toBeGreaterThan(0);
-  // No visible scrollbar — `.no-scrollbar` resolves scrollbar-width to none.
-  expect(r.scrollbarWidth).toBe('none');
+  expect(r.overflowX).toBe('hidden');
+  expect(r.fits).toBe(true);
+  await expect(toolbar.getByTestId('floating-toolbar-more')).toBeVisible();
 });
 
 test('WD#5 the toolbar sits at the TOP of the viewport, not the bottom', async ({ page }) => {

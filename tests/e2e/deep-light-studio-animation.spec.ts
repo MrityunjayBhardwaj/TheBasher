@@ -29,6 +29,10 @@
 //      V57 (direct-channel road), H40 (render==resolver).
 
 import { test, expect } from './_fixtures';
+import { openInspector, openLightStudio } from './_rightPanel';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface BasherWindow {
   __basher_dag?: {
@@ -174,7 +178,7 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
     if ((await drawer.getAttribute('data-open')) !== 'true') {
       await page.getByTestId('timeline-drawer-toggle').click();
     }
-    await page.getByTestId('timeline-tab-lightStudio').click();
+    await openLightStudio(page);
     await expect(page.getByTestId('light-studio-panel')).toBeVisible();
 
     const before = await areaLightIds(page);
@@ -200,6 +204,8 @@ test.describe('DEEP — animating a Light Studio light end-to-end through the re
     // H189 GATE: selecting the split light's OBJECT must still surface its shading rows —
     // the inspector renders the LightData's `light` section through LinkedDataSections,
     // keyed by the DATA node's id. No row here = the split light is uneditable.
+    // #1703 — the studio and the inspector are two tabs of the right panel: back to the inspector.
+    await openInspector(page);
     await expect(page.getByTestId('inspector')).toBeVisible();
     await setTime(page, 0);
     const diamond = page.getByTestId(`inspector-diamond-${sid}-intensity`);

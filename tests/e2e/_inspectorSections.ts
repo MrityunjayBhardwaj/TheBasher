@@ -25,8 +25,16 @@
 // The generalisation worth carrying: a split changes which node OWNS a section, and
 // therefore that section's default expanded state, without touching the section or the
 // spec. Any blind toggle click is a latent failure waiting for the next split.
+//
+// THIRD MOVE, #1959 — the stack sections (Modifier, Constraint, Constraint Stack, Material)
+// moved INTO the inspector's stack frame for a selection that has one: no card, no toggle;
+// the frame's switch picks which stack it draws. So "open the Material section" now means
+// "pick Materials in the frame" there, and still means "expand the card" where no frame shows
+// (a Null's constraints). Since #1960 a camera's or a light's modifiers are in the frame too, as a
+// tab the object cannot take. The helper asks the page which of the two it is, rather than each
+// spec guessing.
 
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * Expand an inspector section if it is collapsed, then assert its body is visible.
@@ -37,6 +45,17 @@ import { expect, type Page } from '@playwright/test';
  */
 export async function openInspectorSection(page: Page, sectionId: string): Promise<void> {
   const toggle = page.getByTestId(`inspector-section-toggle-${sectionId}`);
+  const stack = FRAME_STACK[sectionId];
+  if (stack) {
+    // Either the card's toggle or the frame's tab for this stack is on screen; wait for one.
+    const tab = page.getByTestId(`stack-frame-tab-${stack}`);
+    await expect(toggle.or(tab).first()).toBeVisible();
+    if (!(await toggle.isVisible())) {
+      await openStackInFrame(page, stack);
+      await expect(stackFrameSection(page, sectionId)).toBeVisible();
+      return;
+    }
+  }
   await expect(toggle).toBeVisible();
   const body = page.getByTestId(`inspector-section-body-${sectionId}`);
   // The body element renders only when the section is expanded (NPanel SectionCard),
@@ -45,4 +64,87 @@ export async function openInspectorSection(page: Page, sectionId: string): Promi
     await toggle.click();
   }
   await expect(body).toBeVisible();
+}
+
+/** The stack each stack section is drawn in, inside the frame (#1959; `FRAME_SECTIONS`). */
+export const FRAME_STACK: Readonly<Record<string, 'modifiers' | 'constraints' | 'materials'>> = {
+  modifier: 'modifiers',
+  constraint: 'constraints',
+  stack: 'constraints',
+  material: 'materials',
+};
+
+/** Pick `stack` in the inspector's stack frame, if it is not the one shown. */
+export async function openStackInFrame(
+  page: Page,
+  stack: 'modifiers' | 'constraints' | 'materials',
+): Promise<void> {
+  const tab = page.getByTestId(`stack-frame-tab-${stack}`);
+  await expect(tab).toBeVisible();
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click();
+  await expect(page.getByTestId('stack-frame-body')).toHaveAttribute('data-stack', stack);
+}
+
+/** A stack section's body as the frame draws it (the first, where the object's and its data's
+ *  both draw one). */
+export function stackFrameSection(page: Page, sectionId: string): Locator {
+  return page.getByTestId(`stack-frame-section-${sectionId}`).first();
+}
+
+/** A section's body wherever it is drawn: its card's body, or (#1959) the frame's section. */
+export function inspectorSectionBody(page: Page, sectionId: string): Locator {
+  return page
+    .getByTestId(`inspector-section-body-${sectionId}`)
+    .or(page.getByTestId(`stack-frame-section-${sectionId}`))
+    .first();
+}
+
+/** One section body the frame draws: its section id and the node it was drawn from. */
+export interface FrameDrawnSection {
+  readonly id: string;
+  readonly node: string | null;
+}
+
+/**
+ * Every section the stack frame draws for the current selection, across all its stacks (#1966):
+ * picks each tab in turn and reads the `stack-frame-section-*` bodies it draws. Empty where no
+ * frame shows. `undrawn` names the tabs that, picked, still leave another stack on show (the
+ * frame offers a stack the inspector draws no section for, e.g. a curve's Materials with no
+ * material operator on it). Leaves the frame on the stack it was showing.
+ */
+export async function frameDrawnSections(
+  page: Page,
+): Promise<{ sections: FrameDrawnSection[]; undrawn: string[] }> {
+  const frame = page.getByTestId('stack-frame');
+  const body = page.getByTestId('stack-frame-body');
+  if (!(await frame.isVisible())) return { sections: [], undrawn: [] };
+  const before = await body.getAttribute('data-stack');
+  const tabs = await frame
+    .locator('[data-testid^="stack-frame-tab-"]')
+    .evaluateAll((els) =>
+      els.map((el) => (el.getAttribute('data-testid') ?? '').replace('stack-frame-tab-', '')),
+    );
+  const sections: FrameDrawnSection[] = [];
+  const undrawn: string[] = [];
+  for (const tab of tabs) {
+    await frame.getByTestId(`stack-frame-tab-${tab}`).click();
+    // One committed render after the click: the frame has either switched or stayed.
+    await page.evaluate(
+      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+    );
+    if ((await body.getAttribute('data-stack')) !== tab) {
+      undrawn.push(tab);
+      continue;
+    }
+    sections.push(
+      ...(await frame.locator('[data-testid^="stack-frame-section-"]').evaluateAll((els) =>
+        els.map((el) => ({
+          id: (el.getAttribute('data-testid') ?? '').replace('stack-frame-section-', ''),
+          node: el.getAttribute('data-node'),
+        })),
+      )),
+    );
+  }
+  if (before && tabs.includes(before)) await frame.getByTestId(`stack-frame-tab-${before}`).click();
+  return { sections, undrawn };
 }

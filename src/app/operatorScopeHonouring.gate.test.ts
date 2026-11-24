@@ -240,10 +240,12 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // #393 — `ArmatureModifier` is the fifth, excused the way `UVProjectModifier` is: a
     // `'declined'` deferral on an `ObjectData` spine (Blender's vertex-group limit, not built).
     // #1353 — `CaptureModifier` is the sixth, by the same `'declined'` deferral (a point group).
+    // #1879 — `Layer` is the seventh, for the OTHER reason: an image has no component domain.
     expect(exempt.sort()).toEqual([
       'ArmatureModifier',
       'CaptureModifier',
       'ColorCorrect',
+      'Layer',
       'MaterialOverride',
       'Transform',
       'UVProjectModifier',

@@ -56,6 +56,40 @@ interface Origin {
 }
 
 const ORIGINS: Record<string, Origin> = {
+  // #1718 — Regenerate reads the graph between runs, and each run moves it, so each read starts
+  // its own cache: once to order the runs, once per run to record what it landed from.
+  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → regenerateOrderOf': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Regenerate click.',
+  },
+  'src/app/render/regenerateWorkflow.ts · regenerateWorkflow → workflowMadeFrom': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per workflow a Regenerate click runs.',
+  },
+  // #1717 — Generate stale shots reads the graph once to list the shots, then once per shot (the
+  // runs before it move the graph, so a shot made current upstream is skipped).
+  'src/app/video/shotClipActions.ts · generateStaleShots → shotsToGenerate': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Generate stale shots click.',
+  },
+  'src/app/video/shotClipActions.ts · generateShotWorkflows → madeStateOf': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per shot a Generate click works through.',
+  },
+  'src/app/generated/generatedStill.ts · keepVariantPlan → workflowMadeFrom': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Keep click on a still variant: one read of the state the keep will make.',
+  },
+  'src/app/generated/generatedStill.ts · runStillVariants → workflowMadeFrom': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per variant of a Generate click; each variant is a state of its own (its seed).',
+  },
   'src/agent/mutators/builders/addModifier.ts · preconditions → canModifyGeometry': {
     count: 1,
     frequency: 'per-action',
@@ -135,6 +169,11 @@ const ORIGINS: Record<string, Origin> = {
     count: 2,
     frequency: 'per-action',
     why: 'Agent render-summary tool: one evaluation per tool call.',
+  },
+  'src/agent/tools/dagInspect.ts · handler → sceneGraphOf': {
+    count: 1,
+    frequency: 'per-action',
+    why: "#1716 — the agent's graph view, once per tool call: its frame-pick markers evaluate a still input's producers.",
   },
   'src/agent/tools/renderSummarizeStylized.ts · handler → evaluate': {
     count: 1,
@@ -322,6 +361,23 @@ const TAKERS: string[] = [
   'motionPathScaleFit@src/app/asset/fitMotionPathScale.ts',
   'retargetRatios@src/app/asset/fitMotionPathScale.ts',
   'worldUnitsOf@src/app/asset/fitMotionPathScale.ts',
+  // #1721 — the NLA pane's generated-run strips; the pane hands it the shared UI cache.
+  'generatedRuns@src/nodes/motionGenerateRuns.ts',
+  // #1718 — a ComfyUI workflow's made state and what regenerating it runs; the Generated tab
+  // hands these the shared UI cache, the regenerate road a fresh one per state it reads.
+  'regenerateOrder@src/nodes/comfyWorkflowMade.ts',
+  'workflowMadeState@src/nodes/comfyWorkflowMade.ts',
+  'workflowSourceHash@src/nodes/comfyWorkflowMade.ts',
+  // #1717 — the same, over every frame a workflow makes (the hash the app's made states compare);
+  // the views hand them the shared UI cache, the regenerate road a fresh one per state it reads.
+  'computeWorkflowMadeFrom@src/app/render/workflowMadeFrom.ts',
+  'madeStateOf@src/app/render/workflowMadeFrom.ts',
+  'passReader@src/app/render/workflowMadeFrom.ts',
+  'regenerateOrderOf@src/app/render/workflowMadeFrom.ts',
+  'workflowMadeFrom@src/app/render/workflowMadeFrom.ts',
+  // #1717 — the shot clips' states; the Video space hands them the shared UI cache.
+  'shotClipState@src/app/video/shotClips.ts',
+  'shotsToGenerate@src/app/video/shotClips.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   // #1556 — the Spreadsheet's read of the selected mesh; the view hands it the shared UI cache.
   'attributeSheetOf@src/app/attributeSheet.ts',
@@ -329,6 +385,9 @@ const TAKERS: string[] = [
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',
   'collectCompositeInputs@src/app/video/compositeDecode.ts',
+  // #1879 step 4 — one effect node's evaluated params, for a layer's own effects and a step
+  // between layers; collectCompositeInputs hands it its cache.
+  'evaluatedEffectOp@src/app/video/compositeDecode.ts',
   'captureCompositeFrame@src/app/video/compositeDecode.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
   'aimPointWorld@src/app/nodeConstraints.ts',
@@ -336,11 +395,18 @@ const TAKERS: string[] = [
   'resolveActiveTrackTo@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
+  // #1715 — a workflow node's inputs at one frame; the frame runner and the probe each hand it
+  // the one cache they hold for the whole run.
+  'workflowInputsAt@src/render/dryRun.ts',
+  // #1715 — the Nodes view reads a workflow node's output extents; the view hands it its cache.
+  'withOwnSockets@src/app/sceneGraph.ts',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
   'cameraLocalPose@src/app/resolveWorldTransform.ts',
   // #1763 — the keys I takes on a camera; the I key hands it the shared UI cache.
   'cameraInsertKeys@src/app/animate/keyCamera.ts',
   'cameraFocusTargetDistance@src/app/activeCamera.ts',
+  // #1950 — a render pass's camera on screen; the evaluator hands it the cache of the walk asking.
+  'filmedCameraAt@src/app/filmedCamera.ts',
   'cameraLocalOrientation@src/app/cameraTrackTo.ts',
   'cameraTrackToAim@src/app/cameraTrackTo.ts',
   'collectReferenceRigs@src/app/animate/referenceRigs.ts',
@@ -358,6 +424,14 @@ const TAKERS: string[] = [
   'drawnChannels@src/app/resolveWorldTransform.ts',
   'driverChannelValuesForTarget@src/app/paramDrivers.ts',
   'evaluate@src/core/dag/evaluator.ts',
+  // #1716 — what a producer delivers into an input, for the ComfyUI runners that walk frames on
+  // their own; and the frame pick both it and the evaluator apply. Both forward the caller's cache.
+  'evaluateInputRef@src/core/dag/evaluator.ts',
+  'pickedArrival@src/core/dag/evaluator.ts',
+  // #1716 — the node view's frame-pick marker forwards the UI cache it is handed.
+  'sceneGraphOf@src/app/sceneGraph.ts',
+  'withPicks@src/app/sceneGraph.ts',
+  'picksOn@src/app/sceneGraph.ts',
   'foldOverlays@src/app/cookState.ts',
   'gltfNodeWorldPosition@src/app/gltfNodeWorld.ts',
   // #1337 — solving a placed bone back through a pose layer stack reads the pose under the layer;

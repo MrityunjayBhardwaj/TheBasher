@@ -3,7 +3,17 @@
 // the blend-mode → canvas-op mapping.
 
 import { describe, expect, it } from 'vitest';
-import { blendOp, fitContain, planComposite, type ResolvedLayerInput } from './composite';
+import {
+  blendOp,
+  effectFilter,
+  fitContain,
+  isLayerDraw,
+  planComposite as planStack,
+  type ResolvedLayerInput,
+} from './composite';
+
+/** The layer draws only (these cases hold no steps between layers). */
+const planComposite = (...a: Parameters<typeof planStack>) => planStack(...a).filter(isLayerDraw);
 
 const SRC = {
   path: 'opfs/a.png',
@@ -28,6 +38,7 @@ function layer(over: Partial<ResolvedLayerInput> = {}): ResolvedLayerInput {
     scale: [1, 1],
     blendMode: 'normal',
     source: SRC,
+    effects: [],
     ...over,
   };
 }
@@ -110,5 +121,45 @@ describe('blendOp', () => {
     expect(blendOp('add')).toBe('lighter');
     expect(blendOp('multiply')).toBe('multiply');
     expect(blendOp('screen')).toBe('screen');
+  });
+});
+
+describe('planComposite — a step between layers (#1879 step 4)', () => {
+  const CC = { type: 'ColorCorrect' as const, brightness: 0.5, contrast: 1, saturation: 1 };
+  const adjust = (effects = [CC]) => ({ kind: 'adjust' as const, nodeId: 'cc', effects });
+  const label = (d: ReturnType<typeof planStack>[number]) => (isLayerDraw(d) ? d.layerId : d.kind);
+
+  it('keeps its place among the layers, so it applies after the ones below it', () => {
+    const draws = planStack(
+      COMP,
+      [layer({ layerId: 'bg' }), adjust(), layer({ layerId: 'fg' })],
+      0,
+    );
+    expect(draws.map(label)).toEqual(['bg', 'adjust', 'fg']);
+  });
+
+  it('has no trim, but a solo hides it: solo shows the soloed layers as they are', () => {
+    const inputs = [
+      layer({ layerId: 'bg' }),
+      adjust(),
+      layer({ layerId: 'fg' }),
+      layer({ layerId: 'late', startFrame: 100 }),
+    ];
+    expect(planStack(COMP, inputs, 0).map(label)).toEqual(['bg', 'adjust', 'fg']);
+    const soloed = [layer({ layerId: 'bg' }), adjust(), layer({ layerId: 'fg', solo: true })];
+    expect(planStack(COMP, soloed, 0).map(label)).toEqual(['fg']);
+  });
+
+  it('is dropped when it changes nothing', () => {
+    expect(planStack(COMP, [layer({ layerId: 'bg' }), adjust([])], 0).map(label)).toEqual(['bg']);
+  });
+});
+
+describe('effectFilter', () => {
+  it('turns a Color Correct into the canvas filter, and nothing into ""', () => {
+    expect(
+      effectFilter([{ type: 'ColorCorrect', brightness: 0.5, contrast: 2, saturation: 0 }]),
+    ).toBe('brightness(0.5) contrast(2) saturate(0)');
+    expect(effectFilter([])).toBe('');
   });
 });

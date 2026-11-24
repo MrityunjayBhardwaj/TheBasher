@@ -20,6 +20,7 @@ import { CurvePointHandles } from '../app/CurvePointHandles';
 import { BoneGizmo } from '../app/BoneGizmo';
 import { useCurveSelectionStore } from '../app/stores/curveSelectionStore';
 import { ProjectionToggle } from '../app/ProjectionToggle';
+import { LivePreview } from '../app/LivePreview';
 import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
 import { useGizmoStore } from '../app/stores/gizmoStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -32,7 +33,9 @@ import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
 import { GeometryLifetime } from './GeometryLifetime';
 import { EditorLights } from './EditorLights';
+import { GenerationPlaceholder } from './GenerationPlaceholder';
 import { EditorViewCamera } from './EditorViewCamera';
+import { LivePreviewPass } from './LivePreviewPass';
 import { BoxSelect } from './BoxSelectController';
 import { BoxSelectOverlay } from './BoxSelectOverlay';
 import { useBoxSelectStore } from '../app/stores/boxSelectStore';
@@ -40,6 +43,7 @@ import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
 import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
 import { attachWheelZoom } from './wheelZoom';
+import { attachOrbitExitsLookThrough } from './orbitExitsLookThrough';
 import { viewportEvents } from './viewportEvents';
 import { installShadowInvalidation } from './contentShadows';
 
@@ -50,6 +54,7 @@ function EditorOrbit() {
   const dragging = useGizmoStore((s) => s.dragging);
   // #165: while looking THROUGH the scene camera, the editor view mirrors the
   // DAG camera pose — orbit must be off so the user can't drift the preview.
+  // #1708: an orbit DRAG there leaves camera view instead (`attachOrbitExitsLookThrough`).
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
 
   // c-1 (P6 W10 UIR): the real camera-zoom signal. OrbitControls fires
@@ -107,6 +112,13 @@ function EditorOrbit() {
     if (!controls) return;
     return attachWheelZoom(wheelTarget, controls);
   }, [wheelTarget, camera]);
+
+  // #1708 — an orbit drag while looking through leaves camera view for the free view (Blender's
+  // camera view does the same on a view rotate). Orbit itself stays off in camera view, so the
+  // drag that exits does not also move the view; the next one orbits from where the camera stood.
+  // A click (no travel) is a pick and stays in camera view, and a gizmo or box-select drag is not
+  // an orbit.
+  useEffect(() => attachOrbitExitsLookThrough(wheelTarget), [wheelTarget]);
 
   return (
     <OrbitControls
@@ -322,6 +334,8 @@ export function Viewport() {
               <SceneFromDAG> deliberately: it must observe a committed scene, and its
               cost is not SceneFromDAG's reconciliation cost to answer for. */}
           <GeometryLifetime />
+          {/* #1720 — where a generating model will land; editor chrome, drawn from the run. */}
+          <GenerationPlaceholder />
           <GroundClick />
           {/* #1727 — the gizmo re-renders on every playhead tick while something is selected;
               its commits are their own per-frame stage, `react:gizmo`. */}
@@ -357,12 +371,17 @@ export function Viewport() {
               <GizmoViewport axisColors={['#ff3653', '#8adb00', '#2c8fff']} labelColor="white" />
             </GizmoHelper>
           ) : null}
+          {/* #1708 — the live camera's view, drawn into the preview box after the main pass and
+              the axis gizmo (priority 3). Inside this Canvas: never a second one. */}
+          <LivePreviewPass />
         </Suspense>
       </Canvas>
       {/* Bottom-right ortho|persp pill, by the axis-ball nav gizmo (Spline).
           Hidden in the narrow layout (its corner is taken by the full-width
           bottom stack); `M` still toggles projection. */}
       {!isNarrow ? <ProjectionToggle /> : null}
+      {/* #1708 — the live preview's frame and caption; its picture is LivePreviewPass's. */}
+      <LivePreview />
       {/* #226 — box-select marquee overlay (DOM). Mounts only while box mode is
           armed; covers the viewport, captures the drag, draws the marquee. */}
       <BoxSelectOverlay />

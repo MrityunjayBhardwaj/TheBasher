@@ -141,3 +141,41 @@ describe('#1564 — dag.inspect scope=graph is the node view, everything shown',
     expect(ask('n_box')).toBe('Error: node "n_box" holds no sub-network');
   });
 });
+
+describe('#1716 — the agent reads the frame a still input picks, as the view shows it', () => {
+  it('names the frame on the still workflow and nothing on the video one', () => {
+    // #1715 — the workflow file's `picture` input takes a still (kind image) or frames (video).
+    const graphTaking = (kind: 'image' | 'video') => ({
+      apiJson: { '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind } } },
+      meta: { name: `takes_${kind}`, importedAt: 'test', fps: 30, frames: 1 },
+    });
+    const s = applyOps(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'clip',
+        nodeType: 'MediaClip',
+        params: { src: 'clips/run.mp4', mediaKind: 'video', srcFps: 30, srcFrames: 90 },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'still',
+        nodeType: 'ComfyUIWorkflow',
+        params: { graph: graphTaking('image') },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'video',
+        nodeType: 'ComfyUIWorkflow',
+        params: { graph: graphTaking('video') },
+      },
+      ...['still', 'video'].map((to) => ({
+        type: 'connect' as const,
+        from: { node: 'clip', socket: 'out' },
+        to: { node: to, socket: 'picture' },
+      })),
+    ]).next;
+    const nodes = describeGraph(s).nodes as { id: string; framePicks?: unknown }[];
+    expect(nodes.find((n) => n.id === 'still')!.framePicks).toEqual({ picture: [0] });
+    expect(nodes.find((n) => n.id === 'video')!.framePicks).toBeUndefined();
+  });
+});

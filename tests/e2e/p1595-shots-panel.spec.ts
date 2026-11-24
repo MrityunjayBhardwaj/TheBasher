@@ -7,6 +7,7 @@
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
+import { openDrawerTab } from './_drawer';
 
 // A render and dozens of page round trips: more than the default 30 s on a loaded machine.
 test.setTimeout(180_000);
@@ -102,7 +103,7 @@ test('shots are listed from the cuts, edited one undo at a time, and a dragged c
   page,
 }) => {
   await boot(page);
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await expect(page.getByTestId('shots-panel')).toBeVisible();
   // One camera wired, nothing cut: one shot over the whole film.
   await expect(rows(page)).toHaveCount(1);
@@ -120,8 +121,9 @@ test('shots are listed from the cuts, edited one undo at a time, and a dragged c
   await expect(page.getByTestId('shot-camera-1')).toHaveValue(CAM3);
   await expect(page.getByTestId('shot-camera-2')).toHaveValue(CAM2);
 
-  // Selecting a shot looks through its camera at its first frame.
-  await page.getByTestId('shot-select-1').click();
+  // Double-clicking a shot looks through its camera at its first frame (#1708: a single click
+  // selects the camera and leaves the view alone — p1708).
+  await page.getByTestId('shot-select-1').dblclick();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as W).__basher_time.getState().filmSeconds))
     .toBe(2);
@@ -185,6 +187,6 @@ test('shots are listed from the cuts, edited one undo at a time, and a dragged c
   expect(await drawnAt(page, 1.95)).toBe(seedX);
   expect(await drawnAt(page, 1.98)).toBe(40);
   expect(await renderAt(page, 1.98), 'the render cuts where the viewport does').toBe(thirdRender);
-  await page.getByTestId('left-sidebar-tab-shots').click();
+  await openDrawerTab(page, 'shots');
   await page.screenshot({ path: 'test-results/p1595-shots-panel.png' });
 });

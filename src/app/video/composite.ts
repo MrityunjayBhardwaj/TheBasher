@@ -4,7 +4,7 @@
 // pixel draw touches a canvas:
 //   - planComposite(): PURE. Given the comp + the resolved layer inputs (authored
 //     params already overlaid with their evaluated [[V57]] channel values) + the
-//     comp playhead frame, decide which layers are visible (enabled / solo / trim)
+//     comp playhead frame, decide which layers are visible (muted / solo / trim)
 //     and which source frame each shows. The ONE place the composite's visibility +
 //     time-remap rules live, so the live viewer and the export (1e) can't drift
 //     ([[V37]] render==viewport).
@@ -19,6 +19,14 @@
 // REF: docs/COMPOSITOR-DESIGN.md §6 (compositing) + §4.4 (time remap); vyapti V37
 //      (render==viewport) + V2; sibling: videoTimelineGeometry (layerBarSpan); #237.
 
+import {
+  gpuCompositor,
+  gpuUnavailableReason,
+  isLinearImage,
+  layerInverseMatrix,
+  type CompositeImage,
+  type GpuDraw,
+} from './gpuComposite';
 import type { LayerBlendMode } from '../../nodes/types';
 import { mediaClipFrameAt, type MediaClipParams } from '../../nodes/MediaClip';
 import { layerBarSpan } from './videoTimelineGeometry';
@@ -50,11 +58,16 @@ export interface CompositeSource {
    *  Shape mirrors `ComfyImageUpload` (kept inline so composite.ts stays free of
    *  the comfy data model). Empty/absent when no image input is bound. */
   readonly comfyImageUploads?: readonly { readonly path: string; readonly filename: string }[];
+  /** #1717 — where a comfy generator's runner stores its pictures: source frame `i` is the file
+   *  `framePath(prefix, firstFrame + i)` (`srcFrames` of them; one, held, for a still). When the
+   *  file is not there yet the decoder draws the placeholder. Absent for a workflow with no
+   *  output path, which nothing ever stores for. */
+  readonly stored?: { readonly prefix: string; readonly firstFrame: number };
 }
 
 /** A resolved video effect to apply to a layer's decoded frame, in apply order
  *  (base → top of the [[V58]] stack). Today only ColorCorrect; new effect types add
- *  a member here + a branch in `applyEffects`. Params are already EVALUATED (channel
+ *  a member here + a branch in the GPU grade (gpuComposite.ts) and `effectFilter`. Params are already EVALUATED (channel
  *  overlay) so a keyframed effect param shows in both viewer and export (H40). */
 export interface ColorCorrectOp {
   readonly type: 'ColorCorrect';
@@ -64,11 +77,26 @@ export interface ColorCorrectOp {
 }
 export type EffectOp = ColorCorrectOp;
 
-/** A stable key for an effect chain — folded into the bitmap cache key so a graded
- *  frame is content-addressed distinctly from the ungraded source (and from a
- *  different grade). Empty chain → '' (the source decodes/draws unchanged). PURE. */
-export function effectsKey(effects: readonly EffectOp[]): string {
-  return effects.map((e) => `${e.type}:${e.brightness},${e.contrast},${e.saturation}`).join('|');
+/** The canvas filter that applies an effect chain (base → top, the apply order). '' for an
+ *  empty chain. ColorCorrect maps to `brightness()/contrast()/saturate()`. The ONE place an
+ *  effect becomes a filter, for a layer's own effects and for a step between layers. PURE. */
+export function effectFilter(effects: readonly EffectOp[]): string {
+  const filters: string[] = [];
+  for (const e of effects) {
+    if (e.type === 'ColorCorrect') {
+      filters.push(`brightness(${e.brightness}) contrast(${e.contrast}) saturate(${e.saturation})`);
+    }
+  }
+  return filters.join(' ');
+}
+
+/** A step between layers (#1879 step 4): an Image→Image operator on the stack's chain. It
+ *  adjusts everything drawn below it — the layers under it and the comp background. Muted
+ *  steps are not collected. */
+export interface ResolvedAdjustInput {
+  readonly kind: 'adjust';
+  readonly nodeId: string;
+  readonly effects: readonly EffectOp[];
 }
 
 /** A layer's composite inputs at a playhead: authored params with `opacity` +
@@ -92,6 +120,29 @@ export interface ResolvedLayerInput {
   readonly effects: readonly EffectOp[];
 }
 
+/** One entry of the stack at a playhead, back→front: a layer or a step between layers. */
+export type ResolvedStackInput = ResolvedLayerInput | ResolvedAdjustInput;
+
+/** Narrow a stack input to a layer input. */
+export function isLayerInput(i: ResolvedStackInput): i is ResolvedLayerInput {
+  return !('kind' in i);
+}
+
+/** A step that applies to the canvas drawn so far. */
+export interface AdjustComposite {
+  readonly kind: 'adjust';
+  readonly nodeId: string;
+  readonly effects: readonly EffectOp[];
+}
+
+/** What `drawComposite` does, in order: draw a layer, or adjust what is drawn. */
+export type CompositeDraw = LayerComposite | AdjustComposite;
+
+/** Narrow a planned draw to a layer draw (the ones that decode a source). */
+export function isLayerDraw(d: CompositeDraw): d is LayerComposite {
+  return !('kind' in d);
+}
+
 /** A visible layer resolved to exactly what `drawComposite` needs to draw it. */
 export interface LayerComposite {
   readonly layerId: string;
@@ -106,32 +157,38 @@ export interface LayerComposite {
   readonly effects: readonly EffectOp[];
 }
 
-/** The cache key for a decoded + graded source frame (path + frame + effect chain).
- *  The effect chain is part of the key so a graded frame caches distinctly from the
- *  ungraded source AND from a different grade. */
+/** The cache key for a decoded source frame (path + frame). Effects are applied while
+ *  drawing (#1883: on the GPU, in linear light), so one decoded frame serves every grade. */
 export function compositeBitmapKey(c: {
   source: CompositeSource;
   sourceFrameIndex: number;
-  effects?: readonly EffectOp[];
 }): string {
-  return `${c.source.path}#${c.sourceFrameIndex}#${effectsKey(c.effects ?? [])}`;
+  return `${c.source.path}#${c.sourceFrameIndex}`;
 }
 
 /**
- * The ordered (back→front) list of layers visible at `compFrame`, each resolved to
- * its source frame. PURE. A layer is dropped when it has no source, is hidden (the
- * eyeball / solo rule: if ANY layer solos, only solos draw), or the playhead is
- * outside its trimmed span. `inputs` must be in back→front (comp `layers`) order.
+ * The ordered (back→front) draws at `compFrame`: each visible layer resolved to its source
+ * frame, and each step between layers that adjusts what is below it. PURE. A layer is
+ * dropped when it has no source, is hidden (the eyeball / solo rule: if ANY layer solos,
+ * only solos draw), or the playhead is outside its trimmed span. A step has no span; it
+ * applies whenever it has an effect, unless a layer is soloed — solo shows the soloed layers
+ * as they are, as After Effects hides adjustment layers (user, 2026-11-13). Its own off
+ * switch is the stack mute. `inputs` must be in back→front (stack) order.
  */
 export function planComposite(
   comp: { fps: number; durationFrames: number },
-  inputs: readonly ResolvedLayerInput[],
+  inputs: readonly ResolvedStackInput[],
   compFrame: number,
-): LayerComposite[] {
-  const anySolo = inputs.some((i) => i.solo);
+): CompositeDraw[] {
+  const anySolo = inputs.some((i) => !('kind' in i) && i.solo);
   const fps = comp.fps > 0 ? comp.fps : 30;
-  const out: LayerComposite[] = [];
+  const out: CompositeDraw[] = [];
   for (const i of inputs) {
+    if ('kind' in i) {
+      if (!anySolo && effectFilter(i.effects))
+        out.push({ kind: 'adjust', nodeId: i.nodeId, effects: i.effects });
+      continue;
+    }
     if (!i.source) continue;
     const visible = anySolo ? i.solo : i.enabled;
     if (!visible) continue;
@@ -195,32 +252,96 @@ function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
 }
 
+/** Which pass drew a frame: the GPU's linear float pass, or the 2D canvas fallback. */
+export type CompositePath = 'gpu' | '2d';
+
+let warnedFallback = false;
+
 /**
- * Draw the composite onto `ctx` (size = comp width×height): clear, fill the comp
- * background, then draw each visible layer back→top. Each layer's source is fitted
- * (contain) and centered, then translated by `position`, rotated, and scaled about
- * the comp centre, with `opacity` + blend applied. A draw whose bitmap is missing
- * (still decoding) is skipped — the next redraw paints it.
+ * Draw the composite onto `ctx` (size = comp width×height). On the GPU when it can (#1883):
+ * linear light, half float, the background under everything, display encoding once at the
+ * end — see gpuComposite.ts. Otherwise the 2D canvas fallback, in display colour, which says
+ * so once in the console and in the returned path.
+ *
+ * Either way: each layer's source is fitted (contain) and centred, then translated by
+ * `position`, rotated and scaled about the comp centre, with its own effects, `opacity` and
+ * blend applied. A step between layers adjusts everything drawn under it, but not the comp
+ * background (the background is not a layer, as in After Effects). A draw whose picture is
+ * missing (still decoding) is skipped — the next redraw paints it.
  */
 export function drawComposite(
   ctx: CanvasRenderingContext2D,
   comp: { width: number; height: number; background: string },
-  draws: readonly LayerComposite[],
-  bitmaps: ReadonlyMap<string, CanvasImageSource & { width: number; height: number }>,
-): void {
+  draws: readonly CompositeDraw[],
+  bitmaps: ReadonlyMap<string, CompositeImage>,
+): CompositePath {
   const W = comp.width;
   const H = comp.height;
-  ctx.clearRect(0, 0, W, H);
-  if (comp.background) {
-    ctx.fillStyle = comp.background;
-    ctx.fillRect(0, 0, W, H);
+  const gpu = gpuCompositor();
+  if (gpu) {
+    const gpuDraws: GpuDraw[] = [];
+    for (const d of draws) {
+      if (!isLayerDraw(d)) {
+        gpuDraws.push({ kind: 'adjust', effects: d.effects });
+        continue;
+      }
+      const key = compositeBitmapKey(d);
+      const image = bitmaps.get(key);
+      if (!image) continue;
+      const { dw, dh } = fitContain(image.width, image.height, W, H);
+      const inverse = layerInverseMatrix(W, H, d.position, d.rotation, d.scale, dw, dh);
+      if (!inverse) continue;
+      gpuDraws.push({
+        kind: 'layer',
+        image,
+        imageKey: key,
+        inverse,
+        opacity: d.opacity,
+        blendMode: d.blendMode,
+        effects: d.effects,
+      });
+    }
+    gpu.render(W, H, comp.background, gpuDraws);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'copy';
+    ctx.filter = 'none';
+    ctx.drawImage(gpu.canvas, 0, 0);
+    ctx.restore();
+    return 'gpu';
   }
+  if (!warnedFallback) {
+    warnedFallback = true;
+    console.warn(
+      `[composite] drawing in display colour on a 2D canvas: ${gpuUnavailableReason() ?? 'no GPU compositor'}`,
+    );
+  }
+  drawComposite2d(ctx, W, H, comp.background, draws, bitmaps);
+  return '2d';
+}
+
+/** The 2D canvas fallback: display colour, 8 bits, the canvas's own blend modes and filters. */
+function drawComposite2d(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  background: string,
+  draws: readonly CompositeDraw[],
+  bitmaps: ReadonlyMap<string, CompositeImage>,
+): void {
+  ctx.clearRect(0, 0, W, H);
   for (const d of draws) {
+    if (!isLayerDraw(d)) {
+      adjustCanvas(ctx, W, H, effectFilter(d.effects));
+      continue;
+    }
     const bmp = bitmaps.get(compositeBitmapKey(d));
-    if (!bmp) continue;
+    if (!bmp || isLinearImage(bmp)) continue; // a float picture needs the GPU pass
     ctx.save();
     ctx.globalAlpha = clamp01(d.opacity);
     ctx.globalCompositeOperation = blendOp(d.blendMode);
+    ctx.filter = effectFilter(d.effects) || 'none';
     ctx.translate(W / 2 + d.position[0], H / 2 + d.position[1]);
     ctx.rotate((d.rotation * Math.PI) / 180);
     ctx.scale(d.scale[0], d.scale[1]);
@@ -228,4 +349,32 @@ export function drawComposite(
     ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
   }
+  if (background) {
+    // The background goes UNDER the layers, after the steps, so no step adjusts it.
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+}
+
+/** Re-draw the `W`×`H` canvas behind `ctx` through `filter`, replacing it: a snapshot of what
+ *  is drawn, then that snapshot filtered back over it with `copy`. No-op for ''. */
+function adjustCanvas(ctx: CanvasRenderingContext2D, W: number, H: number, filter: string): void {
+  if (!filter) return;
+  const snap = document.createElement('canvas');
+  snap.width = W;
+  snap.height = H;
+  const sctx = snap.getContext('2d');
+  if (!sctx) return;
+  sctx.drawImage(ctx.canvas, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'copy';
+  ctx.filter = filter;
+  ctx.drawImage(snap, 0, 0);
+  ctx.restore();
 }

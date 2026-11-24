@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sceneGraphOf } from './sceneGraph';
-import { nodeHeight, viewEdgesOf, viewRowsOf } from '../core/dag/layout';
+import { nodeHeight, ownSocketsHeight, viewEdgesOf, viewRowsOf } from '../core/dag/layout';
 import { buildDefaultDagState } from '../core/project/default';
 import { applyOps } from '../core/dag/ops';
 import { rawSpringOps } from '../test-utils/rawSpring';
@@ -303,5 +303,129 @@ describe('sceneGraphOf — #1825 a wire the mode switched off is not drawn', () 
     const g = sceneGraphOf(s, { showHidden: true, showAnimation: true });
     expect(g.nodes.find((n) => n.id === 'm')!.inputs.map((r) => r.socket)).not.toContain('aVector');
     expect(g.nodes.find((n) => n.id === 'm')!.outputs).not.toContain('outVector');
+  });
+});
+
+describe('sceneGraphOf — #1716 frames into a still input say which frame they pick', () => {
+  // #1715 — the workflow file's `picture` input takes a still (kind image) or frames (video).
+  const graphTaking = (kind: 'image' | 'video') => ({
+    apiJson: { '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind } } },
+    meta: { name: `takes_${kind}`, importedAt: 'test', fps: 30, frames: 1 },
+  });
+  /** A video clip and a still picture, each wired into a workflow. */
+  function wiredTo(workflowParams: object): DagState {
+    return applyOps(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'clip',
+        nodeType: 'MediaClip',
+        params: { src: 'clips/run.mp4', mediaKind: 'video', srcFps: 30, srcFrames: 90 },
+      },
+      { type: 'addNode', nodeId: 'wf', nodeType: 'ComfyUIWorkflow', params: workflowParams },
+      {
+        type: 'connect',
+        from: { node: 'clip', socket: 'out' },
+        to: { node: 'wf', socket: 'picture' },
+      },
+    ]).next;
+  }
+  const passRow = (s: DagState) =>
+    sceneGraphOf(s, { showHidden: false })
+      .nodes.find((n) => n.id === 'wf')
+      ?.inputs.find((r) => r.socket === 'picture');
+
+  it('a still workflow fed a video picks frame 0, and the row says so', () => {
+    const row = passRow(wiredTo({ graph: graphTaking('image') }));
+    expect(row).toBeDefined();
+    expect(row!.picks).toEqual([0]);
+  });
+
+  it('a video workflow fed the same video picks nothing (it steps through the frames)', () => {
+    const row = passRow(wiredTo({ graph: graphTaking('video'), frameStart: 0, frameEnd: 30 }));
+    expect(row).toBeDefined();
+    expect(row!.picks).toBeUndefined();
+  });
+});
+
+describe('sceneGraphOf — #1715 a workflow node draws the sockets its file declares', () => {
+  const file = (apiJson: object) => ({
+    apiJson,
+    meta: { name: 'f', importedAt: 'test', fps: 30, frames: 1 },
+  });
+  const STILL = file({
+    '1': { class_type: 'basher_controller', inputs: { name: 'picture', kind: 'image' } },
+    '2': { class_type: 'basher_controller', inputs: { name: 'strength', kind: 'float' } },
+    '3': { class_type: 'basher_export', inputs: { name: 'result', images: ['9', 0] } },
+    '4': { class_type: 'LoadImage', inputs: { image: 'x.png' } },
+  });
+  const VIDEO = file({
+    '1': { class_type: 'basher_controller', inputs: { name: 'footage', kind: 'video' } },
+    '2': { class_type: 'basher_export', inputs: { name: 'clip', kind: 'video', images: ['9', 0] } },
+  });
+  const draw = (s: DagState) => {
+    const n = sceneGraphOf(s, { showHidden: true }).nodes.find((x) => x.id === 'wf')!;
+    return {
+      inputs: n.inputs.map((r) => `${r.socket}:${r.broken ? 'broken' : r.socketType}`),
+      outputs: n.outputs.map((o) => `${o}:${n.outputTypes?.[o]}`),
+    };
+  };
+
+  it('every socket, wired or not, with its type; a wire that lost its socket shows broken', () => {
+    let s = applyOps(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'v', nodeType: 'Value', params: { value: 1 } },
+      { type: 'addNode', nodeId: 'wf', nodeType: 'ComfyUIWorkflow', params: { graph: STILL } },
+      {
+        type: 'connect',
+        from: { node: 'v', socket: 'out' },
+        to: { node: 'wf', socket: 'strength' },
+      },
+    ]).next;
+    expect(draw(s)).toEqual({
+      inputs: ['picture:still image', 'strength:number', 'time:time'],
+      outputs: ['result:still image'],
+    });
+    s = applyOps(s, [{ type: 'setParam', nodeId: 'wf', paramPath: 'graph', value: VIDEO }]).next;
+    expect(draw(s)).toEqual({
+      inputs: ['footage:frames', 'time:time', 'strength:broken'],
+      outputs: ['clip:frames'],
+    });
+  });
+
+  it('the layout leaves room for every row it draws', () => {
+    const s = applyOps(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'wf', nodeType: 'ComfyUIWorkflow', params: { graph: STILL } },
+    ]).next;
+    // picture, strength, time, then the output `result`: four rows.
+    expect(ownSocketsHeight(s, 'wf')).toBe(nodeHeight(4, 0));
+    expect(ownSocketsHeight(s, 'v')).toBeNull();
+  });
+});
+
+describe('sceneGraphOf — #1953 the Nodes tab: a network ends at its object', () => {
+  it('draws no Scene node and no render output, and no wire into them', () => {
+    const s = buildDefaultDagState();
+    const g = sceneGraphOf(s, { showHidden: false, endAtObjects: true });
+    const types = g.nodes.map((n) => n.type);
+    expect(types).not.toContain('Scene');
+    expect(types).not.toContain('RenderOutput');
+    expect(g.wires.some((w) => w.to === 'n_scene' || w.from === 'n_scene')).toBe(false);
+    // Each object is the end of its network: nothing reads its result here.
+    for (const id of ['n_box', 'n_camera', 'n_light'])
+      expect(g.nodes.find((n) => n.id === id)!.outputs, id).toEqual([]);
+    // Everything else is still drawn.
+    const all = sceneGraphOf(s, { showHidden: false });
+    expect(ids(g)).toEqual(ids(all).filter((id) => id !== 'n_scene' && id !== 'n_render'));
+  });
+
+  it('is the Nodes tab’s reading only: by default (the agent’s) the scene is drawn', () => {
+    const g = sceneGraphOf(buildDefaultDagState(), { showHidden: true, showAnimation: true });
+    expect(ids(g)).toContain('n_scene');
+    expect(ids(g)).toContain('n_render');
+  });
+
+  it('carries each node’s values', () => {
+    const g = sceneGraphOf(buildDefaultDagState(), { showHidden: false, endAtObjects: true });
+    expect(g.nodes.find((n) => n.id === 'n_box_data')!.values).toEqual(['size']);
+    expect(g.nodes.find((n) => n.id === 'n_box')!.values).toEqual([]);
   });
 });

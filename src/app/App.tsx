@@ -11,6 +11,7 @@ import { Layout } from './Layout';
 import { useRouteStore } from './stores/routeStore';
 import { ToastViewport } from './ToastViewport';
 import { RenderAnimationProgress } from './RenderAnimationProgress';
+import { LicenceWarningDialog } from './licence/LicenceWarningDialog';
 import { GltfEntryChooser } from './GltfEntryChooser';
 import { SettingsModal } from './SettingsModal';
 
@@ -85,6 +86,7 @@ export function App() {
       <AddMenu />
       <MoveToCollectionMenu />
       <RenderAnimationProgress />
+      <LicenceWarningDialog />
       <GltfEntryChooser />
       <SettingsModal />
       <ToastViewport />

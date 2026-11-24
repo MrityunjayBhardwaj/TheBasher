@@ -36,6 +36,7 @@ import { useVideoSelectionStore } from './videoSelectionStore';
 import { ComfySourceSection } from './ComfyControlsSection';
 import { EffectControlsSection } from './EffectControlsSection';
 import { ComfyRenderProgress } from './ComfyRenderProgress';
+import { ShotClipPanel } from './ShotClipPanel';
 
 /** The first source-edge producer id of a layer (single or list binding). */
 function firstSourceId(state: DagState, layerId: NodeId): NodeId | undefined {
@@ -163,6 +164,10 @@ export function ControlsPanel() {
           >
             {layerName}
           </div>
+          {/* #1717 — a shot clip: its state, seed, Regenerate, Open in Nodes / ComfyUI. */}
+          {sections[0]?.nodeType === 'ComfyUIWorkflow' && (
+            <ShotClipPanel workflowId={sections[0].nodeId} />
+          )}
           {sections.length === 0 ? (
             <p className="px-3 py-2 text-[11px] text-fg-dim">This layer has no source yet.</p>
           ) : (

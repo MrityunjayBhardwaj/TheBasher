@@ -451,8 +451,14 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/app/animate/dispatchApplyTransform.ts': 'a BakedData an existing Object reads',
   'src/app/animate/dispatchMutator.ts': 'keyframe channels and a declared sidecar',
   'src/app/animate/wrapInRig.ts': 'a Rig sub-network on an existing pose',
+  // #1720 — the Model generate node; the model it keeps enters by the glTF import door.
+  'src/app/asset/generateModel.ts': 'a ModelGenerate, which nothing reads as a value',
   'src/app/asset/importMediaClip.ts': 'a MediaClip, an Image',
+  // #1718 — the Generated tab feeds a shot's first-frame render to a still workflow as an image clip.
+  'src/app/generated/generatedStill.ts': 'a MediaClip, an Image',
   'src/app/CameraLookAtTarget.tsx': 'a Track-To on an existing camera',
+  // #1715 — the Nodes view's "+ ComfyUI workflow": a workflow node, an Image producer.
+  'src/app/GraphView.tsx': 'a ComfyUI workflow node; no scene node',
   'src/app/character/walkTo.ts': 'a clock and a WalkPath, not scene nodes',
   'src/app/driverBind.ts': 'a ParamDriver',
   'src/app/materialLink.ts': 'a Material, a resource',
@@ -468,6 +474,8 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/app/springBody.ts': 'a Solver and its body, numbers and vectors',
   'src/app/video/addLayer.ts': 'a Composition layer',
   'src/app/video/newComposition.ts': 'a Composition',
+  // #1717 — Make shot clips: per shot, a ComfyUI workflow, the render passes it reads, a layer.
+  'src/app/video/shotClips.ts': 'ComfyUI workflows, render passes (Images) and Composition layers',
   // `ops.ts` builds an `addNode` as the inverse of a `removeNode`: undo puts back a node that was.
   'src/core/dag/ops.ts': 'the inverse of removeNode, restoring what was there',
 };

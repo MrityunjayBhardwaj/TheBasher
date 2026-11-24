@@ -1,7 +1,7 @@
 // Agent chat UI — a single text bar + message history.
 //
-// Sits in the always-on AgentDock (the full-width bottom dock, Spline redesign
-// Wave C — previously the RightDrawer right column). The orchestrator handles
+// Sits in the AgentDock inside the right-hand chat column (#1704 — previously a
+// bottom-centre island above the playback bar). The orchestrator handles
 // the LLM turn and reads fresh DAG state on every round; this component just
 // drives it with the user message + selection.
 //
@@ -18,11 +18,15 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useAgentSessionStore } from '../agent/session/store';
-import { useSelectionStore } from './stores/selectionStore';
 import { runAgentTurn } from '../agent/orchestrator';
 import type { LLMConfig } from '../agent/transport/types';
 import { getComfyCapability, getMotionCapability, getModelCapability, getStorage } from './boot';
 import { useSettingsStore } from './stores/settingsStore';
+import { ProposalCard } from './ProposalCard';
+import { ContextChips } from './agent/ContextChips';
+import { currentTurnContext } from './agent/turnContext';
+import { useAgentContextStore, type ContextRef } from './stores/agentContextStore';
+import { CHAT_SHORTCUT_LABEL } from './stores/chatColumnStore';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
 const DEFAULT_MODEL = 'google/gemma-4-31B-it';
@@ -51,14 +55,45 @@ export function AgentChat() {
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // #1705 — the @ picker: opened by "@ add" or by typing @ at the start of a word. `typedAt` is
+  // where a typed @ sits, so picking takes it back out of the message (Escape leaves the text).
+  const [pickerOpen, setPickerOpenState] = useState(false);
+  const typedAt = useRef<number | null>(null);
+  const setPickerOpen = useCallback((open: boolean) => {
+    typedAt.current = null;
+    setPickerOpenState(open);
+  }, []);
+  const pick = useCallback((ref: ContextRef) => {
+    useAgentContextStore.getState().addExtra(ref);
+    const at = typedAt.current;
+    if (at !== null) setInput((v) => (v[at] === '@' ? v.slice(0, at) + v.slice(at + 1) : v));
+    typedAt.current = null;
+    setPickerOpenState(false);
+  }, []);
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const caret = e.target.selectionStart ?? value.length;
+    // One character typed, an @, at the start of a word.
+    if (
+      value.length === input.length + 1 &&
+      value[caret - 1] === '@' &&
+      (caret === 1 || /\s/.test(value[caret - 2]))
+    ) {
+      setPickerOpen(true);
+      typedAt.current = caret - 1;
+    }
+    setInput(value);
+  };
 
   const handleSend = useCallback(async () => {
     const msg = input.trim();
     if (!msg || running) return;
     setInput('');
     setRunning(true);
+    setPickerOpen(false);
 
-    const selectedNodeIds = useSelectionStore.getState().selectedNodeIds;
+    // #1705 — the chips as they stand when the message is sent; a dismissal is for this message only.
+    const { selectedNodeIds, context } = currentTurnContext();
     const config = getLLMConfig();
 
     if (!config.apiKey) {
@@ -70,6 +105,9 @@ export function AgentChat() {
       setRunning(false);
       return;
     }
+
+    // The message is going: every chip comes back for the next one.
+    useAgentContextStore.getState().resetAfterSend();
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -100,18 +138,24 @@ export function AgentChat() {
         motionModel: motionGenModel,
         modelCapability,
         modelVersion: modelGenVersion,
+        context,
       });
     } finally {
       setRunning(false);
       abortRef.current = null;
     }
-  }, [input, running, session.mode]);
+  }, [input, running, session.mode, setPickerOpen]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (pickerOpen && e.key === 'Escape') {
+      e.preventDefault();
+      setPickerOpen(false);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -119,13 +163,15 @@ export function AgentChat() {
   };
 
   return (
-    <div className="flex flex-col font-mono text-xs text-fg" data-testid="agent-chat">
-      {/* Messages — mounted ONLY when there's a conversation, so an empty chat
-          collapses the dock to just the input bar (the grid row is `auto`, so
-          a zero-height message list reserves no void). Capped height; a long
-          thread scrolls within. */}
+    <div
+      className="flex min-h-0 flex-1 flex-col font-mono text-xs text-fg"
+      data-testid="agent-chat"
+    >
+      {/* Messages — mounted ONLY when there's a conversation. #1704 — the column is full height, so
+          the thread takes the space above the composer and scrolls within it (min-h-0: a flex
+          child otherwise grows to its content instead of scrolling). */}
       {session.messages.length > 0 || session.error ? (
-        <div className="max-h-[220px] overflow-auto px-2 py-2" data-testid="agent-messages">
+        <div className="min-h-0 flex-1 overflow-auto px-2 py-2" data-testid="agent-messages">
           {session.messages.map((msg) => {
             const isAgent = msg.role === 'assistant';
             return (
@@ -181,6 +227,10 @@ export function AgentChat() {
         </div>
       ) : null}
 
+      {/* #1706 — a pending proposal: its change list, under the thread and above the composer, so
+          Accept / Reject are on screen in every space (this column is). */}
+      <ProposalCard />
+
       {/* Token usage footer */}
       {session.tokenUsage.total > 0 ? (
         <div
@@ -195,14 +245,18 @@ export function AgentChat() {
         </div>
       ) : null}
 
-      {/* Input area */}
-      <div className="border-t border-border p-2">
+      {/* Input area — pinned to the column's bottom (mt-auto) whether or not there is a thread. */}
+      <div className="mt-auto border-t border-border p-2">
+        {/* #1705 — What / Where / When: what this message will tell the agent besides the words. */}
+        <ContextChips pickerOpen={pickerOpen} setPickerOpen={setPickerOpen} onPick={pick} />
         <div className="flex items-stretch gap-1.5">
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={running ? 'waiting for response…' : 'just say the word…'}
+            placeholder={
+              running ? 'waiting for response…' : `Ask or tell Basher… (${CHAT_SHORTCUT_LABEL})`
+            }
             disabled={running}
             rows={2}
             data-testid="agent-input"

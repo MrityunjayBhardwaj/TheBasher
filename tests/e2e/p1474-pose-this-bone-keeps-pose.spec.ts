@@ -6,6 +6,10 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
+import { toolbarControl } from './_toolbar';
+
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
 
 interface Node {
   type: string;
@@ -94,7 +98,7 @@ test('#1474 — "pose this bone" on a moving bone leaves the skin where it is dr
     t.camera.position.set(0, 1.2, 5);
   });
   await page.getByTestId(`scene-tree-row-${armature}`).click();
-  await page.getByTestId('armature-mode').selectOption('pose');
+  await (await toolbarControl(page, 'armature-mode')).selectOption('pose');
   await page.evaluate(async (id) => {
     const b = await import('/src/app/stores/boneSelectionStore.ts');
     b.useBoneSelectionStore.getState().selectBone(id, 'Bone1', ['Bone0', 'Bone1']);

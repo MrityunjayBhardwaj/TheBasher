@@ -127,7 +127,8 @@ export async function cookMotionGenerations(
   );
 
   const beforeBake = useDagStore.getState().state;
-  const ops = bakeGeneratedClipOps(beforeBake);
+  // #1942 — the bake takes the same scope as the generation: a scoped cook lands its own clip only.
+  const ops = bakeGeneratedClipOps(beforeBake, producerId);
   const baked = ops.filter((o) => o.type === 'setParam' && o.paramPath === 'sourceHash').length;
   if (ops.length > 0) {
     useDagStore
@@ -211,8 +212,11 @@ export function fitMotionPathScale(producerId?: string): number {
  *
  * Returns how many characters moved.
  */
-export function placeCookedMotion(): number {
-  const { ops, refusals } = placeCookedMotionOps(useDagStore.getState().state);
+export function placeCookedMotion(
+  /** #1942 — place only this producer's run (a re-cook's). Omit to place every ready run. */
+  producerId?: string,
+): number {
+  const { ops, refusals } = placeCookedMotionOps(useDagStore.getState().state, producerId);
   if (ops.length > 0) {
     useDagStore.getState().dispatchAtomic(ops, 'user', 'place motion on path');
   }

@@ -6,6 +6,9 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 
+// #1952 — works inside the outliner / inspector, so it runs with both panels open (see _fixtures).
+test.use({ sidePanels: 'open' });
+
 type Quat = [number, number, number, number];
 type Vec3 = [number, number, number];
 
