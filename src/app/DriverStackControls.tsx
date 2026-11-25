@@ -29,8 +29,9 @@ import {
   buildMoveDriverOps,
   buildRemoveDriverOps,
   buildToggleDriverMuteOp,
-  driverBandsForTarget,
+  driverBandsForSubject,
 } from './driverStack';
+import { linkedDataNodeId } from './resolveDataParamOwner';
 
 const NONE: ReadonlyArray<{ type: string; label: string }> = [];
 
@@ -56,7 +57,11 @@ export function DriverStackControls({ nodeId }: { nodeId: string }) {
   const select = useSelectionStore((s) => s.select);
 
   const target = resolveDriverTarget(state, nodeId);
-  const bands = driverBandsForTarget(state, target);
+  // #425 — reach through the object↔data split (V112: a managing surface aggregates the halves under
+  // the object). A driver on a data-half param (material/size) targets the DATA node, so selecting the
+  // Object must still show — and let you bypass / reorder / remove — that driver. A fused object (or a
+  // selected data-half driver, whose own target is the data node) has a null reach and is unchanged.
+  const bands = driverBandsForSubject(state, target, linkedDataNodeId(state, target));
 
   function onMute(id: string) {
     const op = buildToggleDriverMuteOp(useDagStore.getState().state, id);

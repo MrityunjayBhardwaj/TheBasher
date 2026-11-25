@@ -117,6 +117,8 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
     scope: { kind: 'source', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
+    // A generator, not a blend: it reflects the geometry on its spine and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   inspectorSections: ['modifier'],
   home: {

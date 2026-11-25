@@ -8,93 +8,17 @@
 
 import { getNodeType, listNodeTypes, mainInputOfType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
-import { TEMPLATE_DEFINITION_TYPE, templatesOf } from '../core/dag/templates';
+import { TEMPLATE_DEFINITION_TYPE } from '../core/dag/templates';
 import type { NodeRef } from '../core/dag/types';
-import { nodeDisplayName } from './sceneTreeWalk';
-import { muteParamOf, planStackEdit, type StackPlace } from './stackEdit';
+// The row's read model lives in `layerView.ts` (#1894 S1): it derives a row from the declared
+// contract + the render-identical resolver, so read == render and the view names no node kind.
+// Re-exported here so `StackPanel.tsx` and the tests keep their one import of the panel model.
+import { typeLabel } from './layerView';
+import { planStackEdit, type StackPlace } from './stackEdit';
 import { laneObjectOf, type StackGroup, type StackNodeRow, type StackRow } from './stackTree';
 
-/** `TrackTo` reads "Track To"; a template type reads its definition's label. */
-export function typeLabel(state: DagState, type: string): string {
-  const template = templatesOf(state).get(type);
-  if (template) return template.definition.label;
-  return type.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-}
-
-const formatValue = (value: unknown): string => {
-  if (typeof value === 'number') return String(Math.round(value * 100) / 100);
-  if (Array.isArray(value) && value.every((v) => typeof v === 'number')) {
-    return `(${value.map(formatValue).join(', ')})`;
-  }
-  if (typeof value === 'string' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value)?.slice(0, 24) ?? '—';
-};
-
-/** A param a wired input of the same name stands in for: its value is held, and not used. */
-export interface Overridden {
-  readonly param: string;
-  readonly value: string;
-}
-
-export interface RowView {
-  readonly name: string;
-  readonly type: string;
-  /** What kind of row this is, in a word or two: "constraint", "blend · 3 inputs". */
-  readonly tag: string | null;
-  readonly overridden: readonly Overridden[];
-  /** A template instance's exposed params with their values, unwired ones only. */
-  readonly exposed: readonly Overridden[];
-  /** A blended step's influence: its number, or that a wire drives it. */
-  readonly influence: string | null;
-  /** Null when the type has no mute. */
-  readonly muted: boolean | null;
-}
-
-/** What a person reads a node as: its name, or its type when nobody named it. */
-export function nameOf(state: DagState, nodeId: string): string {
-  const named = nodeDisplayName(state.nodes, nodeId);
-  const type = state.nodes[nodeId]?.type;
-  return named === nodeId && type ? typeLabel(state, type) : named;
-}
-
-export function rowView(state: DagState, row: StackNodeRow): RowView {
-  const node = state.nodes[row.nodeId];
-  const def = getNodeType(row.nodeType);
-  const params = (node?.params ?? {}) as Record<string, unknown>;
-  const wired = (socket: string) => node?.inputs[socket] !== undefined;
-  const overridden = Object.keys(def?.inputs ?? {})
-    .filter((socket) => socket in params && wired(socket))
-    .map((param) => ({ param, value: formatValue(params[param]) }));
-  const groups = row.groups.length;
-  let tag: string | null = null;
-  if (row.template) {
-    tag = `template · ${row.template.instances} instance${row.template.instances === 1 ? '' : 's'}`;
-  } else if (def?.worldStep) tag = 'constraint';
-  // An object's groups are its lanes, not operands of one operation, so it isn't counted.
-  else if (mainInputOfType(row.nodeType) === null && groups > 1 && !def?.outputs.world) {
-    tag = `${groups} inputs`;
-  }
-  const factor = row.blend?.factor;
-  const holder = factor ? state.nodes[factor.node] : undefined;
-  const influence = !row.blend
-    ? null
-    : holder?.type === 'Value'
-      ? formatValue((holder.params as { value?: unknown }).value)
-      : 'wired';
-  const mute = muteParamOf(def);
-  return {
-    // A node nobody named reads as its type: an id like `data_mw7iys99` says nothing to a person.
-    name: nameOf(state, row.nodeId),
-    type: typeLabel(state, row.nodeType),
-    tag,
-    overridden,
-    exposed: (row.template?.exposed ?? [])
-      .filter((param) => !wired(param))
-      .map((param) => ({ param, value: formatValue(params[param]) })),
-    influence,
-    muted: mute ? params[mute] === true : null,
-  };
-}
+export { layerView as rowView, nameOf, typeLabel, formatValue } from './layerView';
+export type { Overridden, RowView } from './layerView';
 
 /** How many rows a collapsed group holds, at any depth, so a closed group still says its size. */
 export function rowCount(rows: readonly StackRow[]): number {

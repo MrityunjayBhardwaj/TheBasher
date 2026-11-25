@@ -163,6 +163,8 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
     scope: { kind: 'target', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'material',
+    // Its `opacity` param is the MATERIAL's own transparency, not a layer blend over the stack.
+    mix: { kind: 'none', why: 'material-transparency' },
   },
   inspectorSections: ['material'],
   home: {

@@ -52,6 +52,7 @@ import { addStripMutator } from './builders/addStrip';
 import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
+import { setPoseLayerStateMutator } from './builders/setPoseLayerState';
 import { buildAddModifierOps, enumerateModifierStack, findConsumer } from '../../app/operatorStack';
 import { proposePlanTool, listMutatorsTool } from './tool';
 
@@ -172,7 +173,8 @@ describe('mutator catalog', () => {
     // 38 → 39 at #1353 — `rig.bindSkin`, a mesh bound to an armature.
     // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
     // 41 → 42 at #1550 — `setOutput`, the display and render flags.
-    expect(mutators).toHaveLength(42);
+    // 42 → 43 at #1927 — `pose.setPoseLayerState`, a pose layer's weight / mute / solo.
+    expect(mutators).toHaveLength(43);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -193,6 +195,7 @@ describe('mutator catalog', () => {
       'mutator.nla.setStripBlend',
       'mutator.nla.setStripTiming',
       'mutator.nla.setTrackState',
+      'mutator.pose.setPoseLayerState',
       'mutator.randomize',
       'mutator.render.addAIPass',
       'mutator.render.addPass',
@@ -2582,7 +2585,8 @@ describe('agent.listMutators tool', () => {
     // 38 → 39 at #1353 — `rig.bindSkin`.
     // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
     // 41 → 42 at #1550 — `setOutput`.
-    expect(parsed.mutators).toHaveLength(42);
+    // 42 → 43 at #1927 — `pose.setPoseLayerState`, a pose layer's weight / mute / solo.
+    expect(parsed.mutators).toHaveLength(43);
   });
 });
 
@@ -4233,6 +4237,58 @@ describe('mutator.nla.setTrackState (order / mute / solo)', () => {
   });
 });
 
+describe('mutator.pose.setPoseLayerState (weight / mute / solo)', () => {
+  function sceneWithPoseLayer(): DagState {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'pl',
+      nodeType: 'PoseLayer',
+      params: { members: [{ bone: 'Bone1', rotationMode: 'XYZ', rotation: [0, 0, 30] }] },
+    }).next;
+    return s;
+  }
+
+  it('emits one setParam per provided field in deterministic order (weight→mute→solo)', () => {
+    const state = sceneWithPoseLayer();
+    const result = validatePlan(
+      setPoseLayerStateMutator,
+      { layerId: 'pl', weight: 0.5, mute: true, solo: false },
+      state,
+      'layer',
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.ops.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual([
+        'weight',
+        'mute',
+        'solo',
+      ]);
+    }
+  });
+
+  it('re-guards an all-undefined spec on the validatePlan-direct path (precondition)', () => {
+    const state = sceneWithPoseLayer();
+    const result = validatePlan(setPoseLayerStateMutator, { layerId: 'pl' } as never, state, 'x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.gate).toBe(4);
+  });
+
+  it('rejects a non-PoseLayer target', () => {
+    const state = sceneWithPoseLayer();
+    expect(
+      validatePlan(setPoseLayerStateMutator, { layerId: 'box', weight: 0.5 }, state, 'x').ok,
+    ).toBe(false);
+  });
+
+  it('twice-call returns the same Op[] (deterministic)', () => {
+    const state = sceneWithPoseLayer();
+    const a = validatePlan(setPoseLayerStateMutator, { layerId: 'pl', weight: 0.3 }, state, 'o');
+    const b = validatePlan(setPoseLayerStateMutator, { layerId: 'pl', weight: 0.3 }, state, 'o');
+    expect(a).toEqual(b);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // V14 DEEPER NON-REDUNDANCY — Op-shape probe (issue #22)
 //
@@ -4299,6 +4355,7 @@ import {
   setOutputMutator as _setOutputM,
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
+  setPoseLayerStateMutator as _setPoseLayerStateM,
   renameBoneMutator as _renameBoneM,
   editSkeletonMutator as _editSkeletonM,
   addIkMutator as _addIkM,
@@ -4728,6 +4785,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setPoseMemberModeM as MutatorDefinition<unknown>,
       build: buildSceneForPoseLayer,
       spec: { layer: 'pl_layer', bone: 'Bone1', rotationMode: 'quaternion' },
+    },
+    'mutator.pose.setPoseLayerState': {
+      mutator: _setPoseLayerStateM as MutatorDefinition<unknown>,
+      build: buildSceneForPoseLayer,
+      spec: { layerId: 'pl_layer', weight: 0.5 },
     },
     'mutator.animate.bakePose': {
       mutator: _bakePoseM as MutatorDefinition<unknown>,

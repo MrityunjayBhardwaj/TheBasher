@@ -468,6 +468,18 @@ const TAKERS: string[] = [
   'resolveConstraintRotation@src/app/nodeConstraints.ts',
   'resolveEvaluatedMesh@src/app/resolveEvaluatedMesh.ts',
   'resolveEvaluatedParam@src/app/resolveEvaluatedParam.ts',
+  // #1894 S1 — the stack row's folded influence read; `StackPanel` follows the playhead, so it
+  // hands this the shared UI cache (#1389), the way `useAnimatableField` does, and the forward
+  // below keeps the walk off the cold-origin census.
+  'layerView@src/app/layerView.ts',
+  // #1940 T0a — the per-object layer surface forwards its own optional cache straight to `layerView`
+  // for every structural row; forwarding makes it a taker, and the forward keeps it off the
+  // cold-origin census (it opens no `resolveEvaluatedParam` walk of its own).
+  'objectLayerSurface@src/app/objectLayerSurface.ts',
+  // #1940 T0b — the value-lane enumerator forwards the same optional cache to `resolveEvaluatedParam`
+  // for each channel/strip/driver row's folded read; forwarding makes it a taker too, and keeps the
+  // value read off the cold-origin census (it opens no walk of its own either).
+  'valueLaneGroups@src/app/objectLayerSurface.ts',
   'resolveEvaluatedTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveFollowedWorldPosition@src/app/nodeConstraints.ts',
   'resolveOwnTransform@src/app/resolveEvaluatedTransform.ts',

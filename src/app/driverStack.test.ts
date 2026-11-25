@@ -14,9 +14,11 @@ import {
   buildMoveDriverOps,
   buildRemoveDriverOps,
   buildToggleDriverMuteOp,
+  driverBandsForSubject,
   driverBandsForTarget,
   driverSourceLabel,
 } from './driverStack';
+import { linkedDataNodeId } from './resolveDataParamOwner';
 
 const BOX_ID = 'n_box';
 const METAL = 'material.metalness';
@@ -185,5 +187,43 @@ describe('driverStack — the builders (#316)', () => {
     expect(buildToggleDriverMuteOp(state, BOX_ID)).toBeNull();
     expect(buildMoveDriverOps(state, BOX_ID, 'up')).toBeNull();
     expect(buildRemoveDriverOps(state, BOX_ID)).toBeNull();
+  });
+});
+
+describe('driverBandsForSubject — both halves of a split object (#425)', () => {
+  // The default box is split-native: `n_box` (Object) poses `n_box_data` (BoxData) via `data`.
+  const DATA_ID = 'n_box_data';
+
+  it('merges the object and data halves by param path — the exact-id form misses the data half', () => {
+    const state = withOps(
+      addClamp('c_o', 0.2),
+      addClamp('c_d', 0.8),
+      // an object-half driver (transform lives on the Object) and a data-half driver (material).
+      {
+        type: 'addNode',
+        nodeId: 'd_o',
+        nodeType: 'ParamDriver',
+        params: { target: BOX_ID, paramPath: 'position', blendMode: 'replace', order: 0 },
+      } as Op,
+      {
+        type: 'addNode',
+        nodeId: 'd_d',
+        nodeType: 'ParamDriver',
+        params: { target: DATA_ID, paramPath: METAL, blendMode: 'replace', order: 0 },
+      } as Op,
+      wire('c_o', 'd_o'),
+      wire('c_d', 'd_d'),
+    );
+    // Exact-id on the Object sees only its own driver.
+    expect(driverBandsForTarget(state, BOX_ID).map((b) => b.paramPath)).toEqual(['position']);
+    // Both-halves reaches the data node and merges, sorted by param path.
+    const bands = driverBandsForSubject(state, BOX_ID, linkedDataNodeId(state, BOX_ID));
+    expect(bands.map((b) => b.paramPath)).toEqual([METAL, 'position']);
+    expect(bands.find((b) => b.paramPath === METAL)!.entries.map((e) => e.nodeId)).toEqual(['d_d']);
+  });
+
+  it('a fused object (no data half) reduces to driverBandsForTarget', () => {
+    const state = buildBandedState();
+    expect(driverBandsForSubject(state, BOX_ID, null)).toEqual(driverBandsForTarget(state, BOX_ID));
   });
 });

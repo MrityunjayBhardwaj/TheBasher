@@ -244,6 +244,8 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     scope: { kind: 'target', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'material',
+    // A writer, not a blend: it assigns a material to the selected faces and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   // NO inspector section, and that is the reference's own answer rather than a gap.
   // Blender's Material Properties panel is Slot List → Data-Block row → Link selector

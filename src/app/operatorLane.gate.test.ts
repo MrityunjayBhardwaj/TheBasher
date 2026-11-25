@@ -44,7 +44,12 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
+import {
+  __resetRegistryForTests,
+  getNodeType,
+  LAYER_LANES,
+  listNodeTypes,
+} from '../core/dag/registry';
 import { registerNodeType } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { operatorLaneOf } from '../core/dag/operatorLane';
@@ -57,7 +62,9 @@ import {
   isSceneLaneWrapper,
   operatorLane,
   operatorTypesInSection,
+  rowLaneOfType,
 } from './operatorChain';
+import { POSE_LAYER_MODES } from '../nodes/PoseLayer';
 import { stripComments } from '../test-utils/sourceScan';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { importsOf } from '../../tools/gates/moduleShape';
@@ -129,6 +136,7 @@ function registerLaneOp(
           : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,
+      mix: { kind: 'none', why: 'no-blend' },
     },
     evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
   } as never);
@@ -189,9 +197,10 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(importsOf('src/core/dag/socketMembership.ts')).toEqual(['./types']);
   });
 
-  it('THE LANE MAP: all fourteen chain declarers land on a lane, none unreadable', () => {
+  it('THE LANE MAP: all sixteen chain declarers land on a lane, none unreadable', () => {
     // Stated as a literal rather than derived a second way. Two derivations checked against
-    // each other agree when BOTH are wrong; a literal is the row that cannot.
+    // each other agree when BOTH are wrong; a literal is the row that cannot. EXACTLY fifteen:
+    // the thirteen below plus the two constraint steps (#1894 S0b); nothing else moved.
     expect(laneMap()).toEqual({
       // #393 — the seventh geometry modifier. Its second input is the armature Object, and the
       // lane is still the spine's: an `ObjectData` flows through it like any other.
@@ -210,11 +219,16 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       // #1879 — a composition's layer: the stack below flows through on `below`, and its own
       // picture is a side input of the same type, so the lane is the spine's, as for a modifier.
       Layer: 'Image',
+      // #1894 S0b — a constraint step. Its carrying output is `world` (a `Matrix4`), not its
+      // introspection `out` (a `Constraint`); spine `in` → `world`, both `Matrix4`, so it lands
+      // on the `Matrix4` lane. This is the generalisation `operatorLaneOf` gained in S0b.
+      FollowPath: 'Matrix4',
       MaskModifier: 'ObjectData',
       MaterialOverride: 'SceneObject',
       MaterialOverrideOp: 'ObjectData',
       MirrorModifier: 'ObjectData',
       SetMaterialOp: 'ObjectData',
+      TrackTo: 'Matrix4',
       Transform: 'SceneObject',
       // #994 — the fifth geometry modifier, and the sharpest case this row makes. It reshapes
       // no geometry at all, and it still lands on the data lane, because the lane is about what
@@ -222,6 +236,69 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       UVProjectModifier: 'ObjectData',
     });
     expect(Object.values(laneMap())).not.toContain('NO LANE');
+  });
+
+  it('G2: LAYER_LANES covers every lane a stack layer stands on — chain declarers AND the pose mainInput lane (#1894 S0b, #1927 P0)', () => {
+    // A literal census of the table's own keys. S0a deferred G2 and this row RED-flagged the day
+    // the `Matrix4` lane arrives; S0b is that day — TrackTo / FollowPath become chain declarers on
+    // `Matrix4` AND the lane joins the table in the same commit. #1927 P0 adds the `PosedSkeleton`
+    // lane, and here is where the old wording became a lie: a `PoseLayer` is NOT a chain declarer
+    // (it declares `mainInput`, which the registry refuses to pair with `chain`), so the
+    // chain-declarer loop below CANNOT cover its lane and "every lane a chain declarer stands on"
+    // no longer describes the table. The table covers every lane a stack LAYER stands on, by its
+    // chain spine OR its main input — both halves are pinned below so neither can drift silently.
+    expect(Object.keys(LAYER_LANES).sort()).toEqual([
+      'Image',
+      'Matrix4',
+      'ObjectData',
+      'PosedSkeleton',
+      'SceneObject',
+    ]);
+    // HALF ONE — every lane a CHAIN declarer actually stands on has a LAYER_LANES entry. This loop
+    // is blind to the pose lane by construction (`laneMap` skips non-chain nodes), which is exactly
+    // why it is not the whole gate any more.
+    const lanesStoodOn = [...new Set(Object.values(laneMap()))].sort();
+    for (const lane of lanesStoodOn) {
+      expect(Object.keys(LAYER_LANES)).toContain(lane);
+    }
+    // HALF TWO — the pose lane, which no chain declarer stands on. A `PoseLayer` is a `mainInput`
+    // node, so `operatorLaneOf` reads null for it and only `rowLaneOf` resolves its lane. Pinned
+    // explicitly: the lane a pose row stands on is `PosedSkeleton`, and it HAS a LAYER_LANES entry.
+    // Remove `PosedSkeleton` from the table and this reds, not only the literal above.
+    expect(getNodeType('PoseLayer')?.chain).toBeUndefined();
+    expect(rowLaneOfType('PoseLayer')).toBe('PosedSkeleton');
+    expect(Object.keys(LAYER_LANES)).toContain('PosedSkeleton');
+    // The three ORIGINAL lanes carry operators that don't blend, so each offers no modes and does
+    // not wrap. The constraint `Matrix4` lane wraps — constraint influence lives in small nodes
+    // around the step (#1811) — and offers no modes (influence is a scalar, not a mode choice).
+    expect(LAYER_LANES.ObjectData).toEqual({ modes: [], wraps: false });
+    expect(LAYER_LANES.SceneObject).toEqual({ modes: [], wraps: false });
+    expect(LAYER_LANES.Image).toEqual({ modes: [], wraps: false });
+    expect(LAYER_LANES.Matrix4).toEqual({ modes: [], wraps: true });
+    // The pose lane is the constraint lane's opposite on both axes: it OFFERS modes (an `own`-mix
+    // layer names its mode in its own params) and does NOT wrap (the weight is the layer's own
+    // `weight` param + in-node keyed channel, folded inside `PoseLayer.evaluate`, not small graph
+    // nodes around a step). Its modes are pinned against `POSE_LAYER_MODES` so the lane and the
+    // node's own enum cannot silently disagree.
+    expect(LAYER_LANES.PosedSkeleton).toEqual({
+      modes: ['override', 'additive', 'ik'],
+      wraps: false,
+    });
+    expect(LAYER_LANES.PosedSkeleton?.modes).toEqual([...POSE_LAYER_MODES]);
+  });
+
+  it('#1927 P0 — a pose row resolves to the PosedSkeleton lane by its main input, where the chain road reads null', () => {
+    // The point of `rowLaneOf`: one function resolves a lane for BOTH shapes of stack row. A chain
+    // declarer still comes through the operator road untouched…
+    expect(rowLaneOfType('TrackTo')).toBe('Matrix4');
+    expect(rowLaneOfType('ArrayModifier')).toBe('ObjectData');
+    // …and a `PoseLayer`, which declares `mainInput: 'pose'` and NO chain, gets its lane from the
+    // type its main input carries. The operator road reads null for it — the proof the parallel
+    // road is load-bearing and not a second spelling of the same answer.
+    expect(operatorLaneOf(getNodeType('PoseLayer'))).toBeNull();
+    expect(getNodeType('PoseLayer')?.mainInput).toBe('pose');
+    expect(getNodeType('PoseLayer')?.inputs.pose?.type).toBe('PosedSkeleton');
+    expect(rowLaneOfType('PoseLayer')).toBe('PosedSkeleton');
   });
 
   it('THE LANE IS NOT THE SECTION: nine on the data lane, seven in the modifier set', () => {
@@ -258,6 +335,10 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(laneMembers('SceneObject')).toEqual(['MaterialOverride', 'Transform']);
     // #1879 — two on the image lane, in two sections: an effect adjusts, a layer composites.
     expect(laneMembers('Image')).toEqual(['ColorCorrect', 'Layer']);
+    // #1894 S0b — the constraint lane: the two `worldStep` steps, standing on `Matrix4` by their
+    // `world` carrying output. Section is `constraint`, a different question from the lane (same
+    // split the rows above make): they are NOT in the modifier set asserted above.
+    expect(laneMembers('Matrix4')).toEqual(['FollowPath', 'TrackTo']);
   });
 
   it('THE DERIVED SET FOLLOWS THE REGISTRY; THE HAND-MAINTAINED LIST DOES NOT', () => {
@@ -326,11 +407,13 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(isEffectNode(node)).toBe(false);
   });
 
-  it('A NODE WHOSE SPINE AND OUTPUT DISAGREE HAS NO LANE', () => {
+  it('A NODE WHOSE SPINE AND CARRYING OUTPUT DISAGREE HAS NO LANE', () => {
     // A real thing to be able to build — a converter, not an operator. Nothing flows THROUGH
     // it, so no stack may walk down it. The agreement is checked rather than assumed from
     // `chain` merely being present, which is the difference between "declares a spine" and
-    // "is an operator".
+    // "is an operator". The carrying output is `out` here (no `world` output), so the #1894 S0b
+    // generalisation does not reach this node: its spine `ObjectData` and carrier `Image` still
+    // disagree, so it still has no lane.
     registerLaneOp('Ns2SyntheticConverter', 'ObjectData', 'Image');
     const node = nodeOfType('Ns2SyntheticConverter');
 

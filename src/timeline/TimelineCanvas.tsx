@@ -103,6 +103,7 @@ import type { ChannelRow } from './channelRow';
 import { appendComputedSourceRows, appendLayerRows, computedSourceCache } from './layerChannelRows';
 import { resolveRowChannelForWrite, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
+import { posingObjectIdOf } from '../app/resolveDataParamOwner';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
 import { IDENTITY_KEY_RULER, type KeyRuler, keyRulerFor } from './keyRuler';
 
@@ -318,9 +319,16 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
     const paramLabel = params.paramPath || params.name || '';
     const isBareDefault = !params.name || params.name === params.paramPath;
     const targetNode = params.target ? nodes[params.target] : undefined;
+    // #425 — a channel on a split object's DATA half targets the (unnamed) data node; label it by the
+    // posing Object so the row reads "Cube — metalness", not a raw `data_…` id that appears nowhere in
+    // the outliner and cannot be selected. A fused or own-targeted channel has no poser and resolves
+    // to itself (unchanged).
+    const labelId = params.target
+      ? (posingObjectIdOf(nodes, params.target) ?? params.target)
+      : undefined;
     const name =
-      isBareDefault && targetNode
-        ? `${nodeDisplayName(nodes, params.target as string)} — ${paramLabel}`
+      isBareDefault && targetNode && labelId
+        ? `${nodeDisplayName(nodes, labelId)} — ${paramLabel}`
         : params.name || params.paramPath || '';
     rows.push({
       channelId: node.id,

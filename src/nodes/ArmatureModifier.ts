@@ -72,6 +72,8 @@ export const ArmatureModifierNode: NodeDefinition<ArmatureModifierParams, Object
     scope: { kind: 'unscoped', why: 'declined' },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
+    // A deformer, not a blend: it edits the geometry on its spine and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   inspectorSections: ['modifier'],
   home: {

@@ -81,6 +81,25 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   worldStep: true,
   // #1812 — the curve object picked by name, as a saved file holds it.
   worldRefs: { curve: 'curve' },
+  // #1894 S0b — the constraint stack's declaration, so the shared layer panel can SEE this step.
+  // ADDITIVE METADATA ONLY: the placement still renders through `worldStepFold` (`worldStep: true`
+  // stays and the world-path dispatch keys on it alone — `evaluator.ts`), never through the operator
+  // fold. `input: 'in'` IS this node's main input (the spine the chain walks down), which is why
+  // `mainInput: 'in'` is gone — registration refuses both, and `chain.input` carries the same claim.
+  // Mirrors TrackTo.ts verbatim (the species shape); see its header for the full argument.
+  chain: {
+    input: 'in',
+    // The spine carries a `Matrix4` (the world coming up the chain), which has no components, so
+    // nothing is resolvable against it. `source`/`target` would be refused — only `ObjectData` scopes.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    // DECLARED `none`: the mute is honoured on the WORLD path (`worldStepFold` / `constraintChain`),
+    // not by the `chainBypass` operator machinery — so there is nothing for THAT machinery to do here.
+    // `muteParamOf` still finds the `mute` param through its constraint fallback (`stackEdit.ts`).
+    bypass: { kind: 'none' },
+    section: 'constraint',
+    // The constraint-influence blend lives in small nodes around the step (#1811), which is `wrap`.
+    mix: { kind: 'wrap' },
+  },
   cost: 'cheap',
   paramSchema: FollowPathParams,
   // #421 — `target` is the constrained object (owner → subject). `curve` is a
@@ -92,7 +111,6 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   ],
   // Edge-less (enumerated + seam-resolved, like TrackTo and a direct channel). The `out`
   // socket exists for introspection; nothing consumes it.
-  mainInput: 'in',
   inputs: {
     // #1811 — on a wired chain: the transform coming up it, and the world of the curve object.
     in: { type: 'Matrix4', cardinality: 'single', chain: 'step' },

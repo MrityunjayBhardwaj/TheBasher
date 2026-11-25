@@ -73,6 +73,8 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
     // data-lane material operators; a material stack derived from this field would
     // otherwise offer three members where it has two.
     section: 'none',
+    // Its `opacity` param is the MATERIAL's own transparency, not a layer blend over the stack.
+    mix: { kind: 'none', why: 'material-transparency' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['material'],

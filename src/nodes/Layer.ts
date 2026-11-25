@@ -81,6 +81,9 @@ export const LayerNode: NodeDefinition<LayerParams, ImageValue> = {
     scope: { kind: 'unscoped', why: 'no-component-domain' },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'layer',
+    // #1894 — a composition layer's own params ARE the blend: `opacity` is the amount, `blendMode`
+    // the mode (both on LayerParams). This is the canonical `own` mix the ChainDeclaration doc names.
+    mix: { kind: 'own', amount: 'opacity', mode: 'blendMode' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['layout', 'animate'],

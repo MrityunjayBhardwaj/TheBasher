@@ -3,10 +3,14 @@
 // ── WHAT A LANE IS, AND WHY IT IS A DERIVATION RATHER THAN A LIST ─────────────────────
 //
 // An operator is a node that takes a value on its declared chain spine and hands the SAME
-// kind of value back on `out`. The type that flows through is its LANE. Geometry modifiers
-// stand on `ObjectData`; `Transform` and `MaterialOverride` stand on `SceneObject`;
-// `ColorCorrect` stands on `Image`. Nothing multiplies the two declarations that say so —
-// `chain.input` and the output socket's type — so until this file existed the lane was
+// kind of value back on its CARRYING output. The type that flows through is its LANE.
+// Geometry modifiers stand on `ObjectData`; `Transform` and `MaterialOverride` stand on
+// `SceneObject`; `ColorCorrect` stands on `Image`. For a plain operator the carrying output
+// is `out`; for a `worldStep` constraint step (Track To / Follow Path, #1894 S0b) it is the
+// `world`-marked output, because `out` there is the step's introspection `Constraint` and the
+// chain's value flows on `world` (a `Matrix4`) — spine `in` → `world`, both `Matrix4`. Nothing
+// multiplies the two declarations that say so — `chain.input` and the carrying output's type —
+// so until this file existed the lane was
 // re-derived by hand wherever it was needed, and `operatorChain.ts` carried TWO copies of
 // it, byte-identical in shape and one socket type apart. Its own comment said as much:
 // *"Byte-identical in shape to isDataLaneOperator, one socket type up."* A duplication a
@@ -54,7 +58,7 @@
 import type { NodeDefinition, SocketTypeName } from './types';
 import { inputAccepts } from './socketMembership';
 
-/** The output socket every chain node hands its result back on. */
+/** The output socket a plain (non-worldStep) chain node hands its result back on. */
 const OUT = 'out';
 
 /**
@@ -63,10 +67,16 @@ const OUT = 'out';
  *
  * `null` has exactly three causes and they are deliberately not distinguished, because
  * every caller asks the same yes/no question of a specific lane: the definition is absent;
- * it declares no `chain`, so it is not a chain node; or its spine and its `out` disagree
- * about the type, so nothing flows THROUGH it and it is a converter rather than an
+ * it declares no `chain`, so it is not a chain node; or its spine and its CARRYING output
+ * disagree about the type, so nothing flows THROUGH it and it is a converter rather than an
  * operator. A node in the third case is a real thing to be able to build — that is why the
  * agreement is checked rather than assumed from `chain` being present.
+ *
+ * THE CARRYING OUTPUT is `out` for a plain operator, and the `world`-marked output for a
+ * `worldStep` constraint step (#1894 S0b): a Track-To / Follow-Path step's `out` is its
+ * introspection `Constraint`, while the chain's value flows on `world` (a `Matrix4`, spine
+ * `in` → `world`). The `if (!def?.chain)` guard stays first, so this reaches ONLY chain
+ * declarers — a `worldStep` node that declares no chain still has no lane.
  *
  * Read through `inputAccepts`, never `spine.type ===`: an input socket may declare a SET
  * of accepted types, and the direct comparison still compiles while reading false for
@@ -75,7 +85,9 @@ const OUT = 'out';
 export function operatorLaneOf(def: NodeDefinition | undefined): SocketTypeName | null {
   if (!def?.chain) return null;
   const spine = def.inputs[def.chain.input];
-  const out = def.outputs[OUT]?.type;
-  if (!spine || out === undefined) return null;
-  return inputAccepts(spine, out) ? out : null;
+  const carrier = def.worldStep
+    ? Object.values(def.outputs).find((o) => o?.world === true)?.type
+    : def.outputs[OUT]?.type;
+  if (!spine || carrier === undefined) return null;
+  return inputAccepts(spine, carrier) ? carrier : null;
 }

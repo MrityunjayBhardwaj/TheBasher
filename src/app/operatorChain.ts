@@ -24,7 +24,7 @@ import type {
   SocketId,
   SocketTypeName,
 } from '../core/dag/types';
-import { getNodeType, listNodeTypes } from '../core/dag/registry';
+import { getNodeType, listNodeTypes, mainInputOfType } from '../core/dag/registry';
 import { inputAccepts } from '../core/dag/types';
 import { operatorLaneOf } from '../core/dag/operatorLane';
 
@@ -64,6 +64,34 @@ export function chainSocketOf(node: Node | undefined): SocketId | null {
  */
 export function operatorLane(node: Node | undefined): SocketTypeName | null {
   return node ? operatorLaneOf(getNodeType(node.type)) : null;
+}
+
+/**
+ * The LANE a STACK ROW stands on — the socket type flowing through it — for BOTH shapes of row,
+ * NOT just operators (#1927 P0). `operatorLane` above answers only a chain declarer and reads
+ * `null` for everything else; but a stack renders two shapes of row flat, and the second one is a
+ * `mainInput` node that is not an operator. A `PoseLayer` is exactly that: it declares
+ * `mainInput: 'pose'` carrying `PosedSkeleton`, never a `ChainDeclaration` — the registry REFUSES a
+ * node that states both (`assertMainInput`). So its lane cannot come from the chain spine; it comes
+ * from the type its MAIN INPUT carries, resolved here the parallel way so that a chain declarer AND
+ * a mainInput node each get a lane from one function.
+ *
+ * `null` when the type is unknown, declares no main input (`mainInputOfType` returns `null`/
+ * `undefined`), or its main input accepts a SET of types — a set stands on no single lane, the same
+ * honest `null` `operatorLaneOf` returns when a spine and its carrying output disagree. Read the
+ * socket type by `typeof === 'string'`, never `=== 'Foo'`: `InputDescriptor.type` is
+ * `SocketTypeName | AcceptedTypeSet`, and a direct compare reads false for the set form silently
+ * (`types.ts` flags that hazard at the declaration).
+ */
+export function rowLaneOfType(type: NodeTypeId): SocketTypeName | null {
+  const def = getNodeType(type);
+  if (!def) return null;
+  const chainLane = operatorLaneOf(def);
+  if (chainLane) return chainLane;
+  const main = mainInputOfType(type);
+  if (typeof main !== 'string') return null;
+  const declared = def.inputs[main]?.type;
+  return typeof declared === 'string' ? declared : null;
 }
 
 /**

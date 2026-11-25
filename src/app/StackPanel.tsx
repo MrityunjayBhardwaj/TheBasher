@@ -19,7 +19,8 @@
 
 import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
-import type { NodeRef } from '../core/dag/types';
+import type { EvalCtx, NodeRef } from '../core/dag/types';
+import { usePlayheadFor } from './animate/usePlayheadFor';
 import { useSelectionStore } from './stores/selectionStore';
 import { planStackEdit, type StackEdit, type StackPlace } from './stackEdit';
 import {
@@ -35,6 +36,7 @@ import {
   type Offer,
 } from './stackPanelModel';
 import { stackOf, type StackGroup, type StackNodeRow, type StackRow } from './stackTree';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const BTN =
   'rounded border border-border px-1.5 py-0.5 text-fg hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg';
@@ -69,6 +71,13 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
   const select = useSelectionStore((s) => s.select);
   const rows = useMemo(() => stackOf(state, output), [state, output]);
   const paths = useMemo(() => openPaths(rows), [rows]);
+  // The playhead the row model reads folded values at, so a keyed/driven influence shows what
+  // renders (read == render). Subscribed only while the stack's object value can move (#1731).
+  const { frame, seconds, normalized } = usePlayheadFor(output.node);
+  const ctx = useMemo<EvalCtx>(
+    () => ({ time: { frame, seconds, normalized } }),
+    [frame, seconds, normalized],
+  );
 
   // Groups are open and template insides closed until a person says otherwise: `flipped` holds
   // the keys they have toggled away from that.
@@ -266,7 +275,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
     named: string | null,
   ): ReactNode {
     const editable = named === null;
-    const view = rowView(state, row);
+    const view = rowView(state, row, ctx, uiEvaluatorCache);
     const active = row.nodeId === selectedNodeId;
     const empty = emptySockets(state, row);
     const inside = row.template ? isOpen(insideKey(row), false) : false;
@@ -326,15 +335,15 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
             <span
               className={`items-center gap-1 ${active ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'}`}
             >
-              {/* Drawn in apply order, so ▲ is earlier: one place further from the output, which
-                  is a higher index in the edit's run (0 = the row the output reads). */}
+              {/* Drawn last-applied on top, so ▲ is LATER: one place toward the output, which is a
+                  lower index in the edit's run (0 = the row the output reads, the top row). */}
               <button
                 type="button"
                 data-testid={`${p}-up-${row.key}`}
                 className={BTN}
-                disabled={index === run_.length - 1}
-                title="Move up (applied earlier)"
-                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
+                disabled={index === 0}
+                title="Move up (applied later)"
+                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
               >
                 ▲
               </button>
@@ -342,9 +351,9 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                 type="button"
                 data-testid={`${p}-down-${row.key}`}
                 className={BTN}
-                disabled={index === 0}
-                title="Move down (applied later)"
-                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
+                disabled={index === run_.length - 1}
+                title="Move down (applied earlier)"
+                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
               >
                 ▼
               </button>
@@ -463,13 +472,13 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
   }
 
   /**
-   * A flat run in apply order: what is applied first on top, read top to bottom as a person reads
-   * (the user's decision, 2026-11-09, as Blender's Modifier and Constraint tabs list them). The tree
-   * holds a run output-first, so it is drawn reversed, and each row keeps its index in the tree's
-   * order, which is what the edits speak.
+   * A flat run, LAST applied on top, read top to bottom (the user's decision, 2026-11-22,
+   * superseding the 2026-11-09 first-on-top order). The tree already holds a run output-first — the
+   * last-applied step's output is the run's result — so it is drawn in tree order, and each row
+   * keeps its index in the tree's order, which is what the edits speak.
    */
   function renderRun(list: readonly StackRow[], named: string | null = null): ReactNode {
-    const applied = list.map((row, i) => ({ row, i })).reverse();
+    const applied = list.map((row, i) => ({ row, i }));
     return (
       <div className="flex flex-col gap-0.5">
         {applied.map(({ row, i }) =>

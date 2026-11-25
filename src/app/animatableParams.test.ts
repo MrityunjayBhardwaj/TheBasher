@@ -22,6 +22,8 @@ import {
   animatableSubjectOf,
   brokenReferences,
   isAnimatable,
+  isMeasuredSubject,
+  measuredPathsOfSubject,
   missingParamPath,
 } from './animatableParams';
 
@@ -67,6 +69,61 @@ describe('animatableSubjectOf — the key the census measured under', () => {
       value: undefined,
     }).next;
     expect(animatableSubjectOf(euler, sphere.obj)).toBe('Object<SphereData>');
+  });
+
+  it('splits a data value that carries a material-slot table from a single-material one (#1928)', () => {
+    // The renderer reads `materialSlots ?? [material]`, so the presence of the authored table
+    // flips `material.*` from animatable (single-material) to still (base-only, the slots win)
+    // and makes `materialSlots.N.*` what paints. Those two answers for `material.*` cannot share
+    // one census block, so the subject key carries the table's presence. A pure reader off the
+    // params — the same property a multi-material import writes (observed: materialSlots.len 2).
+    const state = {
+      nodes: {
+        slotted: {
+          id: 'slotted',
+          type: 'PolyMeshData',
+          params: { material: null, materialSlots: [null, null] },
+          inputs: {},
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'slotted', socket: 'out' } },
+        },
+        single: { id: 'single', type: 'PolyMeshData', params: { material: null }, inputs: {} },
+      },
+    } as unknown as DagState;
+    expect(animatableSubjectOf(state, 'slotted')).toBe('PolyMeshData+slots');
+    expect(animatableSubjectOf(state, 'obj')).toBe('Object<PolyMeshData+slots>');
+    expect(animatableSubjectOf(state, 'single')).toBe('PolyMeshData');
+  });
+});
+
+describe('#1928 — the slotted subject offers the slot paths and hides the dead material.*', () => {
+  // Against the MEASURED census: a multi-slot import's data node is subject `PolyMeshData+slots`,
+  // where the renderer reads `materialSlots ?? [material]`, so `material.*` is the superseded
+  // single-slot fallback (measured still) and `materialSlots.N.*` is what paints (measured scene).
+  // The picker reads exactly this table, so the authoring vocabulary follows the render road with
+  // no second source of truth — the whole of #1928's fix.
+  it('a multi-slot subject offers materialSlots.* for a number channel, and NOT the dead material.*', () => {
+    const offered = measuredPathsOfSubject('PolyMeshData+slots', 'number');
+    expect(offered).toContain('materialSlots.*.specular.roughness');
+    expect(offered).toContain('materialSlots.*.base.metalness');
+    expect(offered).toContain('materialSlots.*.geometry.opacity');
+    // The flat spelling is dead on a slotted mesh, so it is not offered.
+    expect(offered.filter((p) => p.startsWith('material.'))).toEqual([]);
+  });
+
+  it('a single-material subject is the mirror: material.* offered, no slot rows at all', () => {
+    const offered = measuredPathsOfSubject('PolyMeshData', 'number');
+    expect(offered).toContain('material.specular.roughness');
+    expect(offered.filter((p) => p.startsWith('materialSlots.'))).toEqual([]);
+  });
+
+  it('both are measured subjects — "has no such rows" is never read as "never placed"', () => {
+    expect(isMeasuredSubject('PolyMeshData+slots')).toBe(true);
+    expect(isMeasuredSubject('PolyMeshData')).toBe(true);
   });
 });
 

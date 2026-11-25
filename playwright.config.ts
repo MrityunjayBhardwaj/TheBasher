@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// H851/H210/H472 — every worktree serves the same dev port and Playwright's `reuseExistingServer`
+// adopts whatever holds it, so a sibling checkout's server can answer the e2e and report green
+// against the wrong code. Allow pointing a run at THIS worktree's own server on a free port
+// (default 5180, so CI and the usual single-checkout flow are unchanged).
+const PORT = process.env.BASHER_E2E_PORT ?? '5180';
+const BASE_URL = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: './tests/e2e',
   // #1260 — the census alone takes 14–23 min locally, so CI runs it as its own parallel jobs
@@ -28,7 +35,7 @@ export default defineConfig({
   // poll window — not the logic — was too small. Local keeps 5s fast-fail.
   expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   use: {
-    baseURL: 'http://localhost:5180',
+    baseURL: BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
@@ -39,8 +46,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5180',
+    command: `npx vite --port ${PORT} --strictPort`,
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },

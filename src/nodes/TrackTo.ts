@@ -69,6 +69,24 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   // #1811 — an aim target picked by name, which can close a loop where a wire can't.
   worldRefs: { aim: 'aimNode' },
   ownerParent: { socket: 'parent', owner: 'target' },
+  // #1894 S0b — the constraint stack's declaration, so the shared layer panel can SEE this step.
+  // ADDITIVE METADATA ONLY: the aim still renders through `worldStepFold` (`worldStep: true` stays
+  // and the world-path dispatch keys on it alone — `evaluator.ts`), never through the operator
+  // fold. `input: 'in'` IS this node's main input (the spine the chain walks down), which is why
+  // `mainInput: 'in'` is gone — registration refuses both, and `chain.input` carries the same claim.
+  chain: {
+    input: 'in',
+    // The spine carries a `Matrix4` (the world coming up the chain), which has no components, so
+    // nothing is resolvable against it. `source`/`target` would be refused — only `ObjectData` scopes.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    // DECLARED `none`: the mute is honoured on the WORLD path (`worldStepFold` / `constraintChain`),
+    // not by the `chainBypass` operator machinery — so there is nothing for THAT machinery to do here.
+    // `muteParamOf` still finds the `mute` param through its constraint fallback (`stackEdit.ts`).
+    bypass: { kind: 'none' },
+    section: 'constraint',
+    // The constraint-influence blend lives in small nodes around the step (#1811), which is `wrap`.
+    mix: { kind: 'wrap' },
+  },
   cost: 'cheap',
   paramSchema: TrackToParams,
   // #421 — `target` is the CONSTRAINED object: this constraint lives on it
@@ -80,7 +98,6 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
     { path: 'target', shape: 'id', role: 'subject' },
     { path: 'aimNode', shape: 'id', role: 'argument' },
   ],
-  mainInput: 'in',
   inputs: {
     // #1811 — on a wired chain: the transform coming up it, what to aim at (else `aimPoint`), and
     // the world the object hangs from, for an up or an aim point in its parent's space.

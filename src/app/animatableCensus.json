@@ -1440,6 +1440,48 @@
         "driver": "scene"
       }
     },
+    "Object<PolyMeshData+slots>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<PolyMeshData+slots>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
     "Object<PolyMeshData>": {
       "position": {
         "kind": "vec3",
@@ -1660,6 +1702,104 @@
         "driver": "scene"
       },
       "material.transmission.weight": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "PolyMeshData+slots": {
+      "material.base.color": {
+        "kind": "color",
+        "reach": null
+      },
+      "material.base.metalness": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.coat.roughness": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.coat.weight": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.emission.color": {
+        "kind": "color",
+        "reach": null
+      },
+      "material.emission.luminance": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.geometry.opacity": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.specular.ior": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.specular.roughness": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "material.transmission.weight": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "materialSlots.*.base.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "materialSlots.*.base.metalness": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.coat.roughness": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.coat.weight": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.emission.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "materialSlots.*.emission.luminance": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.geometry.opacity": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.specular.ior": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.specular.roughness": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "materialSlots.*.transmission.weight": {
         "kind": "number",
         "reach": "scene",
         "driver": "scene"

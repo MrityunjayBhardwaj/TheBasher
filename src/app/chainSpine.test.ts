@@ -53,6 +53,7 @@ function registerBinaryOp(type: string, spine: SocketId): void {
       scope: { kind: 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'modifier',
+      mix: { kind: 'none', why: 'no-blend' },
     },
     evaluate: (_p, inputs) => inputs[spine],
   } as never);
@@ -127,11 +128,17 @@ describe('#396 — the chain spine is declared, not named', () => {
     expect(enumerateModifierStack(state, 'n_cut_data')).toEqual([]);
   });
 
-  it('every declared spine names a real input socket whose type matches the output', () => {
+  it('every declared spine names a real input socket whose type matches the CARRYING output', () => {
     // Two claims the declaration makes that nothing else would catch: a typo'd socket
     // name (the walk would silently find nothing and treat every operator as a base),
     // and the type rule — "an operator's output type equals its input type" was only
     // ever true of the SPINE, and stating the spine is what makes it checkable.
+    //
+    // #1894 S0b — the CARRYING output is `out` for a plain operator, and the `world`-marked
+    // output for a `worldStep` constraint step (Track To / Follow Path): its `out` is the
+    // step's introspection `Constraint`, while the chain's value flows on `world` (a `Matrix4`,
+    // spine `in` → `world`). This mirrors `operatorLaneOf`'s own carrier rule — the same
+    // generalisation, stated here so the two cannot silently diverge.
     const offenders: string[] = [];
     for (const type of listNodeTypes()) {
       const def = getNodeType(type);
@@ -142,9 +149,11 @@ describe('#396 — the chain spine is declared, not named', () => {
         offenders.push(`${type}: chain.input '${spine}' is not one of its inputs`);
         continue;
       }
-      const outDesc = def.outputs['out'];
+      const outDesc = def.worldStep
+        ? Object.values(def.outputs).find((o) => o?.world === true)
+        : def.outputs['out'];
       if (!outDesc) {
-        offenders.push(`${type}: declares a chain but has no 'out' output`);
+        offenders.push(`${type}: declares a chain but has no carrying output`);
         continue;
       }
       // #609 — MEMBERSHIP: a spine may accept a SET of types, and the rule the census
@@ -153,14 +162,14 @@ describe('#396 — the chain spine is declared, not named', () => {
       // reporting every such operator as an offender.
       if (!inputAccepts(inDesc, outDesc.type)) {
         offenders.push(
-          `${type}: spine '${spine}' accepts ${acceptedTypes(inDesc).join('|')} but 'out' is ${outDesc.type}`,
+          `${type}: spine '${spine}' accepts ${acceptedTypes(inDesc).join('|')} but carrying output is ${outDesc.type}`,
         );
       }
     }
     expect(offenders).toEqual([]);
   });
 
-  it('the set of chain nodes is EXACTLY the fourteen operators, across all three lanes', () => {
+  it('the set of chain nodes is EXACTLY the sixteen operators, across all four lanes', () => {
     // An EXACT set, not a floor: this population grows, and the failure mode of a new
     // operator is that it registers without a spine and every stack surface goes blind
     // to it — silently, because a node with no spine simply is not a chain node. Making
@@ -174,12 +183,14 @@ describe('#396 — the chain spine is declared, not named', () => {
       'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
+      'FollowPath', // constraint lane — Matrix4 (#1894 S0b, carried on `world`)
       'Layer', // image lane — a composition's layer stack (#1879, the first with a SIDE picture)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
       'MirrorModifier', // data lane — geometry
       'SetMaterialOp', // data lane — material (already binary today)
+      'TrackTo', // constraint lane — Matrix4 (#1894 S0b, carried on `world`)
       'Transform', // scene lane
       'UVProjectModifier', // data lane — geometry (#994, the first that RESHAPES NOTHING)
     ]);

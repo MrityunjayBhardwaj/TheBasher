@@ -500,6 +500,36 @@ describe('applyOp — setParam', () => {
       }),
     ).toThrow(OpError);
   });
+
+  it('#1963 — a set into an array index keeps the array an array, siblings intact', () => {
+    const state = withState(
+      (s) =>
+        applyOp(s, {
+          type: 'addNode',
+          nodeId: 'arr',
+          nodeType: 'TestArray',
+          params: { rows: [{ v: 1 }, { v: 2 }, { v: 3 }] },
+        }).next,
+    );
+    // Without the array-preserving walk this turned `rows` into `{0,1,2}` and the `z.array`
+    // schema rejected it with an OpError — so this reds on the pre-fix path.
+    const { next, inverse } = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'arr',
+      paramPath: 'rows.1.v',
+      value: 99,
+    });
+    const rows = (next.nodes.arr.params as { rows: { v: number }[] }).rows;
+    expect(Array.isArray(rows)).toBe(true);
+    expect(rows).toEqual([{ v: 1 }, { v: 99 }, { v: 3 }]);
+    // Round-trips: the inverse restores the prior array.
+    const back = applyOp(next, inverse).next;
+    expect((back.nodes.arr.params as { rows: { v: number }[] }).rows).toEqual([
+      { v: 1 },
+      { v: 2 },
+      { v: 3 },
+    ]);
+  });
 });
 
 describe('applyOp — setMeta (#224 rename)', () => {

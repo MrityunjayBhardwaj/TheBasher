@@ -324,6 +324,8 @@ export const CaptureModifierNode: NodeDefinition<CaptureModifierParams, ObjectDa
     scope: { kind: 'unscoped', why: 'declined' },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
+    // No layer blend: it writes capture weights onto its spine and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   inspectorSections: ['modifier'],
   home: {

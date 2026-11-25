@@ -177,6 +177,8 @@ export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> 
     scope: { kind: 'source', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
+    // No layer blend: `amount` is the bevel WIDTH (a geometry setting), not a blend over the stack.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   inspectorSections: ['modifier'],
   home: {

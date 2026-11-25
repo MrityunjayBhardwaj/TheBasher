@@ -58,6 +58,8 @@ export const ColorCorrectNode: NodeDefinition<ColorCorrectParams, ImageValue> = 
     scope: { kind: 'unscoped', why: 'no-component-domain' },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'effect',
+    // An image effect, not a layer blend: it grades the image on its spine and offers no layer amount.
+    mix: { kind: 'none', why: 'no-blend' },
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['effect'],

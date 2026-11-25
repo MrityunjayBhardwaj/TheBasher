@@ -165,6 +165,7 @@ function registerRecorder(type: string, scope: 'source' | 'target' | 'unscoped')
           : { kind: scope as 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'none',
+      mix: { kind: 'none', why: 'no-blend' },
     },
     inspectorSections: [],
     // Annotated, because the `as never` below erases the contextual type — so without
@@ -656,6 +657,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
           scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'none',
+          mix: { kind: 'none', why: 'no-blend' },
         },
         inspectorSections: [],
         evaluate: (_p: unknown, i: { target?: unknown }) => i.target,
