@@ -85,7 +85,12 @@ describe('animatableSubjectOf — the key the census measured under', () => {
           params: { material: null, materialSlots: [null, null] },
           inputs: {},
         },
-        obj: { id: 'obj', type: 'Object', params: {}, inputs: { data: { node: 'slotted', socket: 'out' } } },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'slotted', socket: 'out' } },
+        },
         single: { id: 'single', type: 'PolyMeshData', params: { material: null }, inputs: {} },
       },
     } as unknown as DagState;

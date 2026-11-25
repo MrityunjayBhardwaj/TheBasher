@@ -527,10 +527,17 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
         type: 'addNode',
         nodeId: 'imp_data',
         nodeType: 'PolyMeshData',
-        params: { mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })), material },
+        params: {
+          mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })),
+          material,
+        },
       },
       { type: 'addNode', nodeId: 'imp', nodeType: 'Object', params: {} },
-      { type: 'connect', from: { node: 'imp_data', socket: 'out' }, to: { node: 'imp', socket: 'data' } },
+      {
+        type: 'connect',
+        from: { node: 'imp_data', socket: 'out' },
+        to: { node: 'imp', socket: 'data' },
+      },
       {
         type: 'addNode',
         nodeId: 'ch_imp_pos',
@@ -562,10 +569,17 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
         type: 'addNode',
         nodeId: 'imp_data',
         nodeType: 'PolyMeshData',
-        params: { mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })), material },
+        params: {
+          mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })),
+          material,
+        },
       },
       { type: 'addNode', nodeId: 'imp', nodeType: 'Object', params: {} },
-      { type: 'connect', from: { node: 'imp_data', socket: 'out' }, to: { node: 'imp', socket: 'data' } },
+      {
+        type: 'connect',
+        from: { node: 'imp_data', socket: 'out' },
+        to: { node: 'imp', socket: 'data' },
+      },
       {
         type: 'addNode',
         nodeId: 'ch_mat',
@@ -602,16 +616,28 @@ describe('T1 — #1928 honesty: a value row flags rendersBaseOnly when its rende
         type: 'addNode',
         nodeId: 'imp_data',
         nodeType: 'PolyMeshData',
-        params: { mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })), material },
+        params: {
+          mesh: packMeshData(cylinderMesh({ radius: 1, height: 2, radial: 8, rings: 3 })),
+          material,
+        },
       },
       { type: 'addNode', nodeId: 'imp', nodeType: 'Object', params: {} },
-      { type: 'connect', from: { node: 'imp_data', socket: 'out' }, to: { node: 'imp', socket: 'data' } },
+      {
+        type: 'connect',
+        from: { node: 'imp_data', socket: 'out' },
+        to: { node: 'imp', socket: 'data' },
+      },
       { type: 'addNode', nodeId: 'c_m', nodeType: 'Clamp', params: { min: 0.3, max: 1 } },
       {
         type: 'addNode',
         nodeId: 'd_m',
         nodeType: 'ParamDriver',
-        params: { target: 'imp_data', paramPath: 'material.metalness', blendMode: 'replace', order: 0 },
+        params: {
+          target: 'imp_data',
+          paramPath: 'material.metalness',
+          blendMode: 'replace',
+          order: 0,
+        },
       },
       { type: 'connect', from: { node: 'c_m', socket: 'out' }, to: { node: 'd_m', socket: 'in' } },
     ] as Op[]).next;

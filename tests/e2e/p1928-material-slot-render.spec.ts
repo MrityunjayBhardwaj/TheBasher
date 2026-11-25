@@ -57,7 +57,15 @@ async function foldThenRead(
         type: 'addNode',
         nodeId: id,
         nodeType: 'KeyframeChannelNumber',
-        params: { name: 'g1928', target: t, paramPath: p, keyframes: [{ time: 0, value: v }, { time: 2, value: v }] },
+        params: {
+          name: 'g1928',
+          target: t,
+          paramPath: p,
+          keyframes: [
+            { time: 0, value: v },
+            { time: 2, value: v },
+          ],
+        },
       });
       w.__basher_time.getState().pause();
       w.__basher_time.getState().setTime(1);
@@ -80,12 +88,17 @@ test('#1928 — a multi-slot import folds per slot, and the dead `material.*` fo
 }) => {
   await page.goto('/');
   await page.waitForFunction(
-    () => Boolean((window as unknown as W).__basher_ingestGltfFolder && (window as unknown as W).__basher_dag),
+    () =>
+      Boolean(
+        (window as unknown as W).__basher_ingestGltfFolder && (window as unknown as W).__basher_dag,
+      ),
     { timeout: 20000 },
   );
   await page.evaluate(async () => {
     const w = window as unknown as W;
-    const bytes = new Uint8Array(await fetch('/assets/two-material-quad.gltf').then((r) => r.arrayBuffer()));
+    const bytes = new Uint8Array(
+      await fetch('/assets/two-material-quad.gltf').then((r) => r.arrayBuffer()),
+    );
     await w.__basher_ingestGltfFolder([{ relativePath: 'two-material-quad.gltf', bytes }], 'g1928');
   });
   await expect.poll(() => importCount(page), { timeout: 8000 }).toBeGreaterThan(0);
@@ -98,8 +111,18 @@ test('#1928 — a multi-slot import folds per slot, and the dead `material.*` fo
     .filter((r): r is number => r !== null);
   expect(base.length, 'two drawn materials, one per slot').toBe(2);
 
-  const slot0 = await foldThenRead(page, row.rootId, row.dataId, 'materialSlots.0.specular.roughness');
-  const slot1 = await foldThenRead(page, row.rootId, row.dataId, 'materialSlots.1.specular.roughness');
+  const slot0 = await foldThenRead(
+    page,
+    row.rootId,
+    row.dataId,
+    'materialSlots.0.specular.roughness',
+  );
+  const slot1 = await foldThenRead(
+    page,
+    row.rootId,
+    row.dataId,
+    'materialSlots.1.specular.roughness',
+  );
   const flat = await foldThenRead(page, row.rootId, row.dataId, 'material.specular.roughness');
 
   // Each slot channel moves exactly one drawn material — its own — to the keyed value, and

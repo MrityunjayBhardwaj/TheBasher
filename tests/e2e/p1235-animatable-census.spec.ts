@@ -420,7 +420,10 @@ test(TITLE, async ({ page }) => {
       {
         for (const file of ['cube.gltf', 'two-material-quad.gltf']) {
           const bytes = new Uint8Array(await (await fetch(`/assets/${file}`)).arrayBuffer());
-          await w.__basher_ingestGltfFolder([{ relativePath: file, bytes }], `census-import-${file}`);
+          await w.__basher_ingestGltfFolder(
+            [{ relativePath: file, bytes }],
+            `census-import-${file}`,
+          );
           await frames();
         }
         const nodes = dag().state.nodes as Record<string, Loose>;
@@ -432,8 +435,8 @@ test(TITLE, async ({ page }) => {
             `the census import made ${imported.length} Objects over a PolyMeshData, expected 2`,
           );
         // One carries a slot table and one does not, or the two-subject split is not exercised.
-        const slotted = imported.filter(
-          ([, n]) => Array.isArray(nodes[n.inputs?.data?.node]?.params?.materialSlots),
+        const slotted = imported.filter(([, n]) =>
+          Array.isArray(nodes[n.inputs?.data?.node]?.params?.materialSlots),
         ).length;
         if (slotted !== 1)
           throw new Error(

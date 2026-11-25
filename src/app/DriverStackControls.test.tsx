@@ -56,9 +56,18 @@ function boxWithDataHalfDriver(): DagState {
       type: 'addNode',
       nodeId: 'd_data',
       nodeType: 'ParamDriver',
-      params: { target: BOX_DATA_ID, paramPath: 'material.metalness', blendMode: 'replace', order: 0 },
+      params: {
+        target: BOX_DATA_ID,
+        paramPath: 'material.metalness',
+        blendMode: 'replace',
+        order: 0,
+      },
     },
-    { type: 'connect', from: { node: 'c_data', socket: 'out' }, to: { node: 'd_data', socket: 'in' } },
+    {
+      type: 'connect',
+      from: { node: 'c_data', socket: 'out' },
+      to: { node: 'd_data', socket: 'in' },
+    },
   ] as Op[]).next;
 }
 
