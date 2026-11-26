@@ -240,3 +240,53 @@ test('a character’s layers: added on top, the playhead crosses them, edits are
   await expect(page.locator('[data-testid^="anim-layers-row-"]')).toHaveCount(0);
   await expect(page.getByTestId('anim-layers-base')).toBeVisible();
 });
+
+// #1927 — Mute and Solo in the footer speak the agent's layer-state verb, so the tab and the agent
+// change a layer's state by one road. The locked base has no such state to flip here.
+test('Mute and Solo flip the picked layer’s own state, and the base offers neither', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { armature, base } = await importBar(page);
+  await select(page, armature);
+  await openTab(page);
+
+  // Only the base: nothing above it to mute or solo.
+  await expect(page.getByTestId('anim-layers-mute')).toBeDisabled();
+  await expect(page.getByTestId('anim-layers-solo')).toBeDisabled();
+
+  await page.getByTestId('anim-layers-add').click();
+  const [layer] = await chain(page, armature);
+  expect(layer).not.toBe(base);
+  const row = page.getByTestId(`anim-layers-row-${layer}`);
+  await expect(row).toHaveAttribute('data-selected', 'true');
+
+  const mute = page.getByTestId('anim-layers-mute');
+  await expect(mute).toBeEnabled();
+  await expect(mute).toHaveText('Mute');
+  await mute.click();
+  await expect.poll(async () => (await params(page, layer))?.mute).toBe(true);
+  await expect(page.getByTestId(`anim-layers-muted-${layer}`)).toBeVisible();
+  await expect(mute).toHaveText('Unmute');
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+
+  const solo = page.getByTestId('anim-layers-solo');
+  await solo.click();
+  await expect.poll(async () => (await params(page, layer))?.solo).toBe(true);
+  await expect(page.getByTestId(`anim-layers-solo-${layer}`)).toBeVisible();
+  // One field per click: the mute is left as it was.
+  expect((await params(page, layer))?.mute).toBe(true);
+
+  await mute.click();
+  await expect.poll(async () => (await params(page, layer))?.mute).toBe(false);
+  await expect(page.getByTestId(`anim-layers-muted-${layer}`)).toHaveCount(0);
+  await expect(page.getByTestId('anim-layers-notice')).toHaveCount(0);
+  await page.getByTestId('anim-layers').screenshot({
+    path: test.info().outputPath('p1956-anim-layers-solo.png'),
+  });
+
+  // The base, picked: both are off again.
+  await page.getByTestId('anim-layers-base').getByRole('button').click();
+  await expect(page.getByTestId('anim-layers-mute')).toBeDisabled();
+  await expect(page.getByTestId('anim-layers-solo')).toBeDisabled();
+});

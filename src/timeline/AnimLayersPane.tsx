@@ -9,8 +9,11 @@
 // keyed weight curve drawn in the lane, per-bone values) are NOT drawn here; a lane says plainly
 // whether its weight is keyed instead of drawing a curve it does not have.
 //
-// The footer's three edits are roads that exist: + Add Layer and Delete are the shared stack edit on
-// the Object's pose lane, Bake down is the agent's bake verb at the selected layer (animLayersModel).
+// The footer's edits are roads that exist: + Add Layer and Delete are the shared stack edit on the
+// Object's pose lane, Bake down is the agent's bake verb at the selected layer, and Mute / Solo are
+// the agent's layer-state verb (`mutator.pose.setPoseLayerState`, #1927), so a layer's state changes
+// by the same road whether the tab or the agent changes it (animLayersModel). The weight stays the
+// shared param row below: that row keys (I and the diamond), which a one-off set would not.
 //
 // V8: reads DAG state through subscribed selectors; mutates only through dispatchAtomic and the
 // mutator seam. The selected row is this pane's own, so picking one never moves the inspector.
@@ -32,7 +35,9 @@ import {
   bakeDownArgs,
   deleteLayerPlan,
   filterLayerRows,
+  layerToggleArgs,
   type AnimLayerRow,
+  type LayerToggle,
 } from './animLayersModel';
 
 /** The row column's width, as the board draws it. */
@@ -134,7 +139,19 @@ export function AnimLayersPane() {
     setPicked(null);
   }
 
+  function onToggle(field: LayerToggle) {
+    if (!current) return;
+    const args = layerToggleArgs(current, field);
+    if (!args) return setNotice('Pick a layer above the base to mute or solo it.');
+    const verb =
+      field === 'mute' ? (current.mute ? 'unmute' : 'mute') : current.solo ? 'unsolo' : 'solo';
+    const res = dispatchMutatorFromUI('mutator.pose.setPoseLayerState', args, `${verb} pose layer`);
+    if (!res.ok) return setNotice(`Could not ${verb} ${current.name}: ${res.reason}`);
+    setNotice(null);
+  }
+
   const lanesHeight = RULER_PX + (rows.length + 1) * ROW_PX;
+  const canToggle = current !== null && current.kind === 'layer' && !current.locked;
   const canDelete = current !== null && !current.locked;
   const canBake = current !== null && current.kind === 'layer' && !current.locked;
 
@@ -223,6 +240,40 @@ export function AnimLayersPane() {
             onClick={onBakeDown}
           >
             Bake down
+          </button>
+          <button
+            type="button"
+            data-testid="anim-layers-mute"
+            className={FOOTER_BTN}
+            disabled={!canToggle}
+            aria-pressed={canToggle ? current.mute : undefined}
+            title={
+              canToggle
+                ? current.mute
+                  ? 'Unmute the selected layer: it plays again'
+                  : 'Mute the selected layer: it is bypassed, kept'
+                : 'Pick a layer above the base to mute it'
+            }
+            onClick={() => onToggle('mute')}
+          >
+            {canToggle && current.mute ? 'Unmute' : 'Mute'}
+          </button>
+          <button
+            type="button"
+            data-testid="anim-layers-solo"
+            className={FOOTER_BTN}
+            disabled={!canToggle}
+            aria-pressed={canToggle ? current.solo : undefined}
+            title={
+              canToggle
+                ? current.solo
+                  ? 'Unsolo the selected layer'
+                  : 'Solo the selected layer: every layer not soloed is silent'
+                : 'Pick a layer above the base to solo it'
+            }
+            onClick={() => onToggle('solo')}
+          >
+            {canToggle && current.solo ? 'Unsolo' : 'Solo'}
           </button>
           <button
             type="button"

@@ -229,3 +229,22 @@ export function bakeDownArgs(
     layerId: freeBakedLayerId(state, subject),
   };
 }
+
+/** The layer-state fields the footer toggles. */
+export type LayerToggle = 'mute' | 'solo';
+
+/**
+ * Mute / Solo from the footer: the spec of the agent's own layer-state verb
+ * (`mutator.pose.setPoseLayerState`, #1927), flipping one field of the picked layer, so the tab
+ * and the agent change a layer's state by one road (UI == agent). Null where the row has no such
+ * state to flip here: a Rig, or the locked base (the character's own motion).
+ */
+export function layerToggleArgs(
+  row: AnimLayerRow,
+  field: LayerToggle,
+): { layerId: string; mute?: boolean; solo?: boolean } | null {
+  if (row.kind !== 'layer' || row.locked) return null;
+  return field === 'mute'
+    ? { layerId: row.id, mute: !row.mute }
+    : { layerId: row.id, solo: !row.solo };
+}
