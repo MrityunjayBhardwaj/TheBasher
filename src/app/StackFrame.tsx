@@ -114,9 +114,10 @@ export function StackFrame({
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-mono text-[10px] uppercase tracking-wide text-fg/60">Stacks</span>
-        {/* The stacks' rows read in apply order, first applied on top (the 2026-11-09 decision). */}
+        {/* The stacks' rows read last applied on top, as every layer list does (the 2026-11-22
+            rule, #1970): the stack panel draws the run in tree order, its output at the top. */}
         <span data-testid="stack-frame-order-hint" className="text-[11px] text-fg-dim">
-          top of the list is applied first
+          top of the list is applied last
         </span>
       </div>
       <div

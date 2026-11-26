@@ -3,9 +3,10 @@
 // Whatever lane it shows (modifiers, constraints, materials, effects), it reads the same tree
 // (`stackOf`) and writes through the same edits (`planStackEdit`), so the lanes look and behave
 // alike, and the panel holds nothing of its own but which groups are open:
-//   - rows read in apply order, first applied on top (the user's decision, 2026-11-09): a node's
-//     main input is drawn above it; every other input is a group under it that opens and closes,
-//     and says how many rows it holds while closed;
+//   - rows read last applied on top (the user's rule, 2026-11-22, superseding 2026-11-09's first
+//     applied on top): a node's main input is drawn below it, so the run's output is the top row;
+//     every other input is a group under it that opens and closes, and says how many rows it holds
+//     while closed;
 //   - a "same as" row jumps to the node's full row, opening what it sits in;
 //   - a template opens in place, and says that an edit inside reaches every instance;
 //   - a row shows its mute when its type has one, and any param a wired input overrides;

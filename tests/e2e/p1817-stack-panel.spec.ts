@@ -60,7 +60,7 @@ const expectAt = async (page: Page, id: string, want: V3) =>
 const select = (page: Page, id: string) =>
   page.evaluate((i) => (window as unknown as W).__basher_selection.getState().select(i), id);
 
-/** Every row id the panel draws, groups included, top to bottom: first applied first. */
+/** Every row id the panel draws, groups included, top to bottom: last applied first. */
 const allRows = (page: Page) =>
   page
     .getByTestId('constraint-chain-panel')
