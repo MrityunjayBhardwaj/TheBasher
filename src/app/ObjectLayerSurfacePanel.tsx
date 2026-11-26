@@ -11,6 +11,12 @@
 // pick; the host decides what to do. This keeps the panel reusable and the edit paths unmoved:
 // editing stays in each lane's existing control, never here (the hybrid: merged read, per-lane edit).
 //
+// ORDER (#1940, the 2026-11-22 rule): the groups are DRAWN last applied on top, as every layer list
+// in Basher reads. The read model keeps its pipeline order (channels → strips → drivers → modifiers
+// → constraints → pose, what sets a param first); the panel draws it bottom-up, so pose layers stand
+// on top and channels at the bottom, and a structural lane's rows keep the stack tree's order, which
+// is already output (last applied) first, as the stack panel draws it.
+//
 // The surface is computed at the playhead (`usePlayheadFor`), through the shared UI evaluator cache,
 // exactly as `StackPanel` reads its rows — so a per-scrub re-read stays warm and read == render.
 //
@@ -95,9 +101,15 @@ export function ObjectLayerSurfacePanel({ nodeId, onPickRow }: ObjectLayerSurfac
     );
   }
 
+  // Last applied on top: the pipeline's tail (pose) first, its head (channels) last.
+  const drawn = [...surface.groups].reverse();
+
   return (
     <div data-testid="object-layer-surface" className="flex flex-col gap-2">
-      {surface.groups.map((group) => (
+      <p data-testid="object-layer-order-hint" className="px-2 text-[11px] text-fg-dim">
+        top of the list is applied last
+      </p>
+      {drawn.map((group) => (
         <section key={group.lane} data-testid={`object-layer-group-${group.lane}`}>
           <header className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-wide text-fg-dim">
             <span>{LANE_LABEL[group.lane] ?? group.lane}</span>

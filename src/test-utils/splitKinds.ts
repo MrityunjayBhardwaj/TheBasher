@@ -693,6 +693,8 @@ export const SPLIT_KIND_NAMES = Object.keys(SPLIT_KINDS) as SplitKindName[];
  */
 export const OBJECT_SECTIONS: readonly string[] = [
   'transform',
+  // #1940 — "What changes this", under Transform.
+  'layers',
   'constraint',
   'driver',
   'modifier',

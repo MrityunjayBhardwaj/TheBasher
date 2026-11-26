@@ -161,6 +161,8 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { ComfyWorkflowSection } from './ComfyWorkflowSection';
 import { StackFrame, useStackFrameView } from './StackFrame';
+import { ObjectLayerSurfacePanel } from './ObjectLayerSurfacePanel';
+import { goToLayerRow } from './goToLayerRow';
 import { FRAME_SECTIONS, frameStackOf, type StackKind } from './stackFrameModel';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
@@ -4517,6 +4519,13 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   // `paramsNodeId` is the DATA node, and writing there would move both objects — the
   // exact confusion this section exists to resolve.
   objectSlots: (ctx) => <ObjectSlotRows nodeId={ctx.objectNodeId} />,
+  // #1940 — what changes the OBJECT (the poser): its own lanes and its data's, in one read-only
+  // list. A click routes to the row's own editor; the panel itself edits nothing.
+  objectLayers: (ctx) => (
+    <StackInset>
+      <ObjectLayerSurfacePanel nodeId={ctx.objectNodeId} onPickRow={goToLayerRow} />
+    </StackInset>
+  ),
 };
 
 /**
