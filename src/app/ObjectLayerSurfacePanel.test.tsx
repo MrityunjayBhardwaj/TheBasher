@@ -116,6 +116,37 @@ describe('ObjectLayerSurfacePanel — the read-only surface reaches the DOM', ()
     expect(el('object-layer-group-constraint')).not.toBeNull();
     expect(el('object-layer-row-base-only')).toBeNull(); // structural rows render folded
   });
+
+  it('draws the groups last applied on top: constraints above modifiers, value lanes at the bottom', () => {
+    const m = buildCrateMockup(buildDefaultDagState());
+    const crateId = (m.crate as { node: string }).node;
+    const keyed = applyOps(m.state, [
+      {
+        type: 'addNode',
+        nodeId: 'ch_crate_metal',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'crateMetal',
+          target: crateId,
+          paramPath: 'material.base.metalness',
+          keyframes: [
+            { time: 0, value: 0, easing: 'linear' },
+            { time: 1, value: 1, easing: 'linear' },
+          ],
+        },
+      },
+    ] as Op[]).next;
+    show(keyed, crateId);
+    const lanes = [...container.querySelectorAll('[data-testid^="object-layer-group-"]')].map((g) =>
+      g.getAttribute('data-testid')!.slice('object-layer-group-'.length),
+    );
+    expect(lanes.indexOf('constraint')).toBeGreaterThanOrEqual(0);
+    expect(lanes.indexOf('constraint')).toBeLessThan(lanes.indexOf('modifier'));
+    expect(lanes[lanes.length - 1], 'what sets a param first is drawn at the bottom').toBe(
+      'channel',
+    );
+    expect(el('object-layer-order-hint')?.textContent).toBe('top of the list is applied last');
+  });
 });
 
 describe('ObjectLayerSurfacePanel — a click emits the row pick and writes nothing', () => {

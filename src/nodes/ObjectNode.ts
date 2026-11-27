@@ -160,7 +160,13 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   //
   // #1817 — 'stack' is the transform lane drawn by the one stack panel. It is Object-owned like
   // 'constraint' (any object has a transform, data or none), and appended last like the two above.
-  inspectorSections: ['transform', 'constraint', 'driver', 'modifier', 'slots', 'stack'],
+  //
+  // #1940 — 'layers' ("What changes this") is Object-owned: whatever the data, the object's own
+  // params can be keyed, driven and constrained. It stands SECOND, under Transform (and the stack
+  // frame that stands under Transform), because it answers the question the Transform card raises:
+  // what is moving these numbers. `sections[0]` stays 'transform', so no default-collapsed state
+  // shifts; a non-primary section, it opens collapsed.
+  inspectorSections: ['transform', 'layers', 'constraint', 'driver', 'modifier', 'slots', 'stack'],
   home: {
     position: 'transform',
     rotation: 'transform',

@@ -326,6 +326,8 @@ describe('C2 — inspectorSections declarations', () => {
       'driver',
       // #1817 — the transform lane as a stack: any object has a transform, so it holds too.
       'stack',
+      // #1940 — "What changes this": an Empty's own params can be keyed, driven, constrained.
+      'layers',
     ];
 
     const snap = snapshotRegistry();

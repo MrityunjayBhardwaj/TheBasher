@@ -110,7 +110,8 @@ export type ControlKey =
   | 'objectSlots'
   | 'rotationMode'
   | 'clock'
-  | 'constraintChain';
+  | 'constraintChain'
+  | 'objectLayers';
 
 export type SectionControl = {
   key: ControlKey;
@@ -336,6 +337,8 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   ],
   // #1817 — the stack panel on the object's constraints lane. No param routes here.
   stack: [{ key: 'constraintChain', applies: whenDeclared, placement: 'before' }],
+  // #1940 — the read-only "What changes this" surface. No param routes here.
+  layers: [{ key: 'objectLayers', applies: whenDeclared, placement: 'before' }],
 };
 
 /** Every row key a control owns across the sections a node declares.

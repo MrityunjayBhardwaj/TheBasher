@@ -80,7 +80,7 @@ test('the switch counts each stack, shows one at a time, and the flow reads in a
   await expect(page.getByTestId('stack-frame-count-materials')).toHaveText('0');
   await expect(frame.getByRole('tab')).toHaveText([/^Modifiers/, /^Constraints/, /^Materials/]);
   await expect(page.getByTestId('stack-frame-order-hint')).toHaveText(
-    'top of the list is applied first',
+    'top of the list is applied last',
   );
 
   // The flow: the object's constraints, then its shape's modifiers (no anim layers on a box).

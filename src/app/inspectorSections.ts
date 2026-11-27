@@ -36,7 +36,8 @@ export type SectionId =
   | 'camera'
   | 'layout'
   | 'slots'
-  | 'stack';
+  | 'stack'
+  | 'layers';
 
 export const SECTION_IDS: readonly SectionId[] = [
   'transform',
@@ -77,6 +78,11 @@ export const SECTION_IDS: readonly SectionId[] = [
   // #1817 — the object's transform lane as a stack: its constraints chain, drawn and edited by
   // the one stack panel. Appended last for the same reason 'modifier' and 'slots' were.
   'stack',
+  // #1940 — "What changes this": one read-only list of every lane that layers onto the object
+  // (channels, strips, drivers, modifiers, constraints, pose layers), each row read == render, a
+  // click opening the editor that row is edited in. No param routes here. Appended last for the
+  // same reason the sections above were; where it is DRAWN is the declaring node's order.
+  'layers',
 ];
 
 /** Type-narrow at the persistence boundary — unknown strings (legacy
@@ -104,6 +110,7 @@ export function formatSectionLabel(id: SectionId): string {
 const SECTION_LABELS: Partial<Record<SectionId, string>> = {
   slots: 'Material Slots',
   stack: 'Constraint Stack',
+  layers: 'What Changes This',
 };
 
 /** D-10 A — multi-select Inspector resolution: show Transform + Layout

@@ -260,7 +260,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver,stack] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots,stack] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
+    '[transform,layers,constraint,driver,modifier,slots,stack] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',

@@ -20,7 +20,10 @@ import {
   bakeDownArgs,
   deleteLayerPlan,
   filterLayerRows,
+  layerToggleArgs,
+  type AnimLayerRow,
 } from './animLayersModel';
+import { getMutator, registerAllMutators } from '../agent/mutators';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -244,5 +247,44 @@ describe('filterLayerRows', () => {
     expect(filterLayerRows(rows, '').map((r) => r.id)).toEqual([b.id, a.id]);
     expect(filterLayerRows(rows, 'HEAD').map((r) => r.id)).toEqual([a.id]);
     expect(filterLayerRows(rows, '  ').map((r) => r.id)).toEqual([b.id, a.id]);
+  });
+});
+
+describe('layerToggleArgs (#1927 — the footer speaks the agent’s layer-state verb)', () => {
+  const row = (over: Partial<AnimLayerRow>): AnimLayerRow => ({
+    id: 'L1',
+    kind: 'layer',
+    name: 'Layer 1',
+    mode: 'override',
+    weight: 1,
+    mute: false,
+    solo: false,
+    weightKeys: 0,
+    locked: false,
+    ...over,
+  });
+
+  it('flips the one field asked, on the picked layer', () => {
+    expect(layerToggleArgs(row({}), 'mute')).toEqual({ layerId: 'L1', mute: true });
+    expect(layerToggleArgs(row({ mute: true }), 'mute')).toEqual({ layerId: 'L1', mute: false });
+    expect(layerToggleArgs(row({}), 'solo')).toEqual({ layerId: 'L1', solo: true });
+    expect(layerToggleArgs(row({ solo: true }), 'solo')).toEqual({ layerId: 'L1', solo: false });
+  });
+
+  it('refuses the locked base and a Rig', () => {
+    expect(layerToggleArgs(row({ locked: true }), 'mute')).toBeNull();
+    expect(layerToggleArgs(row({ kind: 'rig', mode: null, weight: null }), 'solo')).toBeNull();
+  });
+
+  it('its spec is one the registered verb accepts, and builds the one setParam it names', () => {
+    registerAllMutators();
+    const m = getMutator('mutator.pose.setPoseLayerState');
+    expect(m, 'the layer-state verb is registered').toBeDefined();
+    const spec = layerToggleArgs(row({}), 'solo')!;
+    const parsed = m!.spec.safeParse(spec);
+    expect(parsed.success).toBe(true);
+    expect(m!.build(parsed.data as never, {} as never, {} as never)).toEqual([
+      { type: 'setParam', nodeId: 'L1', paramPath: 'solo', value: true },
+    ]);
   });
 });

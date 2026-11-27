@@ -121,6 +121,8 @@ describe('SECTION_IDS', () => {
       'slots',
       // #1817 — the object's transform lane, drawn by the one stack panel.
       'stack',
+      // #1940 — "What changes this": every lane that layers onto the object, read-only.
+      'layers',
     ]);
   });
 });
