@@ -195,7 +195,11 @@ function Submenu({
   // Edge-aware placement: opens to the right by default, flips left when the
   // right viewport edge would be crossed (UX #5 — a right-side menu's submenu
   // ran off-screen; shared with AddMenu via useFlyoutSide, H91 family).
-  const { containerRef, style: flyoutStyle } = useFlyoutSide<HTMLDivElement>(open, SUBMENU_WIDTH);
+  const {
+    containerRef,
+    panelRef,
+    style: flyoutStyle,
+  } = useFlyoutSide<HTMLDivElement>(open, SUBMENU_WIDTH);
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {
@@ -245,6 +249,7 @@ function Submenu({
       </button>
       {open ? (
         <div
+          ref={panelRef}
           role="menu"
           aria-label={label}
           style={{ width: SUBMENU_WIDTH, ...flyoutStyle }}
